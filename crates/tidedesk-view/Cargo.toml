@@ -1,0 +1,27 @@
+[package]
+name = "tidedesk-view"
+description = "TideDesk viewer: shows and plays a remote host's screen and audio and forwards input."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "tidedesk-view"
+path = "src/main.rs"
+
+[dependencies]
+tidedesk-core.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+cpal.workspace = true
+openh264.workspace = true
+opus.workspace = true
+quinn.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+softbuffer = "0.4"
+winit = "0.30"
