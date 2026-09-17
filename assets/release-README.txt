@@ -12,6 +12,9 @@ In the focused remote window, Ctrl+Alt+C toggles clipboard, Ctrl+Alt+M toggles m
 control, and Ctrl+Alt+S opens settings. Toggle shortcuts are customizable.
 Clipboard sharing must also be allowed in Host Settings; it shares new text copies.
 An amber arrow shows the host pointer; a separate crosshair is your local pointer.
+The viewer remembers each host window position and monitor. Sessions open at native
+host pixel size, shrinking only to fit the available screen. Display resolutions
+are not changed. Resize or maximize manually if desired.
 With mouse control off, the host arrow still updates and your crosshair stays independent.
 Native host cursor shapes and hidden-cursor states are not mirrored yet.
 After host mouse movement, the first viewer movement only aligns the viewer pointer
