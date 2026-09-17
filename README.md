@@ -5,6 +5,11 @@
 **Free, open-source remote desktop with sound.** See and control another computer, and hear
 what it plays — with a small footprint and low latency.
 
+[![Download for Windows](https://img.shields.io/github/v/release/cristiangirlea/tidedesk?include_prereleases&label=Download%20for%20Windows&style=for-the-badge&logo=windows&color=0e8a8a)](https://github.com/cristiangirlea/tidedesk/releases)
+
+Unzip and run `tidedesk-host.exe` on the computer to reach and `tidedesk-view.exe` on the one
+you're at — no installation needed.
+
 > Status: **early alpha**. Windows → Windows works on a local network. Linux, Android and iOS
 > are planned. See the [roadmap](docs/ROADMAP.md).
 
