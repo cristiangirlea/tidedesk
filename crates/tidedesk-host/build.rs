@@ -1,4 +1,4 @@
-//! Warns when NASM is missing: openh264 then silently builds without its
+//! Embeds the application icon, and warns when NASM is missing: openh264 then silently builds without its
 //! assembly and encodes roughly 3-4x slower.
 
 fn nasm_available() -> bool {
@@ -12,6 +12,12 @@ fn nasm_available() -> bool {
 }
 
 fn main() {
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+        println!("cargo::rerun-if-changed=../../assets/tidedesk.ico");
+        embed_resource::compile("../../assets/tidedesk.rc", embed_resource::NONE)
+            .manifest_optional()
+            .expect("embedding the application icon");
+    }
     println!("cargo::rerun-if-env-changed=PATH");
     println!("cargo::rerun-if-env-changed=NASM");
     let arch = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();

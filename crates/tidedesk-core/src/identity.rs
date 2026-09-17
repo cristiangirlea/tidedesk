@@ -66,7 +66,7 @@ pub fn normalize_fingerprint(fp: &str) -> String {
 }
 
 /// What the viewer knows about a host address.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PinStatus {
     Trusted,
     Unknown,
@@ -102,6 +102,11 @@ impl KnownHosts {
             Some(p) if *p == normalize_fingerprint(fp) => PinStatus::Trusted,
             Some(p) => PinStatus::Mismatch { pinned: p.clone() },
         }
+    }
+
+    /// Addresses of hosts connected to before, in sorted order.
+    pub fn addresses(&self) -> impl Iterator<Item = &str> {
+        self.entries.keys().map(String::as_str)
     }
 
     pub fn pin(&mut self, addr: &str, fp: &str) -> Result<()> {

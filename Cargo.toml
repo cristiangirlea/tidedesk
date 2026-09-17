@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = ["crates/tidedesk-core", "crates/tidedesk-host", "crates/tidedesk-view"]
+exclude = ["third_party"]
 
 [workspace.package]
 version = "0.1.0"
@@ -38,3 +39,7 @@ panic = "abort"
 # The codecs are unusably slow unoptimised, even while debugging our own code.
 [profile.dev.package."*"]
 opt-level = 2
+
+# Vendored with a fix for delayed repaints; see third_party/egui_software_backend/TIDEDESK.md.
+[patch.crates-io]
+egui_software_backend = { path = "third_party/egui_software_backend" }

@@ -47,6 +47,35 @@ async fn resolve(host: &str) -> Result<(String, SocketAddr)> {
     Ok((with_port.to_lowercase(), addr))
 }
 
+/// What a host presents before any secret is exchanged.
+#[derive(Clone)]
+pub struct Probe {
+    /// Normalised `host:port`, the key used for pinning.
+    pub address: String,
+    pub fingerprint: String,
+    pub status: PinStatus,
+}
+
+/// Completes only the encrypted handshake to learn the host's fingerprint and
+/// how it compares with the pinned one, so a UI can ask before connecting.
+pub async fn probe(host: &str) -> Result<Probe> {
+    let (address, addr) = resolve(host).await?;
+    let endpoint = net::client_endpoint()?;
+    let conn = endpoint
+        .connect(addr, "tidedesk-host")?
+        .await
+        .with_context(|| format!("could not reach a TideDesk host at {addr}"))?;
+    let fingerprint = net::peer_fingerprint(&conn).context("host presented no certificate")?;
+    conn.close(0u32.into(), b"probe");
+    let status = KnownHosts::load(&paths::config_dir()?)?.check(&address, &fingerprint);
+    let _ = tokio::time::timeout(std::time::Duration::from_millis(300), endpoint.wait_idle()).await;
+    Ok(Probe {
+        address,
+        fingerprint,
+        status,
+    })
+}
+
 pub async fn connect(opts: &ConnectOptions) -> Result<Session> {
     let (display, addr) = resolve(&opts.host).await?;
     let endpoint = net::client_endpoint()?;

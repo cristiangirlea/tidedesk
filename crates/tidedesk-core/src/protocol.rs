@@ -59,7 +59,11 @@ pub enum RejectReason {
     BadCode,
     TooManyAttempts,
     Busy,
-    IncompatibleVersion { host_version: u16 },
+    IncompatibleVersion {
+        host_version: u16,
+    },
+    /// The host is running but has paused accepting viewers.
+    NotAccepting,
 }
 
 impl std::fmt::Display for RejectReason {
@@ -68,6 +72,7 @@ impl std::fmt::Display for RejectReason {
             Self::BadCode => write!(f, "wrong access code"),
             Self::TooManyAttempts => write!(f, "too many failed attempts, try again later"),
             Self::Busy => write!(f, "host already has a viewer connected"),
+            Self::NotAccepting => write!(f, "host is not accepting connections right now"),
             Self::IncompatibleVersion { host_version } => write!(
                 f,
                 "protocol mismatch (host speaks v{host_version}, viewer speaks v{PROTOCOL_VERSION})"

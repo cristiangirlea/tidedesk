@@ -1,5 +1,6 @@
 //! One viewer connection, from handshake to teardown.
 
+use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -13,20 +14,44 @@ use tokio::time::timeout;
 use crate::input::Injector;
 use crate::video::{self, VideoControl, VideoSettings};
 
-pub struct HostState {
-    pub code: String,
-    pub host_name: String,
-    pub video: VideoSettings,
-    pub audio: bool,
-    pub throttle: Mutex<Throttle>,
-    pub busy: AtomicBool,
+/// The viewer currently connected, as shown in the host window.
+#[derive(Clone)]
+pub struct ViewerInfo {
+    pub name: String,
+    pub address: SocketAddr,
+    pub connection: quinn::Connection,
 }
 
-/// Clears the busy flag however the session ends.
-struct BusyGuard<'a>(&'a AtomicBool);
-impl Drop for BusyGuard<'_> {
+/// Everything a session needs, shared with the UI. Settings are read when a
+/// viewer connects, so changes apply to the next session.
+pub struct HostState {
+    pub host_name: String,
+    pub code: Mutex<String>,
+    pub video: Mutex<VideoSettings>,
+    pub audio: AtomicBool,
+    pub accepting: AtomicBool,
+    pub throttle: Mutex<Throttle>,
+    pub busy: AtomicBool,
+    pub viewer: Mutex<Option<ViewerInfo>>,
+    /// Called whenever something the UI shows has changed.
+    pub on_change: Mutex<Option<Box<dyn Fn() + Send + Sync>>>,
+}
+
+impl HostState {
+    pub fn changed(&self) {
+        if let Some(notify) = self.on_change.lock().unwrap().as_ref() {
+            notify();
+        }
+    }
+}
+
+/// Clears the busy flag and the viewer shown in the UI however the session ends.
+struct SessionGuard<'a>(&'a HostState);
+impl Drop for SessionGuard<'_> {
     fn drop(&mut self) {
-        self.0.store(false, Ordering::SeqCst);
+        *self.0.viewer.lock().unwrap() = None;
+        self.0.busy.store(false, Ordering::SeqCst);
+        self.0.changed();
     }
 }
 
@@ -68,10 +93,14 @@ pub async fn run(conn: quinn::Connection, state: Arc<HostState>) -> Result<()> {
         };
         return reject(&mut send, &conn, reason).await;
     }
+    if !state.accepting.load(Ordering::SeqCst) {
+        return reject(&mut send, &conn, RejectReason::NotAccepting).await;
+    }
     if state.throttle.lock().unwrap().is_locked(Instant::now()) {
         return reject(&mut send, &conn, RejectReason::TooManyAttempts).await;
     }
-    if !auth::verify_tag(&conn, &state.code, &auth_tag)? {
+    let code = state.code.lock().unwrap().clone();
+    if !auth::verify_tag(&conn, &code, &auth_tag)? {
         state
             .throttle
             .lock()
@@ -85,7 +114,13 @@ pub async fn run(conn: quinn::Connection, state: Arc<HostState>) -> Result<()> {
     if state.busy.swap(true, Ordering::SeqCst) {
         return reject(&mut send, &conn, RejectReason::Busy).await;
     }
-    let _busy = BusyGuard(&state.busy);
+    let _session = SessionGuard(&state);
+    *state.viewer.lock().unwrap() = Some(ViewerInfo {
+        name: client_name.clone(),
+        address: remote,
+        connection: conn.clone(),
+    });
+    state.changed();
     tracing::info!("viewer \"{client_name}\" connected from {remote}");
 
     // Video.
@@ -95,7 +130,7 @@ pub async fn run(conn: quinn::Connection, state: Arc<HostState>) -> Result<()> {
     });
     let stop_video = StopOnDrop(&control.stop);
     let (frame_tx, mut frame_rx) = tokio::sync::mpsc::channel(1);
-    let video_settings = state.video;
+    let video_settings = *state.video.lock().unwrap();
     let control2 = control.clone();
     let info =
         tokio::task::spawn_blocking(move || video::start(video_settings, frame_tx, control2))
@@ -106,7 +141,7 @@ pub async fn run(conn: quinn::Connection, state: Arc<HostState>) -> Result<()> {
     let _stop_audio = StopOnDrop(&audio_stop);
     let (audio_tx, mut audio_rx) = tokio::sync::mpsc::channel::<Vec<u8>>(16);
     let mut audio_on = false;
-    if state.audio && want_audio {
+    if state.audio.load(Ordering::SeqCst) && want_audio {
         match crate::audio::start(audio_tx, audio_stop.clone()) {
             Ok(()) => audio_on = true,
             Err(e) => tracing::warn!("audio disabled for this session: {e:#}"),

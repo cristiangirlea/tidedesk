@@ -1,8 +1,14 @@
 //! `tidedesk-view`: shows a TideDesk host's screen, plays its audio and
-//! forwards keyboard and mouse.
+//! forwards keyboard and mouse. Started without a host, it opens a connect window.
+
+// Release builds are GUI apps with no console window; see `attach_console`.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod app;
+mod computers;
 mod connect;
+mod icon;
+mod launcher;
 mod layout;
 mod playback;
 mod stream;
@@ -19,8 +25,9 @@ use stream::{Notify, Picture, UiEvent};
 #[derive(Parser, Debug)]
 #[command(version, about = "Connect to a TideDesk host.")]
 struct Args {
-    /// Host to connect to: name or IP, optionally with :port.
-    host: String,
+    /// Host to connect to: name or IP, optionally with :port. Omit to open the
+    /// connect window.
+    host: Option<String>,
 
     /// Access code shown by the host (prompted for if omitted).
     #[arg(long, env = "TIDEDESK_CODE", hide_env_values = true)]
@@ -63,7 +70,18 @@ fn prompt_code() -> Result<String> {
     Ok(line.trim().to_string())
 }
 
+#[cfg(windows)]
+fn attach_console() {
+    use windows::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
+    // Borrow the terminal's console when started from one, so CLI use still prints.
+    let _ = unsafe { AttachConsole(ATTACH_PARENT_PROCESS) };
+}
+
+#[cfg(not(windows))]
+fn attach_console() {}
+
 fn main() {
+    attach_console();
     tracing_subscriber::fmt().with_target(false).init();
     if let Err(e) = run() {
         eprintln!("error: {e:#}");
@@ -81,6 +99,9 @@ fn run() -> Result<()> {
         );
         std::process::exit(2);
     }
+    let Some(host) = args.host.clone() else {
+        return launcher::run();
+    };
     let code = match args.code.clone() {
         Some(c) => c,
         None => prompt_code()?,
@@ -92,7 +113,7 @@ fn run() -> Result<()> {
         .build()?;
 
     let opts = connect::ConnectOptions {
-        host: args.host.clone(),
+        host,
         code,
         want_audio: !args.no_audio,
         expected_fingerprint: args.fingerprint.clone(),

@@ -24,7 +24,7 @@ features in the software itself.
 - Capture Alt+Tab / Win-key combinations in the viewer
 - Lower memory at 4K (decode straight into the presentation buffer)
 - GPU presentation in the viewer
-- GUI: tray-icon host and an address-book viewer
+- ✅ GUI: tray host with settings, viewer with saved computers (done early)
 - Windows service mode: control UAC prompts and the sign-in screen
 - Signed installer and portable builds
 
