@@ -12,7 +12,7 @@ use tidedesk_core::protocol::{ClientMessage, InputEvent, MouseButton, ServerMess
 use tidedesk_core::sharing::{PointerPosition, SharingState};
 use tokio::sync::mpsc::UnboundedSender;
 use winit::application::ApplicationHandler;
-use winit::dpi::{PhysicalPosition, PhysicalSize};
+use winit::dpi::PhysicalPosition;
 use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow};
 use winit::keyboard::ModifiersState;
@@ -23,6 +23,7 @@ use crate::layout::{self, Placement};
 use crate::pointer::{Motion, PointerFlow};
 use crate::settings::{self, ViewerSettings};
 use crate::stream::{Picture, UiEvent};
+use crate::window_placement::WindowMemory;
 
 struct Surface {
     window: Rc<Window>,
@@ -35,6 +36,7 @@ pub struct App {
     picture: Arc<Mutex<Picture>>,
     control: UnboundedSender<ClientMessage>,
     surface: Option<Surface>,
+    window_memory: WindowMemory,
     placement: Placement,
     held_keys: HashSet<u16>,
     suppressed_keys: HashSet<u16>,
@@ -61,6 +63,7 @@ impl App {
         remote_size: (u32, u32),
         picture: Arc<Mutex<Picture>>,
         control: UnboundedSender<ClientMessage>,
+        window_memory: WindowMemory,
     ) -> Self {
         Self {
             title,
@@ -68,6 +71,7 @@ impl App {
             picture,
             control,
             surface: None,
+            window_memory,
             placement: Placement::fit(0, 0, 0, 0),
             held_keys: HashSet::new(),
             suppressed_keys: HashSet::new(),
@@ -332,20 +336,13 @@ impl ApplicationHandler<UiEvent> for App {
         if self.surface.is_some() {
             return;
         }
-        // Open at the remote resolution, shrunk to fit the local screen.
-        let (mut w, mut h) = self.remote_size;
-        if let Some(monitor) = event_loop.primary_monitor() {
-            let m = monitor.size();
-            let p = Placement::fit(w, h, m.width * 9 / 10, m.height * 9 / 10);
-            if p.width < w {
-                (w, h) = (p.width, p.height);
-            }
-        }
         let attrs = Window::default_attributes()
             .with_title(&self.title)
-            .with_cursor(CursorIcon::Crosshair)
-            .with_inner_size(PhysicalSize::new(w.max(320), h.max(200)));
-        let window = match event_loop.create_window(attrs) {
+            .with_cursor(CursorIcon::Crosshair);
+        let window = match self
+            .window_memory
+            .create_window(event_loop, attrs, self.remote_size)
+        {
             Ok(w) => Rc::new(w),
             Err(e) => {
                 self.exit_message = Some(format!("cannot open window: {e}"));
@@ -353,6 +350,7 @@ impl ApplicationHandler<UiEvent> for App {
                 return;
             }
         };
+        self.window_memory.observe(&window);
         let surface = softbuffer::Context::new(window.clone())
             .and_then(|ctx| softbuffer::Surface::new(&ctx, window.clone()));
         match surface {
@@ -410,7 +408,18 @@ impl ApplicationHandler<UiEvent> for App {
                 self.last_cursor = None;
                 self.release_mouse();
             }
-            WindowEvent::Resized(_) => self.release_mouse(),
+            WindowEvent::Resized(_) => {
+                self.release_mouse();
+                if let Some(surface) = &self.surface {
+                    self.window_memory.observe(&surface.window);
+                    surface.window.request_redraw();
+                }
+            }
+            WindowEvent::Moved(_) => {
+                if let Some(surface) = &self.surface {
+                    self.window_memory.observe(&surface.window);
+                }
+            }
             WindowEvent::CursorMoved { position, .. } => {
                 self.last_cursor = Some((position.x, position.y));
                 if !self.focused || !self.mouse_enabled() {
@@ -542,6 +551,12 @@ impl ApplicationHandler<UiEvent> for App {
     }
 
     fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
+        if let Some(surface) = &self.surface {
+            self.window_memory.observe(&surface.window);
+        }
+        if let Err(e) = self.window_memory.save() {
+            tracing::warn!("could not save viewer window position: {e:#}");
+        }
         self.release_keys();
         self.release_mouse();
         self.clipboard.set_enabled(false);
@@ -592,6 +607,7 @@ mod tests {
             (100, 100),
             Arc::new(Mutex::new(Picture::default())),
             tx,
+            WindowMemory::default(),
         );
         app.settings = ViewerSettings::default();
         app.settings.mouse = false;

@@ -14,6 +14,7 @@ mod playback;
 mod pointer;
 mod settings;
 mod stream;
+mod window_placement;
 
 use std::io::Write;
 use std::sync::{Arc, Mutex};
@@ -166,6 +167,7 @@ fn run() -> Result<()> {
         send,
         recv,
         host_name,
+        fingerprint,
         width,
         height,
         ..
@@ -207,6 +209,7 @@ fn run() -> Result<()> {
         (width, height),
         picture,
         control_tx,
+        window_placement::WindowMemory::load(&fingerprint),
     );
     event_loop.run_app(&mut app)?;
 

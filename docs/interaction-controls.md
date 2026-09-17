@@ -5,6 +5,28 @@ The original v0.1.0-alpha executables use v1 and cannot connect to this build.
 
 ## Viewer settings
 
+### Session window placement and size
+
+Each host's last normal window position and monitor are remembered locally when
+the session closes or disconnects. Reconnecting opens at that position, adjusted
+to stay visible if the monitor layout has changed. A disconnected monitor falls
+back to an available screen. On a first connection, the monitor under the local
+mouse pointer is used when available.
+
+Every session starts at the host's current pixel dimensions, not a previously
+stretched window size. For example, a 2560 x 1600 host opens with a 2560 x 1600
+image area on a 3840 x 2160 viewer display. The title bar and borders are extra.
+If that does not fit in the monitor's usable area, the image is reduced
+proportionally. Neither computer's display resolution is changed. You can still
+resize or maximize the window manually during the session; reopening starts at
+native size (or fitted down) again, using the last normal window location.
+
+Positions are stored separately from controls in
+%APPDATA%\TideDesk\window-FINGERPRINT.toml, keyed by the host's certificate identity.
+This keeps different hosts separate and retains their positions after an IP change.
+
+### Sharing controls
+
 Open Settings in the viewer launcher, or press Ctrl+Alt+S while the remote window is
 focused. Choose the desired options and press Save settings. Changes are picked up
 by open sessions and stored in %APPDATA%\TideDesk\viewer.toml.
@@ -71,6 +93,14 @@ outside the shared display, it is not pulled back; move it onto the shared displ
 Use two machines with the new host and viewer. A loopback session cannot prove this
 behavior because both applications would share the same operating-system cursor
 and clipboard.
+
+- On a 4K viewer, connect to a 2560 x 1600 host and verify the initial image area
+  is exactly 2560 x 1600 physical pixels (plus window borders), with no enlargement.
+- Move the session to a secondary monitor, close it, and reconnect. Verify its
+  location is restored, including monitors left of or above the primary display.
+- Repeat with different Windows display scaling, a smaller viewer display, a
+  disconnected secondary monitor, and after maximizing or minimizing the session.
+- Connect to a second host and confirm its saved location remains independent.
 
 - Verify both defaults and the host's independent permission switches.
 - Enable clipboard at both ends; copy a new Unicode string in each direction and paste.
