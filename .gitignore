@@ -4,3 +4,10 @@
 *.zip
 *.pfx
 *.p12
+*.msix
+*.msixbundle
+*.msixupload
+*.appx
+*.appxbundle
+*.appxupload
+*.cer

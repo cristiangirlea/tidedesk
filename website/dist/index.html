@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TideDesk — Remote access to your own computers</title>
+  <meta name="description" content="Access your Windows desktop from another computer. Screen sharing, keyboard and mouse control, audio and optional text clipboard, with no installation.">
+  <meta name="theme-color" content="#101b2d">
+  <link rel="canonical" href="https://tidedesk.cristiangirlea.ro/">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="TideDesk — Your computers. Within reach.">
+  <meta property="og:description" content="Remote access for Windows. Screen, audio and input in one portable app, with no account required.">
+  <meta property="og:url" content="https://tidedesk.cristiangirlea.ro/">
+  <meta name="twitter:card" content="summary">
+  <link rel="icon" href="/tidedesk-256.png">
+  <link rel="stylesheet" href="/styles.css">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"SoftwareApplication","name":"TideDesk","url":"https://tidedesk.cristiangirlea.ro/","operatingSystem":"Windows","applicationCategory":"UtilitiesApplication","downloadUrl":"https://github.com/cristiangirlea/tidedesk/releases","author":{"@type":"Person","name":"Cristian Girlea","url":"https://cristiangirlea.ro/"},"offers":{"@type":"Offer","price":"0","priceCurrency":"USD","description":"Personal, non-commercial use. See the license included with your download."}}
+  </script>
+  <script type="module" src="/releases.mjs"></script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <header class="wrap header">
+    <a class="brand" href="/" aria-label="TideDesk home"><img src="/tidedesk-256.png" width="40" height="40" alt="">TideDesk <span class="badge">ALPHA</span></a>
+    <nav aria-label="Main navigation"><a href="#setup">Get connected</a><a href="#questions">FAQ</a><a href="https://github.com/cristiangirlea/tidedesk">Source code <span aria-hidden="true">↗</span></a></nav>
+  </header>
+  <main id="main">
+    <section class="wrap hero" aria-labelledby="hero-title">
+      <div>
+        <p class="eyebrow">REMOTE DESKTOP / WINDOWS TO WINDOWS</p>
+        <h1 id="hero-title">Your computers.<br><span>Within reach.</span></h1>
+        <p class="lead">Access your Windows desktop from another computer, with screen sharing, keyboard and mouse control, audio and optional text clipboard.</p>
+        <div class="actions"><a class="button" data-download href="https://github.com/cristiangirlea/tidedesk/releases">Download for Windows <span aria-hidden="true">↓</span></a><a data-release-notes href="https://github.com/cristiangirlea/tidedesk/releases">Release notes ↗</a></div>
+        <p class="meta" data-release-version>Windows x64 · Choose the newest ZIP on GitHub Releases</p>
+        <p class="notice">New development is free for personal, non-commercial use. Previously published AGPL releases keep their original permissions. Check the LICENSE included with your download. <a href="https://github.com/cristiangirlea/tidedesk/blob/main/docs/licensing.md">Licensing details</a></p>
+        <p class="notice">Early alpha. The executables are currently unsigned, so Windows may show an unknown-publisher warning. <a href="#signing">About code signing</a></p>
+      </div>
+      <div class="connection" aria-label="The host sends screen and system audio to the viewer. The viewer sends mouse and keyboard input to the host.">
+        <div class="connection-top"><span>ONE CONNECTION. BOTH WAYS.</span><span class="encrypted">QUIC + TLS 1.3</span></div>
+        <div class="endpoint"><span class="number">01</span><div><p class="eyebrow">HOST</p><h2>The computer<br>you reach.</h2></div><span class="monitor" aria-hidden="true">▱</span></div>
+        <div class="streams"><span>Screen <b>↓</b></span><span>System audio <b>↓</b></span><span>Mouse &amp; keys <b>↑</b></span></div>
+        <div class="endpoint"><span class="number">02</span><div><p class="eyebrow">VIEWER</p><h2>The computer<br>you’re at.</h2></div><span class="monitor" aria-hidden="true">▱</span></div>
+        <p class="connection-bottom">Your local network. Your computers. No account.</p>
+      </div>
+    </section>
+    <div class="wrap facts"><span>Windows to Windows</span><span>Source available</span><span>No installation</span><span>No account required</span></div>
+    <section class="wrap section" aria-labelledby="features-title">
+      <p class="eyebrow">THE ESSENTIALS, TOGETHER</p><h2 id="features-title">More than a picture<br>of your screen.</h2>
+      <div class="columns features">
+        <article><p class="eyebrow">01 / SOUND</p><h3>Hear what it plays.</h3><p>System audio travels with your desktop. H.264 video and Opus audio share an encrypted QUIC connection.</p></article>
+        <article><p class="eyebrow">02 / CONTROL</p><h3>Choose what you share.</h3><p>Toggle mouse control and optional text clipboard sharing with configurable shortcuts. Clipboard sharing starts off and requires permission at both ends.</p></article>
+        <article><p class="eyebrow">03 / YOUR WORKSPACE</p><h3>Pick up where you left off.</h3><p>Keep your computers in a saved list. The viewer remembers its window position and starts at native host size when it fits your display.</p></article>
+      </div>
+    </section>
+    <section class="light section" id="setup" aria-labelledby="setup-title"><div class="wrap">
+      <p class="eyebrow">GET CONNECTED</p><h2 id="setup-title">From download to desktop.</h2><p class="lead">Start with two Windows computers on a trusted local network.</p>
+      <ol class="columns steps">
+        <li><span class="step">1</span><h3>Download &amp; unzip.</h3><p>Extract the ZIP on both computers. It contains the host, viewer, README and licence. No installer needed.</p></li>
+        <li><span class="step">2</span><h3>Start the host.</h3><p>Run <code>tidedesk-host.exe</code> on the computer you want to reach. Note its address and access code. Allow access on your private network if Windows Firewall asks.</p></li>
+        <li><span class="step">3</span><h3>Connect the viewer.</h3><p>Run <code>tidedesk-view.exe</code> on your other computer. Enter the host address and code, then compare the first-connection fingerprint with the host.</p></li>
+      </ol>
+      <p class="setup-note">Away from your local network? There is no built-in relay yet. See the <a href="https://github.com/cristiangirlea/tidedesk/blob/main/docs/internet-access.md">internet access guide</a> for network and VPN setup.</p>
+    </div></section>
+    <section class="wrap section faq" id="questions" aria-labelledby="faq-title">
+      <div><p class="eyebrow">BEFORE YOU CONNECT</p><h2 id="faq-title">A few things<br>to know.</h2></div>
+      <div>
+        <details><summary>Is TideDesk ready for everyday use?</summary><p>It is an early alpha, not a production remote-administration tool. Automated checks run for releases, but real-world testing is still ongoing. One viewer can connect at a time. <a href="https://github.com/cristiangirlea/tidedesk/issues">Report a problem on GitHub.</a></p></details>
+        <details><summary>Why does Windows show “Unknown publisher”?</summary><p>The published alpha executables are unsigned. Check your release notes for signing status and compare the <a data-checksum href="https://github.com/cristiangirlea/tidedesk/releases">SHA-256 checksum</a>. A checksum checks file integrity; it is not a publisher signature. Microsoft Store distribution is being prepared, but no Store download is available yet.</p></details>
+        <details><summary>Does it change my screen resolution?</summary><p>No. The viewer starts at the host’s native pixel size when it fits, and scales down when needed. A 2560 × 1600 host can appear as a smaller window on a 4K display. You can resize the window without changing the host resolution.</p></details>
+        <details><summary>Can I turn off mouse and clipboard sharing?</summary><p>Yes. They have separate settings and configurable shortcuts. Defaults are Ctrl+Alt+C for clipboard sharing and Ctrl+Alt+M for mouse control while the remote window is focused. Clipboard sharing starts disabled. The host can also deny these permissions.</p></details>
+        <details><summary>What isn’t supported yet?</summary><p>Linux and mobile clients, a built-in relay, file transfer and multiple simultaneous viewers are not available. Clipboard sharing is text-only. TideDesk does not control Windows UAC prompts or the login screen. Permanent custom passwords, 2FA and an encoder selector are planned, not implemented. See the <a href="https://github.com/cristiangirlea/tidedesk/blob/main/docs/ROADMAP.md">technical roadmap</a>; future features have no promised delivery date.</p></details>
+        <details><summary>Should I update both computers?</summary><p>Keeping host and viewer on the same release is recommended. Check the release notes for protocol compatibility before updating. The download button checks for the newest complete Windows release, including alpha releases; if that check is unavailable, it opens GitHub Releases.</p></details>
+      </div>
+    </section>
+    <section class="wrap section policies" aria-labelledby="trust-title">
+      <p class="eyebrow">BEFORE YOU DOWNLOAD</p><h2 id="trust-title">Know what you’re running.</h2>
+      <div class="policy-grid">
+        <article id="signing"><h3>Code signing</h3><p>The published alpha executables are unsigned. Microsoft Store MSIX distribution is being prepared. Store packages will be signed by Microsoft after certification; that does not sign the separate GitHub ZIP. No Store listing is live yet.</p><p>Cristian Girlea maintains the project and reviews releases. See the repository’s <a href="https://github.com/cristiangirlea/tidedesk/blob/main/docs/code-signing-policy.md">code-signing policy</a> for the build and approval process.</p></article>
+        <article id="privacy"><h3>Privacy</h3><p>The app sends screen, system audio, input and optional text clipboard data between the computers you connect. Settings are stored locally. Clipboard contents are not logged.</p><p>This website adds no analytics scripts or cookies. It requests public release information from GitHub, which receives technical request data such as your IP address; see <a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement">GitHub’s privacy statement</a>. Our hosting provider may also process technical request data to deliver and protect the site; see <a href="https://www.cloudflare.com/privacypolicy/">Cloudflare’s privacy policy</a>.</p></article>
+      </div>
+    </section>
+  </main>
+  <footer class="wrap footer"><div><a class="brand" href="/"><img src="/tidedesk-256.png" width="32" height="32" alt="">TideDesk</a><p>Your computers. Within reach.</p></div><nav aria-label="Footer"><a href="https://github.com/cristiangirlea/tidedesk">GitHub</a><a href="https://github.com/cristiangirlea/tidedesk/releases">All releases</a><a href="https://github.com/cristiangirlea/tidedesk/blob/main/docs/licensing.md">Licensing</a><a href="#privacy">Privacy</a><a href="https://cristiangirlea.ro/">By Cristian Girlea ↗</a></nav></footer>
+</body>
+</html>

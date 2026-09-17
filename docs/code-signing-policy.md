@@ -2,9 +2,21 @@
 
 ## Current status
 
-TideDesk's published alpha executables are unsigned. SignPath integration is prepared;
-Foundation approval and production signing are not yet active. Each release's notes
-state whether that release's executables are signed.
+TideDesk's published alpha executables are unsigned. Optional SignPath integration
+is prepared but production signing is not active. Each release's notes state
+whether that release's executables are signed.
+
+The personal-use-only source license is not eligible for SignPath Foundation's
+open-source program. Do not claim Foundation approval or submit this licensing
+model as an OSI-approved open-source project. A separately authorized signing
+service or Microsoft Store MSIX distribution must be evaluated before activation.
+See https://signpath.org/terms.html.
+
+Microsoft Store MSIX distribution is the planned package-signing route.
+The release workflow can prepare an unsigned submission candidate once Store
+identity variables are configured. It does not submit or publish automatically.
+Microsoft signs the Store package after certification; this does not sign the
+portable GitHub ZIP. [Setup and remaining validation](microsoft-store.md).
 
 ## Responsibility
 

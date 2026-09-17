@@ -1,5 +1,5 @@
 TideDesk @VERSION@ (Windows x64)
-Free, open-source remote desktop with sound.
+Remote access to your own computers. Free for personal, non-commercial use.
 https://github.com/cristiangirlea/tidedesk
 
 tidedesk-host.exe  Run on the computer you want to reach. It shows an access code
@@ -34,7 +34,9 @@ from its tray menu, close the viewer, then delete the extracted folder.
 Optional: remove %APPDATA%\TideDesk to erase saved settings, computers and identities.
 Remove any Windows Firewall exception you created for TideDesk.
 
-Licensed under GNU AGPL-3.0-only (see LICENSE).
+Licensed under the TideDesk Personal Use Source License 1.0 (see LICENSE).
+Business use, resale and paid customer support require separate written permission.
+Earlier AGPL releases retain their original permissions; these terms are not retroactive.
 Source for this version: https://github.com/cristiangirlea/tidedesk/tree/v@VERSION@
 Dependency licenses and the vendored renderer's license notices remain in the
 source repository and corresponding dependency source distributions.

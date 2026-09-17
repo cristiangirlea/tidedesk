@@ -36,7 +36,19 @@ The build embeds this version in both executables. Without TIDEDESK_VERSION it u
 the Cargo package version. Versions have three numeric components and an optional
 prerelease suffix; Windows numeric version components must fit into 16 bits.
 
-## Optional signing
+## Microsoft Store packages
+
+The same release workflow can prepare a separate MSIX submission candidate.
+See [Store setup, variables and validation](microsoft-store.md). Store signing
+applies to that package, not to the portable ZIP. No Store submission or
+publication is automated.
+
+## Optional executable signing
+
+The personal-use-only license is not eligible for SignPath Foundation's free
+open-source program. The optional integration below is provider tooling, not
+proof of eligibility or a signing entitlement. Leave it disabled until the
+maintainer has arranged an appropriate service and verified its configuration.
 
 Before approval, leave SIGNPATH_ENABLED unset or false. The workflow publishes
 explicitly unsigned builds without requiring a token.

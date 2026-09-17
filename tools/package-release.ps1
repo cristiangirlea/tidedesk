@@ -63,7 +63,9 @@ $binaryHashes = $files | ForEach-Object {
     "$digest  $_"
 }
 $notes = @(
-    "TideDesk ${Version}: free, open-source remote desktop with sound for Windows x64.",
+    "TideDesk ${Version}: remote desktop for Windows x64, free for personal, non-commercial use.",
+    '',
+    'License: TideDesk Personal Use Source License 1.0 (see LICENSE in the ZIP). Business use requires separate written permission. Previously published AGPL releases retain their original permissions.',
     '',
     "Download $stem and extract it. Run tidedesk-host.exe on the computer to reach and tidedesk-view.exe on the other computer.",
     '',

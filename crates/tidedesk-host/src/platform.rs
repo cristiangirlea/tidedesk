@@ -146,8 +146,28 @@ mod windows_impl {
     const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
     const RUN_VALUE: &str = "TideDesk Host";
 
+    fn is_packaged() -> bool {
+        use windows::Win32::Foundation::ERROR_INSUFFICIENT_BUFFER;
+        use windows::Win32::Storage::Packaging::Appx::GetCurrentPackageFullName;
+        let mut length = 0;
+        unsafe { GetCurrentPackageFullName(&mut length, None) == ERROR_INSUFFICIENT_BUFFER }
+    }
+
+    fn startup_task() -> windows::core::Result<windows::ApplicationModel::StartupTask> {
+        use windows::ApplicationModel::StartupTask;
+        StartupTask::GetAsync(&windows::core::HSTRING::from("TideDeskHost"))?.join()
+    }
+
     /// Whether the host is registered to start when the user signs in.
     pub fn autostart_enabled() -> bool {
+        if is_packaged() {
+            use windows::ApplicationModel::StartupTaskState;
+            return startup_task()
+                .and_then(|task| task.State())
+                .is_ok_and(|state| {
+                    state == StartupTaskState::Enabled || state == StartupTaskState::EnabledByPolicy
+                });
+        }
         use windows::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_SZ, RegGetValueW};
         use windows::core::HSTRING;
         unsafe {
@@ -167,6 +187,25 @@ mod windows_impl {
     /// Registers (or removes) the host under the current user's Run key,
     /// starting hidden in the tray.
     pub fn set_autostart(enable: bool) -> anyhow::Result<()> {
+        if is_packaged() {
+            use windows::ApplicationModel::StartupTaskState;
+            let task = startup_task()?;
+            if enable {
+                let state = task.RequestEnableAsync()?.join()?;
+                anyhow::ensure!(
+                    state == StartupTaskState::Enabled
+                        || state == StartupTaskState::EnabledByPolicy,
+                    "Windows has disabled startup. Check Settings > Apps > Startup or your administrator's policy."
+                );
+            } else {
+                task.Disable()?;
+                anyhow::ensure!(
+                    task.State()? != StartupTaskState::EnabledByPolicy,
+                    "Your administrator's policy requires startup."
+                );
+            }
+            return Ok(());
+        }
         use windows::Win32::System::Registry::{
             HKEY_CURRENT_USER, REG_SZ, RegDeleteKeyValueW, RegSetKeyValueW,
         };

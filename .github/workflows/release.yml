@@ -104,6 +104,34 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      - name: Prepare Microsoft Store package
+        if: vars.MSIX_ENABLED == 'true'
+        env:
+          RELEASE_VERSION: ${{ steps.settings.outputs.version }}
+          STORE_BUILD_NUMBER: ${{ github.run_number }}
+          MSIX_IDENTITY_NAME: ${{ vars.MSIX_IDENTITY_NAME }}
+          MSIX_PUBLISHER: ${{ vars.MSIX_PUBLISHER }}
+          MSIX_PUBLISHER_DISPLAY_NAME: ${{ vars.MSIX_PUBLISHER_DISPLAY_NAME }}
+        run: |
+          $settings = @{
+            Version = $env:RELEASE_VERSION
+            PackageVersion = "1.0.$env:STORE_BUILD_NUMBER.0"
+            IdentityName = $env:MSIX_IDENTITY_NAME
+            Publisher = $env:MSIX_PUBLISHER
+            PublisherDisplayName = $env:MSIX_PUBLISHER_DISPLAY_NAME
+          }
+          ./tools/package-msix.ps1 @settings
+      - name: Upload Store submission candidate (not a public installer)
+        if: vars.MSIX_ENABLED == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: microsoft-store-submission
+          path: |
+            target/store/*.msix
+            target/store/*.sha256
+          if-no-files-found: error
+          retention-days: 30
+
   publish:
     needs: build
     runs-on: windows-latest

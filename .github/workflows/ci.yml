@@ -29,6 +29,11 @@ jobs:
       - name: Verify release packaging
         shell: pwsh
         run: ./tools/test-release.ps1
+      - name: Verify MSIX packaging (test identity only)
+        shell: pwsh
+        run: ./tools/test-msix.ps1
+      - name: Verify website downloads
+        run: node --test website/releases.test.mjs
       - uses: actions/upload-artifact@v4
         with:
           name: tidedesk-windows-x64

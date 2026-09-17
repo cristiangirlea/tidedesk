@@ -3,7 +3,7 @@ name = "tidedesk-host"
 description = "TideDesk host: shares this machine's screen and audio and accepts remote input."
 version.workspace = true
 edition.workspace = true
-license.workspace = true
+license-file.workspace = true
 authors.workspace = true
 repository.workspace = true
 rust-version.workspace = true
@@ -35,12 +35,14 @@ serde = { workspace = true, features = ["derive"] }
 [target.'cfg(windows)'.dependencies.windows]
 version = "0.62"
 features = [
+    "ApplicationModel",
     "Win32_Foundation",
     "Win32_Graphics_Direct3D",
     "Win32_Graphics_Direct3D11",
     "Win32_Graphics_Dxgi",
     "Win32_Graphics_Dxgi_Common",
     "Win32_Graphics_Gdi",
+    "Win32_Storage_Packaging_Appx",
     "Win32_System_Com",
     "Win32_System_Console",
     "Win32_System_Registry",

@@ -1,58 +1,40 @@
 # Roadmap
 
-TideDesk stays free and open source. Sponsorship funds development; it never unlocks
-features in the software itself.
+This is a technical planning list, not a promise of delivery, dates or future
+licensing terms. Features under "Planned" and "Exploration" are not available yet.
+See [licensing](licensing.md) for development-branch and earlier-release terms.
 
-## ✅ 0.1 — Windows → Windows on a LAN (alpha)
+## Available in the Windows alpha
 
-- DXGI Desktop Duplication capture; idle screens cost nothing
-- H.264 (OpenH264) encode/decode with latest-frame-wins backpressure
-- System audio via WASAPI loopback → Opus → QUIC datagrams, jitter buffer with loss concealment
-- Keyboard (scancodes) and mouse injection, stuck-key protection
-- QUIC + TLS 1.3, BBR congestion control
-- Access-code auth bound to the TLS session, brute-force lock-out, fingerprint pinning
+- Windows-to-Windows screen, keyboard and mouse control; one viewer at a time.
+- DXGI capture, OpenH264 software video, WASAPI system audio and Opus.
+- QUIC/TLS, access-code authentication, throttling and host fingerprint pinning.
+- Tray host with saved settings and a viewer with saved computers.
+- Optional text clipboard sharing, independent host permissions and custom shortcuts.
+- Separate host/viewer cursor indicators and safe mouse-control handoff.
+- Native-size viewer startup when the display permits, with per-host window placement.
 
-## 0.2 — Windows polish
+Real-world two-computer and multi-monitor validation of recent interaction/window
+changes is still pending. No hardware encoder selector, permanent user-chosen
+password, 2FA or paid-feature enforcement is implemented.
 
-- **Hardware encoding** via Media Foundation (NVIDIA NVENC, Intel Quick Sync, AMD AMF),
-  software fallback kept. Brings 4K down to a few % CPU and removes the patent question for
-  distributed builds.
-- Adaptive bitrate and frame rate from measured network conditions
-- Text clipboard sync with settings and shortcuts implemented; two-computer validation pending
-- Image clipboard sync
-- Mouse-control settings and shortcuts with host-position handoff implemented; two-computer validation pending
-- Independent amber host-position marker and local viewer crosshair implemented; two-computer validation pending
-- Native remote cursor shapes and visibility (text, resize, busy, hidden)
-- Switch monitors during a session, or view all at once
-- Capture Alt+Tab / Win-key combinations in the viewer
-- Lower memory at 4K (decode straight into the presentation buffer)
-- GPU presentation in the viewer
-- ✅ GUI: tray host with settings, viewer with saved computers (done early)
-- Windows service mode: control UAC prompts and the sign-in screen
-- Signed installer and portable builds
+## Planned: Windows reliability and security
 
-## 0.3 — Across the internet
+- Complete two-computer, multi-monitor and mixed-DPI validation.
+- Optional permanent password alongside the random code, with a separate,
+  reviewed authentication flow, strong-password checks and protected local storage.
+- Optional local TOTP two-factor authentication and recovery codes. Design goal:
+  no TideDesk account or central user database; protected verifier data stays on the host.
+- Selectable hardware encoders where actually supported, retaining software fallback.
+  Performance, hardware support and codec licensing need validation.
+- Adaptive bitrate/frame rate, lower memory use and improved presentation.
+- Native cursor shapes/visibility, in-session monitor switching and image clipboard.
+- Evaluate signed distribution and MSIX/Store packaging.
 
-- Open-source **rendezvous and relay server** anyone can self-host for free
-- Direct peer-to-peer connection through NAT (UDP hole punching) whenever possible, relay only
-  as fallback
-- Step-by-step guides for running your own relay on a small VPS or home server
+## Exploration, not scheduled
 
-## 0.4 — Linux
-
-- Host: PipeWire screen capture through the desktop portal (Wayland and X11), PipeWire/PulseAudio
-  monitor for sound, input via `uinput`/libei
-- Viewer: same `winit` + audio stack as Windows
-
-## 0.5 — Mobile
-
-- Android viewer (touch → mouse gestures, on-screen keyboard)
-- iOS viewer (requires macOS for building and signing)
-- Android host (MediaProjection) considered later
-
-## Later
-
-- macOS host and viewer
-- File transfer
-- Multiple simultaneous viewers, view-only mode
-- Session recording
+- Direct internet connectivity, NAT traversal and relay options.
+- Linux and mobile clients; macOS support.
+- File transfer, session recording and multiple viewers.
+- Team administration, shared device lists and ticketing integration.
+- Windows service mode and secure-desktop support, subject to security review.

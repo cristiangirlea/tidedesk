@@ -2,8 +2,14 @@
 
 # TideDesk
 
-**Free, open-source remote desktop with sound.** See and control another computer, and hear
-what it plays — with a small footprint and low latency.
+**Remote access to your own computers.** Screen sharing, keyboard and mouse control,
+system audio, and optional text clipboard sharing for Windows.
+
+This development branch uses the [TideDesk Personal Use Source License](LICENSE):
+free for personal, non-commercial use; other uses require separate written permission.
+This is source-available software, not an OSI-approved open-source license.
+Previously published releases through **v0.1.0-alpha.2 remain AGPL-3.0-only**;
+the new terms do not revoke those permissions. See [licensing](docs/licensing.md).
 
 [![Download for Windows](https://img.shields.io/github/v/release/cristiangirlea/tidedesk?include_prereleases&label=Download%20for%20Windows&style=for-the-badge&logo=windows&color=0e8a8a)](https://github.com/cristiangirlea/tidedesk/releases)
 
@@ -13,8 +19,8 @@ you're at — no installation needed.
 > Status: **early alpha**. Windows → Windows works on a local network. Linux, Android and iOS
 > are planned. See the [roadmap](docs/ROADMAP.md).
 
-TideDesk is free for everyone, forever. If it's useful to you, you can
-[sponsor its development](https://github.com/sponsors/cristiangirlea).
+The [roadmap](docs/ROADMAP.md) separates implemented features from future work.
+Planned features are not included in the current release and have no promised dates.
 
 ## Why another remote desktop?
 
@@ -34,7 +40,7 @@ TideDesk takes a modern route:
 | Auth | Access code proven via a session-bound HMAC (never sent), brute-force lock-out, host fingerprint pinning | DES password |
 | Idle cost | ~0% CPU — nothing is captured or encoded while the screen is still | Keeps polling |
 
-### Measured (alpha, release build)
+### Historical measurements (initial alpha, not re-measured for the current build)
 
 On an AMD Ryzen 9 9950X (16 cores), streaming a 3840×2160 display over loopback:
 
@@ -45,7 +51,8 @@ On an AMD Ryzen 9 9950X (16 cores), streaming a 3840×2160 display over loopback
 | Viewer, showing 4K | ~5% of one core | ~210 MB |
 
 Encoding cost per frame (software H.264): 8 ms at 1080p, 18 ms at 1440p, 37 ms at 4K.
-Hardware (GPU) encoding and lower 4K memory use are on the roadmap.
+These figures are not current performance guarantees. OpenH264 is currently the only
+implemented video encoder. Hardware encoding and lower 4K memory use remain planned.
 
 ## Quick start
 
@@ -161,9 +168,14 @@ Android and iOS ports reuse the core and protocol unchanged.
 
 ## License
 
-[GNU AGPL-3.0](LICENSE). You may use, study, share and modify TideDesk freely. If you
-distribute a modified version — or run one as a network service — you must publish your
-source under the same license.
+[TideDesk Personal Use Source License 1.0](LICENSE). Personal, non-commercial use is
+free. Business use (including a company's internal IT support), resale, paid customer
+support and product integration require separate written permission. No commercial
+license is included with this source checkout.
+
+The new terms apply only to versions supplied under them, not retroactively to earlier
+AGPL releases. Third-party components retain their own licenses and notices.
+See [licensing and earlier releases](docs/licensing.md).
 
 Written by Cristian Girlea.
 

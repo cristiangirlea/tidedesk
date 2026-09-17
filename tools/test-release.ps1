@@ -67,6 +67,18 @@ try {
     if ($readme -notmatch 'executables are unsigned' -or $readme -match '@VERSION@|@SIGNING@') {
         throw 'README has incorrect signing/version text.'
     }
+    $sourceLicense = Get-FileHash -LiteralPath (Join-Path $repo 'LICENSE') -Algorithm SHA256
+    $packedLicense = Get-FileHash -LiteralPath (Join-Path $extract 'LICENSE') -Algorithm SHA256
+    if ($sourceLicense.Hash -cne $packedLicense.Hash) { throw 'Archive license differs from source.' }
+    if ($readme -notmatch 'TideDesk Personal Use Source License 1.0' -or
+        $readme -match 'Licensed under GNU AGPL') {
+        throw 'README has stale license terms.'
+    }
+    $releaseNotes = Get-Content -LiteralPath (Join-Path $output 'release-notes.md') -Raw
+    if ($releaseNotes -notmatch 'Business use requires separate written permission' -or
+        $releaseNotes -match 'free, open-source') {
+        throw 'Release notes have stale license terms.'
+    }
     Assert-Fails {
         ./tools/package-release.ps1 -Version $binaryVersion -OutputDirectory $output
     } 'Output already exists'
