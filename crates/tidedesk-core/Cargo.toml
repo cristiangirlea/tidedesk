@@ -10,6 +10,7 @@ rust-version.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+arboard.workspace = true
 postcard.workspace = true
 quinn.workspace = true
 rcgen.workspace = true

@@ -144,6 +144,7 @@ pub async fn connect(opts: &ConnectOptions) -> Result<Session> {
             audio,
         }),
         Some(ServerMessage::Rejected { reason }) => bail!("host refused the connection: {reason}"),
+        Some(_) => bail!("host sent session data before Welcome"),
         None => bail!("host closed the connection during the handshake"),
     }
 }

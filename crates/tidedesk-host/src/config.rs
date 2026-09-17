@@ -14,6 +14,8 @@ pub struct HostConfig {
     pub fps: u32,
     pub bitrate_kbps: u32,
     pub share_audio: bool,
+    pub allow_clipboard: bool,
+    pub allow_mouse: bool,
     /// UDP port; takes effect on the next start.
     pub port: u16,
     /// Show the host window's button in the taskbar. Off: tray icon only.
@@ -29,6 +31,8 @@ impl Default for HostConfig {
             fps: 30,
             bitrate_kbps: 4000,
             share_audio: true,
+            allow_clipboard: false,
+            allow_mouse: true,
             port: DEFAULT_PORT,
             show_in_taskbar: false,
             start_in_tray: false,

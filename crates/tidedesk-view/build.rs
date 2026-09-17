@@ -1,10 +1,8 @@
-//! Embeds the application icon into the Windows executable.
+//! Embeds the application icon and version into the Windows executable.
+
+#[path = "../../tools/windows-resource.rs"]
+mod windows_resource;
 
 fn main() {
-    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
-        println!("cargo::rerun-if-changed=../../assets/tidedesk.ico");
-        embed_resource::compile("../../assets/tidedesk.rc", embed_resource::NONE)
-            .manifest_optional()
-            .expect("embedding the application icon");
-    }
+    windows_resource::embed();
 }

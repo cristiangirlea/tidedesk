@@ -18,8 +18,11 @@ features in the software itself.
   software fallback kept. Brings 4K down to a few % CPU and removes the patent question for
   distributed builds.
 - Adaptive bitrate and frame rate from measured network conditions
-- Clipboard sync (text first, then images)
-- Remote cursor shape, drawn locally for zero-latency pointer movement
+- Text clipboard sync with settings and shortcuts implemented; two-computer validation pending
+- Image clipboard sync
+- Mouse-control settings and shortcuts with host-position handoff implemented; two-computer validation pending
+- Independent amber host-position marker and local viewer crosshair implemented; two-computer validation pending
+- Native remote cursor shapes and visibility (text, resize, busy, hidden)
 - Switch monitors during a session, or view all at once
 - Capture Alt+Tab / Win-key combinations in the viewer
 - Lower memory at 4K (decode straight into the presentation buffer)

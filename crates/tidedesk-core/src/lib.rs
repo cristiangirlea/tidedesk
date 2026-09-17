@@ -6,10 +6,12 @@
 
 pub mod audio;
 pub mod auth;
+pub mod clipboard;
 pub mod identity;
 pub mod net;
 pub mod paths;
 pub mod protocol;
+pub mod sharing;
 pub mod stats;
 
 /// Default UDP port the host listens on.

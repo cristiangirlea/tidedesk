@@ -152,6 +152,8 @@ fn run(args: Args) -> Result<()> {
             stats: args.stats,
         }),
         audio: AtomicBool::new(config.share_audio && !args.no_audio),
+        clipboard: AtomicBool::new(config.allow_clipboard),
+        mouse: AtomicBool::new(config.allow_mouse),
         accepting: AtomicBool::new(true),
         throttle: Mutex::new(auth::Throttle::default()),
         busy: AtomicBool::new(false),

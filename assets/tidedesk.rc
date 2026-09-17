@@ -1,1 +1,29 @@
 1 ICON "tidedesk.ico"
+
+1 VERSIONINFO
+FILEVERSION TIDEDESK_VERSION_NUM
+PRODUCTVERSION TIDEDESK_VERSION_NUM
+FILEFLAGSMASK 0x3fL
+FILEFLAGS 0x0L
+FILEOS 0x40004L
+FILETYPE 0x1L
+FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904b0"
+        BEGIN
+            VALUE "CompanyName", "Cristian Girlea\0"
+            VALUE "FileDescription", TIDEDESK_DESCRIPTION
+            VALUE "FileVersion", TIDEDESK_VERSION
+            VALUE "InternalName", TIDEDESK_BINARY
+            VALUE "OriginalFilename", TIDEDESK_FILENAME
+            VALUE "ProductName", "TideDesk\0"
+            VALUE "ProductVersion", TIDEDESK_VERSION
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0409, 1200
+    END
+END

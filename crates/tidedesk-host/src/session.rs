@@ -13,6 +13,9 @@ use tokio::time::timeout;
 
 use crate::input::Injector;
 use crate::video::{self, VideoControl, VideoSettings};
+use tidedesk_core::clipboard::{ClipboardBridge, valid_text};
+use tidedesk_core::protocol::InputEvent;
+use tidedesk_core::sharing::SharingState;
 
 /// The viewer currently connected, as shown in the host window.
 #[derive(Clone)]
@@ -22,13 +25,15 @@ pub struct ViewerInfo {
     pub connection: quinn::Connection,
 }
 
-/// Everything a session needs, shared with the UI. Settings are read when a
-/// viewer connects, so changes apply to the next session.
+/// Everything a session needs, shared with the UI. Video/audio settings apply on
+/// connection; clipboard and mouse permissions are checked during the session.
 pub struct HostState {
     pub host_name: String,
     pub code: Mutex<String>,
     pub video: Mutex<VideoSettings>,
     pub audio: AtomicBool,
+    pub clipboard: AtomicBool,
+    pub mouse: AtomicBool,
     pub accepting: AtomicBool,
     pub throttle: Mutex<Throttle>,
     pub busy: AtomicBool,
@@ -181,10 +186,120 @@ pub async fn run(conn: quinn::Connection, state: Arc<HostState>) -> Result<()> {
     };
 
     let mut injector = Injector::new(info.rect)?;
-    let control_task = async {
+    // Keep framing in its own future: cancelling a partial read on every
+    // pointer/clipboard tick would corrupt the reliable control stream.
+    let (messages_tx, mut messages_rx) = tokio::sync::mpsc::channel(64);
+    let reader_task = async {
         while let Some(msg) = protocol::read_message::<_, ClientMessage>(&mut recv).await? {
+            if messages_tx.send(msg).await.is_err() {
+                break;
+            }
+        }
+        anyhow::Ok(())
+    };
+    let control_task = async {
+        let mut wanted = (0, false, false);
+        let mut sharing = SharingState::default();
+        let mut clipboard = ClipboardBridge::default();
+        let mut pending_clipboard: Option<(u64, String)> = None;
+        let mut clipboard_due = Instant::now();
+        let mut last_cursor = None;
+        let mut tick = tokio::time::interval(Duration::from_millis(16));
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            if sharing.update(
+                wanted.0,
+                wanted.1 && state.clipboard.load(Ordering::SeqCst),
+                wanted.2 && state.mouse.load(Ordering::SeqCst),
+            ) {
+                injector.release_mouse();
+                pending_clipboard = None;
+                clipboard.set_enabled(false);
+                clipboard.set_enabled(sharing.clipboard);
+                // Capture a baseline before acknowledging activation.
+                let _ = clipboard.poll();
+                protocol::write_message(&mut send, &ServerMessage::Sharing(sharing)).await?;
+            }
+            let msg = tokio::select! {
+                msg = messages_rx.recv() => {
+                    let Some(msg) = msg else { break; };
+                    msg
+                }
+                _ = tick.tick() => {
+                    // Recheck permissions changed while select was waiting.
+                    if (sharing.clipboard && !state.clipboard.load(Ordering::SeqCst))
+                        || (sharing.mouse && !state.mouse.load(Ordering::SeqCst)) {
+                        continue;
+                    }
+                    let (external, position) = injector.poll_pointer()?;
+                    if sharing.mouse && external {
+                        protocol::write_message(&mut send, &ServerMessage::Pointer(position)).await?;
+                    }
+                    // Cursor visibility belongs to screen sharing, not input permission.
+                    // Send an initial position and changes, including our own injected moves.
+                    if last_cursor != Some(position) {
+                        protocol::write_message(&mut send, &ServerMessage::Cursor(position)).await?;
+                        last_cursor = Some(position);
+                    }
+                    if Instant::now() >= clipboard_due {
+                        clipboard_due = Instant::now() + Duration::from_millis(200);
+                        if let Some((generation, text)) = &pending_clipboard {
+                            if !sharing.accepts_clipboard(*generation) || clipboard.receive(text) {
+                                pending_clipboard = None;
+                            }
+                        } else if let Some(text) = clipboard.poll() {
+                            protocol::write_message(&mut send, &ServerMessage::Clipboard {
+                                generation: sharing.generation, text
+                            }).await?;
+                        }
+                    }
+                    continue;
+                }
+            };
             match msg {
-                ClientMessage::Input(ev) => injector.inject(ev)?,
+                ClientMessage::Input(ev @ InputEvent::Key { .. }) => injector.inject(ev)?,
+                ClientMessage::Input(_) => bail!("mouse input requires a pointer epoch"),
+                ClientMessage::SetSharing {
+                    request,
+                    clipboard,
+                    mouse,
+                } => {
+                    wanted = (request, clipboard, mouse);
+                }
+                ClientMessage::Clipboard { generation, text } => {
+                    if !valid_text(&text) {
+                        bail!("invalid clipboard text");
+                    }
+                    if sharing.accepts_clipboard(generation)
+                        && state.clipboard.load(Ordering::SeqCst)
+                    {
+                        pending_clipboard = if clipboard.receive(&text) {
+                            None
+                        } else {
+                            Some((generation, text))
+                        };
+                    }
+                }
+                ClientMessage::PointerSync { request } => {
+                    if sharing.mouse && state.mouse.load(Ordering::SeqCst) {
+                        let position = injector.anchor()?;
+                        protocol::write_message(
+                            &mut send,
+                            &ServerMessage::PointerAnchor { request, position },
+                        )
+                        .await?;
+                    }
+                }
+                ClientMessage::MouseInput { epoch, event } => {
+                    if sharing.mouse
+                        && state.mouse.load(Ordering::SeqCst)
+                        && let Some(position) = injector.inject_mouse(epoch, event)?
+                    {
+                        protocol::write_message(&mut send, &ServerMessage::Pointer(position))
+                            .await?;
+                    }
+                }
+                ClientMessage::ReleaseMouse => injector.release_mouse(),
                 ClientMessage::RequestKeyframe => control.keyframe.store(true, Ordering::Relaxed),
                 ClientMessage::Hello { .. } => bail!("duplicate Hello"),
             }
@@ -196,6 +311,7 @@ pub async fn run(conn: quinn::Connection, state: Arc<HostState>) -> Result<()> {
         r = video_task => r.context("video stream"),
         r = audio_task => r.context("audio"),
         r = control_task => r.context("control stream"),
+        r = reader_task => r.context("control reader"),
         e = conn.closed() => { tracing::debug!("connection closed: {e}"); Ok(()) }
     };
     drop(stop_video);

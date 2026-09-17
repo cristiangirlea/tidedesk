@@ -11,6 +11,8 @@ mod icon;
 mod launcher;
 mod layout;
 mod playback;
+mod pointer;
+mod settings;
 mod stream;
 
 use std::io::Write;
@@ -25,6 +27,9 @@ use stream::{Notify, Picture, UiEvent};
 #[derive(Parser, Debug)]
 #[command(version, about = "Connect to a TideDesk host.")]
 struct Args {
+    /// Open viewer settings without connecting.
+    #[arg(long)]
+    settings: bool,
     /// Host to connect to: name or IP, optionally with :port. Omit to open the
     /// connect window.
     host: Option<String>,
@@ -91,6 +96,9 @@ fn main() {
 
 fn run() -> Result<()> {
     let args = Args::parse();
+    if args.settings {
+        return settings::run();
+    }
     if args.relay.is_some() {
         eprintln!(
             "Relay connections are not implemented yet.\n\
@@ -186,7 +194,7 @@ fn run() -> Result<()> {
                 r = video => r.err().map(|e| format!("{e:#}")),
                 r = audio => r.err().map(|e| format!("{e:#}")),
                 r = stream::control_writer(send, control_rx) => r.err().map(|e| format!("{e:#}")),
-                r = stream::control_reader(recv) => r.err().map(|e| format!("{e:#}")),
+                r = stream::control_reader(recv, ui.clone()) => r.err().map(|e| format!("{e:#}")),
             };
             ui.notify(UiEvent::Disconnected(
                 reason.unwrap_or_else(|| "host ended the session".into()),

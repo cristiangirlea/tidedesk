@@ -16,7 +16,10 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 /// Bumped on any incompatible change to the messages below.
-pub const PROTOCOL_VERSION: u16 = 1;
+pub const PROTOCOL_VERSION: u16 = 2;
+
+/// Text only; leave space for framing and variant metadata.
+pub const MAX_CLIPBOARD_BYTES: usize = 48 * 1024;
 
 /// Upper bound on a control message, so a hostile peer cannot make us allocate
 /// arbitrary memory from a length prefix.
@@ -26,7 +29,7 @@ const MAX_CONTROL_MESSAGE: usize = 64 * 1024;
 pub const MAX_VIDEO_FRAME: usize = 32 * 1024 * 1024;
 
 /// Viewer → host control messages.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ClientMessage {
     /// First message on the control stream. See [`crate::auth`].
     Hello {
@@ -38,10 +41,29 @@ pub enum ClientMessage {
     Input(InputEvent),
     /// Sent when the decoder lost sync; the host answers with an IDR frame.
     RequestKeyframe,
+    SetSharing {
+        request: u64,
+        clipboard: bool,
+        mouse: bool,
+    },
+    Clipboard {
+        generation: u64,
+        text: String,
+    },
+    /// Read the host pointer without moving it.
+    PointerSync {
+        request: u64,
+    },
+    /// Mouse events are accepted only against the current host pointer epoch.
+    MouseInput {
+        epoch: u64,
+        event: InputEvent,
+    },
+    ReleaseMouse,
 }
 
 /// Host → viewer control messages.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ServerMessage {
     Welcome {
         host_name: String,
@@ -52,6 +74,18 @@ pub enum ServerMessage {
     Rejected {
         reason: RejectReason,
     },
+    Sharing(crate::sharing::SharingState),
+    Clipboard {
+        generation: u64,
+        text: String,
+    },
+    Pointer(crate::sharing::PointerPosition),
+    PointerAnchor {
+        request: u64,
+        position: crate::sharing::PointerPosition,
+    },
+    /// Display-only telemetry; never authorizes input or warps the viewer cursor.
+    Cursor(crate::sharing::PointerPosition),
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -107,7 +141,7 @@ pub enum InputEvent {
     },
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum MouseButton {
     Left,
     Right,
@@ -170,6 +204,9 @@ where
     M: Serialize,
 {
     let body = postcard::to_stdvec(msg)?;
+    if body.len() > MAX_CONTROL_MESSAGE {
+        bail!("control message exceeds limit");
+    }
     w.write_all(&(body.len() as u32).to_le_bytes()).await?;
     w.write_all(&body).await?;
     Ok(())
@@ -251,5 +288,83 @@ mod tests {
         let (mut a, mut b) = tokio::io::duplex(64);
         a.write_all(&u32::MAX.to_le_bytes()).await.unwrap();
         assert!(read_message::<_, ClientMessage>(&mut b).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn clipboard_limit_and_mouse_handoff_survive_fragmented_streams() {
+        let messages = vec![
+            ClientMessage::SetSharing {
+                request: 42,
+                clipboard: true,
+                mouse: true,
+            },
+            ClientMessage::Clipboard {
+                generation: 3,
+                text: "a".repeat(MAX_CLIPBOARD_BYTES),
+            },
+            ClientMessage::PointerSync { request: 17 },
+            ClientMessage::MouseInput {
+                epoch: 8,
+                event: InputEvent::MouseMove { x: 12, y: 34 },
+            },
+            ClientMessage::ReleaseMouse,
+        ];
+        let expected = messages.clone();
+        let (mut a, mut b) = tokio::io::duplex(17);
+        let writer = tokio::spawn(async move {
+            for message in messages {
+                write_message(&mut a, &message).await.unwrap();
+            }
+        });
+        for message in expected {
+            assert_eq!(
+                read_message::<_, ClientMessage>(&mut b).await.unwrap(),
+                Some(message)
+            );
+        }
+        writer.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn server_permissions_and_anchor_round_trip() {
+        let position = crate::sharing::PointerPosition {
+            epoch: 9,
+            x: 40000,
+            y: 50000,
+            inside: true,
+        };
+        let messages = vec![
+            ServerMessage::Sharing(crate::sharing::SharingState {
+                request: 1,
+                generation: 2,
+                clipboard: true,
+                mouse: true,
+            }),
+            ServerMessage::Pointer(position),
+            ServerMessage::Cursor(position),
+            ServerMessage::PointerAnchor {
+                request: 8,
+                position,
+            },
+            ServerMessage::Clipboard {
+                generation: 2,
+                text: "copy back".into(),
+            },
+        ];
+        for message in messages {
+            let encoded = postcard::to_stdvec(&message).unwrap();
+            let decoded: ServerMessage = postcard::from_bytes(&encoded).unwrap();
+            assert_eq!(decoded, message);
+        }
+    }
+
+    #[tokio::test]
+    async fn oversized_outbound_messages_are_rejected_before_writing() {
+        let (mut a, _) = tokio::io::duplex(1);
+        let message = ClientMessage::Clipboard {
+            generation: 1,
+            text: "a".repeat(MAX_CONTROL_MESSAGE),
+        };
+        assert!(write_message(&mut a, &message).await.is_err());
     }
 }

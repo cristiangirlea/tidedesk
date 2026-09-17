@@ -6,7 +6,9 @@ use anyhow::{Context, Result, bail};
 use openh264::OpenH264API;
 use openh264::decoder::{Decoder, DecoderConfig};
 use openh264::formats::YUVSource;
-use tidedesk_core::protocol::{self, ClientMessage, MAX_VIDEO_FRAME, VideoFrameHeader};
+use tidedesk_core::protocol::{
+    self, ClientMessage, MAX_VIDEO_FRAME, ServerMessage, VideoFrameHeader,
+};
 use tokio::sync::mpsc;
 
 use crate::playback::AudioSink;
@@ -22,6 +24,7 @@ pub struct Picture {
 #[derive(Debug)]
 pub enum UiEvent {
     NewPicture,
+    Control(ServerMessage),
     Disconnected(String),
 }
 
@@ -146,9 +149,21 @@ pub async fn control_writer(
     Ok(())
 }
 
-/// The host sends nothing after `Welcome`; this just notices the stream end.
-pub async fn control_reader(mut recv: quinn::RecvStream) -> Result<()> {
-    let mut buf = [0u8; 256];
-    while recv.read(&mut buf).await?.is_some_and(|n| n > 0) {}
+/// Receives live sharing permissions, clipboard text and pointer handoffs.
+pub async fn control_reader(mut recv: quinn::RecvStream, ui: Arc<dyn Notify>) -> Result<()> {
+    while let Some(message) = protocol::read_message::<_, ServerMessage>(&mut recv).await? {
+        if matches!(
+            message,
+            ServerMessage::Welcome { .. } | ServerMessage::Rejected { .. }
+        ) {
+            bail!("unexpected handshake message during session");
+        }
+        if let ServerMessage::Clipboard { text, .. } = &message
+            && !tidedesk_core::clipboard::valid_text(text)
+        {
+            bail!("invalid clipboard text");
+        }
+        ui.notify(UiEvent::Control(message));
+    }
     Ok(())
 }

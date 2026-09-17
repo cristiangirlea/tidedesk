@@ -273,6 +273,11 @@ impl HostApp {
             });
         ui.checkbox(&mut cfg.share_audio, "Share sound");
         ui.add_space(8.0);
+        ui.label(RichText::new("Live session permissions").strong());
+        ui.checkbox(&mut cfg.allow_clipboard, "Allow text clipboard sharing");
+        ui.checkbox(&mut cfg.allow_mouse, "Allow viewer mouse control");
+        ui.small("Applies immediately. Clipboard also needs to be enabled in Viewer Settings.");
+        ui.add_space(8.0);
 
         ui.label(RichText::new("Window").strong());
         ui.checkbox(&mut cfg.show_in_taskbar, "Show in the taskbar")
@@ -308,6 +313,8 @@ impl HostApp {
                 video.bitrate_bps = cfg.bitrate_kbps * 1000;
             }
             state.audio.store(cfg.share_audio, Ordering::SeqCst);
+            state.clipboard.store(cfg.allow_clipboard, Ordering::SeqCst);
+            state.mouse.store(cfg.allow_mouse, Ordering::SeqCst);
             if cfg.show_in_taskbar != before.show_in_taskbar {
                 platform::set_taskbar_button(WINDOW_TITLE, cfg.show_in_taskbar);
             }

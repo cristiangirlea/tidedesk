@@ -73,6 +73,8 @@ struct Launcher {
     phase: Phase,
     message: Option<(bool, String)>, // (is_error, text)
     inbox: Arc<Mutex<Vec<Update>>>,
+    show_settings: bool,
+    settings_editor: crate::settings::Editor,
 }
 
 pub fn run() -> Result<()> {
@@ -95,6 +97,8 @@ pub fn run() -> Result<()> {
         phase: Phase::Idle,
         message: None,
         inbox: Arc::default(),
+        show_settings: false,
+        settings_editor: crate::settings::Editor::default(),
     })
     .map_err(|e| anyhow!("cannot open the viewer window: {e}"))
 }
@@ -390,7 +394,13 @@ impl Launcher {
         let busy = !matches!(self.phase, Phase::Idle);
 
         // Quick connect.
-        ui.heading("Connect");
+        ui.horizontal(|ui| {
+            ui.heading("Connect");
+            if ui.button("Settings").clicked() {
+                self.settings_editor = crate::settings::Editor::default();
+                self.show_settings = true;
+            }
+        });
         ui.add_space(4.0);
         ui.add_enabled_ui(!busy, |ui| {
             egui::Grid::new("quick")
@@ -610,6 +620,11 @@ impl egui_software_backend::App for Launcher {
     fn ui(&mut self, ui: &mut egui::Ui, _backend: &mut SoftwareBackend) {
         let ctx = ui.ctx().clone();
         self.handle_updates(&ctx);
+        egui::Window::new("Session controls")
+            .open(&mut self.show_settings)
+            .resizable(true)
+            .default_width(440.0)
+            .show(&ctx, |ui| self.settings_editor.ui(ui));
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
             ui.add_space(4.0);

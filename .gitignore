@@ -1,1 +1,6 @@
 /target
+/dist
+*.exe
+*.zip
+*.pfx
+*.p12

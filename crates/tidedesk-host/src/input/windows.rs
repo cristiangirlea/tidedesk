@@ -6,18 +6,15 @@
 
 use anyhow::Result;
 use tidedesk_core::protocol::{InputEvent, MouseButton};
+use windows::Win32::Foundation::POINT;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBD_EVENT_FLAGS, KEYBDINPUT,
     KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, KEYEVENTF_SCANCODE, MOUSE_EVENT_FLAGS,
-    MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_HWHEEL, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
-    MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP, MOUSEEVENTF_MOVE, MOUSEEVENTF_RIGHTDOWN,
-    MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_VIRTUALDESK, MOUSEEVENTF_WHEEL, MOUSEEVENTF_XDOWN,
-    MOUSEEVENTF_XUP, MOUSEINPUT, SendInput, VIRTUAL_KEY,
+    MOUSEEVENTF_HWHEEL, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MIDDLEDOWN,
+    MOUSEEVENTF_MIDDLEUP, MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP, MOUSEEVENTF_WHEEL,
+    MOUSEEVENTF_XDOWN, MOUSEEVENTF_XUP, MOUSEINPUT, SendInput, VIRTUAL_KEY,
 };
-use windows::Win32::UI::WindowsAndMessaging::{
-    GetSystemMetrics, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN, SM_YVIRTUALSCREEN,
-    XBUTTON1, XBUTTON2,
-};
+use windows::Win32::UI::WindowsAndMessaging::{GetCursorPos, SetCursorPos, XBUTTON1, XBUTTON2};
 
 use super::{Backend, denormalize};
 use crate::capture::DisplayRect;
@@ -53,29 +50,24 @@ fn send(input: INPUT) {
 }
 
 impl Backend for SendInputBackend {
+    fn position(&self) -> Result<(i32, i32)> {
+        let mut point = POINT::default();
+        unsafe {
+            GetCursorPos(&mut point)?;
+        }
+        Ok((point.x, point.y))
+    }
+
     fn inject(&mut self, event: InputEvent, display: DisplayRect) -> Result<()> {
         match event {
             InputEvent::MouseMove { x, y } => {
                 let px = denormalize(x, display.left, display.width);
                 let py = denormalize(y, display.top, display.height);
-                // Absolute coordinates are normalised over the whole virtual
-                // desktop so any monitor in a multi-display layout is reachable.
-                let (vx, vy, vw, vh) = unsafe {
-                    (
-                        GetSystemMetrics(SM_XVIRTUALSCREEN),
-                        GetSystemMetrics(SM_YVIRTUALSCREEN),
-                        GetSystemMetrics(SM_CXVIRTUALSCREEN).max(2),
-                        GetSystemMetrics(SM_CYVIRTUALSCREEN).max(2),
-                    )
-                };
-                let nx = ((px - vx) as i64 * 65535 / (vw - 1) as i64) as i32;
-                let ny = ((py - vy) as i64 * 65535 / (vh - 1) as i64) as i32;
-                send(mouse(
-                    MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE | MOUSEEVENTF_VIRTUALDESK,
-                    nx,
-                    ny,
-                    0,
-                ));
+                // Synchronous physical-pixel positioning lets the authority
+                // distinguish the next local movement from our own injection.
+                unsafe {
+                    SetCursorPos(px, py)?;
+                }
             }
             InputEvent::MouseButton { button, pressed } => {
                 let (flags, data) = match (button, pressed) {
