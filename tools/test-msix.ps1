@@ -61,6 +61,16 @@ try {
     $startup = $manifest.SelectSingleNode("//*[local-name()='StartupTask']")
     if ($startup.TaskId -cne 'TideDeskHost' -or $startup.Enabled -cne 'false') { throw 'Startup must be opt-in.' }
     if (-not $archive.GetEntry('Assets/Square44x44Logo.png')) { throw 'Missing tile asset.' }
+    foreach ($notice in @(
+        'licenses/third-party/INDEX.txt',
+        'licenses/third-party/openh264-sys2-0.9.8/OpenH264-LICENSE',
+        'licenses/third-party/opusic-sys-0.7.5/Opus-COPYING',
+        'licenses/third-party/epaint_default_fonts-0.34.3/OFL.txt',
+        'licenses/third-party/epaint_default_fonts-0.34.3/UFL.txt',
+        'licenses/third-party/egui_software_backend-vendored/LICENSE-MIT'
+    )) {
+        if (-not $archive.GetEntry($notice)) { throw "Missing third-party notice: $notice" }
+    }
 } finally { $archive.Dispose() }
 Assert-Rejected @{}
 Write-Output 'MSIX packaging checks passed. Installation and Store certification are separate gates.'
