@@ -6,11 +6,12 @@ pushing a branch, tagging or publishing.
 
 ## Build and archive
 
-v0.1.0-alpha.3 introduces opt-in **experimental** Game Boost and protocol v3.
-Publish it as a prerelease, not a stable release. Both host and viewer must be
-updated; earlier v1/v2 builds cannot connect. Automated checks do not replace
-two-computer gameplay and end-to-end latency validation. Audio remains host
-system output to viewer only, without microphone forwarding or added drivers.
+v0.1.0-alpha.4 links the C runtime statically, so the executables no longer need the
+Microsoft Visual C++ Redistributable, and ships third-party license notices in the
+archive. It keeps protocol v3 and connects to v0.1.0-alpha.3; earlier v1/v2 builds
+cannot connect. Game Boost, introduced in v0.1.0-alpha.3, remains **experimental**.
+Publish it as a prerelease, not a stable release. Automated checks do not replace
+two-computer validation. Audio remains host system output to viewer only.
 
 Release jobs use GitHub-hosted Windows runners, NASM, Rust stable and Cargo.lock
 (--locked). They run formatting, clippy, tests and a workspace release build. They do
@@ -24,6 +25,8 @@ The archive is tidedesk-VERSION-windows-x64.zip, containing these files at its r
 - tidedesk-view.exe
 - README.txt
 - LICENSE
+- licenses/: earlier-release AGPL text and third-party notices, generated from
+  Cargo.lock by tools/package-third-party-notices.ps1 (index: licenses/third-party/INDEX.txt)
 
 The workflow attaches the ZIP and ZIP.sha256 to the release. Release notes also contain
 both executable hashes and a Code signing policy link. Hashes are calculated after

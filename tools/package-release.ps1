@@ -41,6 +41,9 @@ foreach ($path in @($stage, $zipPath, "$zipPath.sha256", (Join-Path $output 'rel
 New-Item -ItemType Directory -Path $stage -Force | Out-Null
 foreach ($file in $files) { Copy-Item -LiteralPath (Join-Path $binaryRoot $file) -Destination $stage }
 Copy-Item -LiteralPath (Join-Path $repo 'LICENSE') -Destination $stage
+# Binary distribution must carry the dependencies' license notices.
+Copy-Item -LiteralPath (Join-Path $repo 'licenses') -Destination $stage -Recurse
+& (Join-Path $repo 'tools/package-third-party-notices.ps1') -StageDirectory $stage | Out-Null
 $signingText = if ($Signed) {
     'The executables have verified, timestamped Authenticode signatures. Windows reputation checks may still show a warning.'
 } else {
@@ -50,11 +53,18 @@ $template = Get-Content -LiteralPath (Join-Path $repo 'assets/release-README.txt
 $template.Replace('@VERSION@', $Version).Replace('@SIGNING@', $signingText) |
     Set-Content -LiteralPath (Join-Path $stage 'README.txt') -Encoding utf8NoBOM
 $expected = @('LICENSE', 'README.txt', 'tidedesk-host.exe', 'tidedesk-view.exe')
-Compress-Archive -LiteralPath ($expected | ForEach-Object { Join-Path $stage $_ }) -DestinationPath $zipPath
+Add-Type -AssemblyName System.IO.Compression.FileSystem
+# CreateFromDirectory writes '/'-separated entry names on both PowerShell editions.
+[IO.Compression.ZipFile]::CreateFromDirectory($stage, $zipPath, [IO.Compression.CompressionLevel]::Optimal, $false)
 $archive = [IO.Compression.ZipFile]::OpenRead($zipPath)
 try {
-    $actual = @($archive.Entries | ForEach-Object { $_.FullName } | Sort-Object)
-    if (Compare-Object $expected $actual -CaseSensitive) { throw 'Unexpected ZIP layout.' }
+    $names = @($archive.Entries | ForEach-Object { $_.FullName })
+    $root = @($names | Where-Object { $_ -notlike 'licenses/*' } | Sort-Object)
+    if (Compare-Object $expected $root -CaseSensitive) { throw 'Unexpected ZIP layout.' }
+    foreach ($required in @('licenses/AGPL-3.0-only.txt', 'licenses/third-party/INDEX.txt')) {
+        if ($names -cnotcontains $required) { throw "ZIP is missing $required." }
+    }
+    if ($names | Where-Object { $_ -like '*\*' }) { throw 'ZIP entry names must use forward slashes.' }
 } finally { $archive.Dispose() }
 $hash = (Get-FileHash -LiteralPath $zipPath -Algorithm SHA256).Hash.ToLowerInvariant()
 "$hash  $stem" | Set-Content -LiteralPath "$zipPath.sha256" -Encoding ascii
@@ -73,9 +83,11 @@ $notes = @(
     '',
     '**Experimental alpha — not a stable release.** Game Boost is opt-in and off by default. Real-world two-computer gameplay and end-to-end latency validation are still pending.',
     '',
-    '**Update both host and viewer together.** This build uses protocol v3 and cannot connect to the earlier v1/v2 alpha releases.',
+    'New in this build: the executables no longer need the Microsoft Visual C++ Redistributable, so they also start on fresh Windows installations. The ZIP now includes third-party license notices in the licenses folder. There are no feature or protocol changes since v0.1.0-alpha.3.',
     '',
-    'New: experimental Game Boost, available in Viewer Settings or with Ctrl+Alt+G (customizable). Switch live without reconnecting: 60 FPS target, motion-oriented OpenH264 software encoding, a smaller pending decode queue and lower audio buffering. Turning Boost off restores the desktop profile. Actual FPS depends on both PCs and the connection; host resolution, bitrate and sharing permissions are unchanged.',
+    '**Keep host and viewer on the same release.** This build uses protocol v3: it connects to v0.1.0-alpha.3, but not to the earlier v1/v2 alpha releases.',
+    '',
+    'Retained: experimental Game Boost, available in Viewer Settings or with Ctrl+Alt+G (customizable). Switch live without reconnecting: 60 FPS target, motion-oriented OpenH264 software encoding, a smaller pending decode queue and lower audio buffering. Turning Boost off restores the desktop profile. Actual FPS depends on both PCs and the connection; host resolution, bitrate and sharing permissions are unchanged.',
     '',
     'Keyboard and desktop/absolute mouse input only. Relative game-camera input, GPU video acceleration, controllers and USB forwarding are not implemented. Audio remains host system output to viewer only; no microphone forwarding or additional driver dependency.',
     '',

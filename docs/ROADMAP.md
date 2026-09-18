@@ -13,6 +13,7 @@ See [licensing](licensing.md) for development-branch and earlier-release terms.
 - Optional text clipboard sharing, independent host permissions and custom shortcuts.
 - Separate host/viewer cursor indicators and safe mouse-control handoff.
 - Native-size viewer startup when the display permits, with per-host window placement.
+- No Visual C++ Redistributable dependency; third-party license notices ship with builds.
 
 Real-world two-computer and multi-monitor validation of recent interaction/window
 changes is still pending. No hardware encoder selector, permanent user-chosen
