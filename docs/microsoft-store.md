@@ -76,10 +76,15 @@ are separate from GitHub releases; portable ZIP users still update manually.
 
 - Review the custom license and ownership of original code; previously granted
   AGPL permissions remain unchanged. The license draft is not legal advice.
-- Audit all binary dependencies and include their required license/copyright
-  notices, including native OpenH264/Opus and embedded fonts. The current
-  licenses directory is not a complete third-party notice bundle. Do not submit
-  or distribute the candidate until that audit and packaging are complete.
+- The package script now includes license files for the locked Rust dependency
+  graph, the vendored backend, native OpenH264/Opus and embedded font notices
+  under licenses/third-party. Review this generated inventory before each
+  submission; a successful script run is not a legal clearance of all rights.
+- Resolve H.264 patent rights before Store submission. TideDesk currently builds
+  OpenH264 from source into its executables. Cisco's OpenH264 FAQ says its
+  MPEG LA royalty coverage applies to the Cisco-distributed binary module,
+  not independently built binaries. Including the BSD copyright notice does
+  not extend that separate patent coverage. See https://www.openh264.org/faq.html.
 - Use an isolated test machine/VM for development signing and installation.
   Do not install a test certificate into a production trust store. The unsigned
   candidate is not a double-click installer for end users.
@@ -120,7 +125,7 @@ $settings = @{
     PublisherDisplayName = $env:MSIX_PUBLISHER_DISPLAY_NAME
 }
 ./tools/package-msix.ps1 @settings
-./tools/test-msix.ps1 # test identity only; never installs or submits
+./tools/test-msix.ps1 # tests packaging and notices; never installs or submits
 ~~~
 
 Output directories must be new; packages are never overwritten. No signing

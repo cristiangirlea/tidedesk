@@ -63,6 +63,7 @@ foreach ($file in @('tidedesk-host.exe', 'tidedesk-view.exe')) {
 }
 Copy-Item -LiteralPath (Join-Path $repo 'LICENSE') -Destination $stage
 Copy-Item -LiteralPath (Join-Path $repo 'licenses') -Destination $stage -Recurse
+& (Join-Path $repo 'tools/package-third-party-notices.ps1') -StageDirectory $stage
 [xml]$manifest = Get-Content -LiteralPath (Join-Path $repo 'packaging/msix/AppxManifest.xml') -Raw
 $manifest.Package.Identity.SetAttribute('Name', $IdentityName)
 $manifest.Package.Identity.SetAttribute('Publisher', $Publisher)
