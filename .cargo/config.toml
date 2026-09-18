@@ -1,3 +1,14 @@
 [env]
 # libopus' bundled CMakeLists predates CMake 4's minimum policy version.
 CMAKE_POLICY_VERSION_MINIMUM = "3.5"
+# Makes CMake-built native code use the static C runtime; see the file.
+CMAKE_TOOLCHAIN_FILE = { value = "tools/cmake/static-msvc-runtime.cmake", relative = true }
+
+# Link the C runtime statically so the executables start on Windows installs
+# without the Visual C++ Redistributable, and MSIX packages need no VCLibs
+# framework dependency. cc/cmake builds of OpenH264 and Opus follow this flag.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.aarch64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
