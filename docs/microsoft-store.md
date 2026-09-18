@@ -1,8 +1,25 @@
 # Microsoft Store distribution (MSIX)
 
-Status: packaging is prepared; no Store listing, certification or Store-signed
-download is available yet. The separate GitHub ZIP remains unsigned unless the
-optional executable-signing service is enabled.
+Status: TideDesk is registered as an MSIX app in Partner Center and is still
+in draft. Packaging is prepared; no published Store listing, certification or
+Store-signed download is available yet. The separate GitHub ZIP remains unsigned
+unless the optional executable-signing service is enabled.
+
+## Registered package identity
+
+These public values are copied from the owner's Partner Center product identity.
+Keep the identity stable across updates; do not substitute a test publisher.
+
+| Field | Value |
+| --- | --- |
+| Package/Identity/Name | CristianGirlea.TideDesk |
+| Package/Identity/Publisher | CN=6B74E324-6BD2-49EA-90C8-CB25E2C0631C |
+| Package/Properties/PublisherDisplayName | Cristian Girlea |
+| Package family name | CristianGirlea.TideDesk_pj1n3tb47e7ka |
+| Store ID | 9PLH1HWXHB3Q |
+
+The Store ID is reserved, not evidence of a live listing or Microsoft signature.
+Keep MSIX_ENABLED=false until the required pre-submission checks below pass.
 
 ## One-time owner setup
 
