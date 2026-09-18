@@ -25,11 +25,13 @@ With mouse control off, the host arrow still updates and your crosshair stays in
 Native host cursor shapes and hidden-cursor states are not mirrored yet.
 After host mouse movement, the first viewer movement only aligns the viewer pointer
 to the host's current position. The next movement controls the host from there.
-Update BOTH executables: protocol v3 cannot connect to earlier v1/v2 alphas.
+Keep BOTH computers on the same release. Protocol v3 connects to v0.1.0-alpha.3
+and later, not to the earlier v1/v2 alphas.
 This alpha is for testing, not production-critical remote access. Real-world
 two-computer gameplay and end-to-end latency validation are still pending.
 
-No installation needed. Allow the host through Windows Firewall on private networks.
+No installation needed, and no Visual C++ Redistributable is required.
+Allow the host through Windows Firewall on private networks.
 @SIGNING@
 Code signing policy:
 https://github.com/cristiangirlea/tidedesk/blob/main/docs/code-signing-policy.md
@@ -46,5 +48,5 @@ Licensed under the TideDesk Personal Use Source License 1.0 (see LICENSE).
 Business use, resale and paid customer support require separate written permission.
 Earlier AGPL releases retain their original permissions; these terms are not retroactive.
 Source for this version: https://github.com/cristiangirlea/tidedesk/tree/v@VERSION@
-Dependency licenses and the vendored renderer's license notices remain in the
-source repository and corresponding dependency source distributions.
+Third-party license notices for the components built into these executables are in
+the licenses folder (see licenses/third-party/INDEX.txt).

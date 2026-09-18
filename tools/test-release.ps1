@@ -64,6 +64,11 @@ try {
         if ($expected -cne $actual) { throw "Archive changed $file." }
     }
     $readme = Get-Content -LiteralPath (Join-Path $extract 'README.txt') -Raw
+    foreach ($notice in @('licenses/third-party/INDEX.txt', 'licenses/third-party/openh264-sys2-0.9.8/OpenH264-LICENSE',
+            'licenses/third-party/opusic-sys-0.7.5/Opus-COPYING', 'licenses/AGPL-3.0-only.txt')) {
+        if (-not (Test-Path -LiteralPath (Join-Path $extract $notice) -PathType Leaf)) { throw "Archive is missing $notice." }
+    }
+    if ($readme -notmatch 'licenses/third-party/INDEX.txt') { throw 'README must point to the bundled notices.' }
     if ($readme -notmatch 'executables are unsigned' -or $readme -match '@VERSION@|@SIGNING@') {
         throw 'README has incorrect signing/version text.'
     }
