@@ -17,6 +17,7 @@ mod stream;
 mod window_placement;
 
 use std::io::Write;
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
@@ -143,11 +144,12 @@ fn run() -> Result<()> {
     let ui: Arc<dyn Notify> = Arc::new(ProxyNotify(Mutex::new(event_loop.create_proxy())));
     let picture = Arc::new(Mutex::new(Picture::default()));
     let (control_tx, control_rx) = tokio::sync::mpsc::unbounded_channel();
+    let game_boost = Arc::new(AtomicBool::new(false));
 
     // The output stream must stay on this thread for the whole session.
     let mut _audio_stream = None;
     let audio_sink = if session.audio {
-        match playback::start() {
+        match playback::start(game_boost.clone()) {
             Ok((stream, sink)) => {
                 _audio_stream = Some(stream);
                 Some(sink)
@@ -178,13 +180,14 @@ fn run() -> Result<()> {
         let ui = ui.clone();
         let picture = picture.clone();
         let control_tx = control_tx.clone();
+        let game_boost = game_boost.clone();
         runtime.spawn(async move {
             let video = async {
                 let stream = conn
                     .accept_uni()
                     .await
                     .context("waiting for video stream")?;
-                stream::video_loop(stream, picture, control_tx, ui.clone(), stats).await
+                stream::video_loop(stream, picture, control_tx, ui.clone(), stats, game_boost).await
             };
             let audio = async {
                 match audio_sink {
@@ -210,6 +213,7 @@ fn run() -> Result<()> {
         picture,
         control_tx,
         window_placement::WindowMemory::load(&fingerprint),
+        game_boost,
     );
     event_loop.run_app(&mut app)?;
 

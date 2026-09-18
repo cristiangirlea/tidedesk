@@ -13,6 +13,7 @@ pub mod paths;
 pub mod protocol;
 pub mod sharing;
 pub mod stats;
+pub mod streaming;
 
 /// Default UDP port the host listens on.
 pub const DEFAULT_PORT: u16 = 47800;

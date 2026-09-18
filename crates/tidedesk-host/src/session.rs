@@ -129,10 +129,7 @@ pub async fn run(conn: quinn::Connection, state: Arc<HostState>) -> Result<()> {
     tracing::info!("viewer \"{client_name}\" connected from {remote}");
 
     // Video.
-    let control = Arc::new(VideoControl {
-        stop: AtomicBool::new(false),
-        keyframe: AtomicBool::new(false),
-    });
+    let control = Arc::new(VideoControl::default());
     let stop_video = StopOnDrop(&control.stop);
     let (frame_tx, mut frame_rx) = tokio::sync::mpsc::channel(1);
     let video_settings = *state.video.lock().unwrap();
@@ -207,6 +204,10 @@ pub async fn run(conn: quinn::Connection, state: Arc<HostState>) -> Result<()> {
         let mut tick = tokio::time::interval(Duration::from_millis(16));
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
+            let streaming = control.streaming_status.lock().unwrap().take();
+            if let Some(status) = streaming {
+                protocol::write_message(&mut send, &ServerMessage::Streaming(status)).await?;
+            }
             if sharing.update(
                 wanted.0,
                 wanted.1 && state.clipboard.load(Ordering::SeqCst),
@@ -300,6 +301,9 @@ pub async fn run(conn: quinn::Connection, state: Arc<HostState>) -> Result<()> {
                     }
                 }
                 ClientMessage::ReleaseMouse => injector.release_mouse(),
+                ClientMessage::SetGameBoost { request, enabled } => {
+                    *control.boost_request.lock().unwrap() = (request, enabled);
+                }
                 ClientMessage::RequestKeyframe => control.keyframe.store(true, Ordering::Relaxed),
                 ClientMessage::Hello { .. } => bail!("duplicate Hello"),
             }

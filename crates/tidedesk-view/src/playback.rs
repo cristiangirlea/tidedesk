@@ -1,18 +1,14 @@
 //! Audio: Opus datagrams → jitter buffer → default output device.
 
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result, bail};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, SampleFormat, SizedSample};
 use tidedesk_core::audio::{self as fmt, StereoResampler};
-
-/// Samples buffered before playback (re)starts. Absorbs network jitter.
-const TARGET_MS: usize = 40;
-/// Beyond this the buffer is trimmed back, bounding latency after a stall or
-/// when the host's sound card clock runs slightly faster than ours.
-const MAX_MS: usize = 150;
+use tidedesk_core::streaming::audio_buffer_ms;
 
 fn samples_for_ms(ms: usize) -> usize {
     fmt::SAMPLE_RATE as usize * fmt::CHANNELS * ms / 1000
@@ -22,6 +18,25 @@ fn samples_for_ms(ms: usize) -> usize {
 struct Jitter {
     samples: VecDeque<f32>,
     playing: bool,
+    game_boost: Arc<AtomicBool>,
+    applied_boost: bool,
+}
+
+impl Jitter {
+    /// Apply profile changes inside the buffer lock, including already queued PCM.
+    fn tune(&mut self) -> usize {
+        let boost = self.game_boost.load(Ordering::Relaxed);
+        let (target_ms, max_ms) = audio_buffer_ms(boost);
+        let target = samples_for_ms(target_ms);
+        let trim = self.samples.len() > samples_for_ms(max_ms)
+            || (boost && !self.applied_boost && self.samples.len() > target);
+        self.applied_boost = boost;
+        if trim {
+            let excess = self.samples.len().saturating_sub(target) & !1;
+            self.samples.drain(..excess);
+        }
+        target
+    }
 }
 
 /// Decodes packets on the network side and hands PCM to the device callback.
@@ -70,18 +85,17 @@ impl AudioSink {
         };
         let mut j = self.jitter.lock().unwrap();
         j.samples.extend(&self.pcm[..frames * fmt::CHANNELS]);
-        let max = samples_for_ms(MAX_MS);
-        if j.samples.len() > max {
-            let excess = j.samples.len() - samples_for_ms(TARGET_MS);
-            j.samples.drain(..excess & !1);
-        }
+        j.tune();
     }
 }
 
 /// Opens the output device. The returned stream must be kept alive (and, as
 /// cpal streams are not `Send`, on the thread that created it).
-pub fn start() -> Result<(cpal::Stream, AudioSink)> {
-    let jitter = Arc::new(Mutex::new(Jitter::default()));
+pub fn start(game_boost: Arc<AtomicBool>) -> Result<(cpal::Stream, AudioSink)> {
+    let jitter = Arc::new(Mutex::new(Jitter {
+        game_boost,
+        ..Jitter::default()
+    }));
     let device = cpal::default_host()
         .default_output_device()
         .context("no audio output device")?;
@@ -119,7 +133,8 @@ where
             let frames = out.len() / channels;
             {
                 let mut j = jitter.lock().unwrap();
-                if !j.playing && j.samples.len() >= samples_for_ms(TARGET_MS) {
+                let target = j.tune();
+                if !j.playing && j.samples.len() >= target {
                     j.playing = true;
                 }
                 while j.playing && stereo_out.len() < frames * 2 {
@@ -207,6 +222,32 @@ mod tests {
         for (seq, p) in packets(40).iter().enumerate() {
             s.push_packet(seq as u32, p); // 400 ms arriving at once
         }
-        assert!(buffered(&j) <= samples_for_ms(MAX_MS));
+        assert!(buffered(&j) <= samples_for_ms(audio_buffer_ms(false).1));
+    }
+
+    #[test]
+    fn boost_trims_existing_audio_and_desktop_restores_jitter_budget() {
+        let (mut s, j) = sink();
+        let packets = packets(50);
+        for (seq, p) in packets.iter().take(10).enumerate() {
+            s.push_packet(seq as u32, p);
+        }
+        assert_eq!(buffered(&j), samples_for_ms(100));
+        {
+            let mut buffer = j.lock().unwrap();
+            buffer.game_boost.store(true, Ordering::Relaxed);
+            assert_eq!(buffer.tune(), samples_for_ms(20));
+            assert_eq!(buffer.samples.len(), samples_for_ms(20));
+        }
+        for (seq, p) in packets.iter().enumerate().take(30).skip(10) {
+            s.push_packet(seq as u32, p);
+            assert!(buffered(&j) <= samples_for_ms(60));
+        }
+        j.lock().unwrap().game_boost.store(false, Ordering::Relaxed);
+        for (seq, p) in packets.iter().enumerate().take(40).skip(30) {
+            s.push_packet(seq as u32, p);
+        }
+        assert!(buffered(&j) > samples_for_ms(60));
+        assert!(buffered(&j) <= samples_for_ms(150));
     }
 }

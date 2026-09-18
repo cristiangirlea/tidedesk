@@ -117,7 +117,21 @@ pointer to the host's current position; later movements control the host from th
 This no-snap handoff is always enforced when mouse control is on.
 
 See [clipboard and mouse controls](docs/interaction-controls.md). **Both computers
-need the new build**: protocol v2 is incompatible with the original alpha's v1.
+need the same protocol build**: this development branch uses protocol v3 and cannot
+connect to the earlier v1/v2 alphas.
+
+### Game Boost (experimental, v0.1.0-alpha.3)
+
+Open Viewer **Settings** and press **Game Boost**, or toggle it during a session
+with **Ctrl+Alt+G** (customizable). No reconnect is needed. Boost targets 60 FPS,
+uses a motion-oriented software encoder preset, reduces the pending decode queue
+and lowers audio buffering. Turning it off restores the host's desktop FPS.
+
+Host resolution, configured bitrate, mouse permissions and clipboard permissions
+stay unchanged. Actual FPS depends on the PCs, resolution and connection.
+Keyboard and desktop mouse control work; relative mouse/game-camera capture,
+hardware video acceleration, controllers and USB forwarding are not implemented.
+See [Game Boost and testing](docs/game-boost.md).
 
 ### Over the internet
 
