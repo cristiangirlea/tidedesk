@@ -4,12 +4,14 @@ use std::collections::HashSet;
 use std::num::NonZeroU32;
 use std::process::{Child, Command, Stdio};
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use tidedesk_core::clipboard::ClipboardBridge;
 use tidedesk_core::protocol::{ClientMessage, InputEvent, MouseButton, ServerMessage};
 use tidedesk_core::sharing::{PointerPosition, SharingState};
+use tidedesk_core::streaming::StreamingStatus;
 use tokio::sync::mpsc::UnboundedSender;
 use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalPosition;
@@ -44,6 +46,9 @@ pub struct App {
     focused: bool,
     last_cursor: Option<(f64, f64)>,
     settings: ViewerSettings,
+    game_boost: Arc<AtomicBool>,
+    boost_request: u64,
+    boost_status: Option<StreamingStatus>,
     sharing: SharingState,
     sharing_request: u64,
     clipboard: ClipboardBridge,
@@ -64,6 +69,7 @@ impl App {
         picture: Arc<Mutex<Picture>>,
         control: UnboundedSender<ClientMessage>,
         window_memory: WindowMemory,
+        game_boost: Arc<AtomicBool>,
     ) -> Self {
         Self {
             title,
@@ -79,6 +85,9 @@ impl App {
             focused: false,
             last_cursor: None,
             settings: ViewerSettings::load().unwrap_or_default(),
+            game_boost,
+            boost_request: 0,
+            boost_status: None,
             sharing: SharingState::default(),
             sharing_request: 0,
             clipboard: ClipboardBridge::default(),
@@ -143,6 +152,29 @@ impl App {
         self.update_title();
     }
 
+    fn configure_boost(&mut self) {
+        self.release_keys();
+        self.release_mouse();
+        self.boost_request = self.boost_request.wrapping_add(1);
+        self.boost_status = None;
+        self.game_boost.store(false, Ordering::Relaxed);
+        let _ = self.control.send(ClientMessage::SetGameBoost {
+            request: self.boost_request,
+            enabled: self.settings.game_boost,
+        });
+        self.update_title();
+    }
+
+    fn toggle_boost(&mut self) {
+        self.settings.game_boost = !self.settings.game_boost;
+        self.notice = self
+            .settings
+            .save()
+            .err()
+            .map(|e| format!("Could not save: {e}"));
+        self.configure_boost();
+    }
+
     fn update_title(&self) {
         let status = |wanted: bool, enabled: bool| {
             if !wanted {
@@ -155,8 +187,12 @@ impl App {
         };
         if let Some(surface) = &self.surface {
             surface.window.set_title(&format!(
-                "{} | Clipboard {} ({}) | Mouse {} ({}) | Settings Ctrl+Alt+S{}",
+                "{} | Game Boost {} ({}) | Clipboard {} ({}) | Mouse {} ({}) | Settings Ctrl+Alt+S{}",
                 self.title,
+                self.boost_status.map(|s| {
+                    format!("{} ({} FPS target)", if s.game_boost { "on" } else { "off" }, s.fps)
+                }).unwrap_or_else(|| "applying".into()),
+                self.settings.game_boost_shortcut.label(),
                 status(self.settings.clipboard, self.clipboard_enabled()),
                 self.settings.clipboard_shortcut.label(),
                 status(self.settings.mouse, self.mouse_enabled()),
@@ -214,6 +250,14 @@ impl App {
 
     fn host_message(&mut self, message: ServerMessage) {
         match message {
+            ServerMessage::Streaming(status)
+                if status.request == self.boost_request
+                    && status.game_boost == self.settings.game_boost =>
+            {
+                self.boost_status = Some(status);
+                self.game_boost.store(status.game_boost, Ordering::Relaxed);
+                self.update_title();
+            }
             ServerMessage::Cursor(position) => {
                 // Display only: do not release controls, send input, or warp the OS cursor.
                 self.host_cursor = Some(position);
@@ -300,7 +344,8 @@ impl App {
         if s.surface.resize(w, h).is_err() {
             return;
         }
-        let pic = self.picture.lock().unwrap();
+        let mut pic = self.picture.lock().unwrap();
+        pic.redraw_pending = false;
         let placement = Placement::fit(pic.width, pic.height, size.width, size.height);
         if placement != self.placement {
             self.pointer.invalidate();
@@ -363,6 +408,7 @@ impl ApplicationHandler<UiEvent> for App {
                 );
                 self.surface = Some(Surface { window, surface });
                 self.configure();
+                self.configure_boost();
             }
             Err(e) => {
                 self.exit_message = Some(format!("cannot create drawing surface: {e}"));
@@ -380,6 +426,9 @@ impl ApplicationHandler<UiEvent> for App {
                 }
             }
             UiEvent::Disconnected(reason) => {
+                self.game_boost.store(false, Ordering::Relaxed);
+                self.release_keys();
+                self.release_mouse();
                 self.exit_message = Some(reason);
                 event_loop.exit();
             }
@@ -527,10 +576,16 @@ impl ApplicationHandler<UiEvent> for App {
                         .matches(self.modifiers, event.physical_key);
                     let settings =
                         settings::settings_shortcut().matches(self.modifiers, event.physical_key);
-                    if clipboard || mouse || settings {
+                    let boost = self
+                        .settings
+                        .game_boost_shortcut
+                        .matches(self.modifiers, event.physical_key);
+                    if clipboard || mouse || settings || boost {
                         self.release_keys();
                         self.suppressed_keys.insert(scancode);
-                        if settings {
+                        if boost {
+                            self.toggle_boost();
+                        } else if settings {
                             self.open_settings();
                         } else {
                             self.toggle(clipboard);
@@ -568,8 +623,17 @@ impl ApplicationHandler<UiEvent> for App {
             if let Ok(settings) = ViewerSettings::load()
                 && settings != self.settings
             {
+                let sharing_changed = settings.clipboard != self.settings.clipboard
+                    || settings.mouse != self.settings.mouse;
+                let boost_changed = settings.game_boost != self.settings.game_boost;
                 self.settings = settings;
-                self.configure();
+                if sharing_changed {
+                    self.configure();
+                }
+                if boost_changed {
+                    self.configure_boost();
+                }
+                self.update_title();
             }
             if self
                 .handoff_started
@@ -600,6 +664,65 @@ mod tests {
     use super::*;
 
     #[test]
+    fn boost_waits_for_matching_ack_and_never_enables_mouse_or_clipboard() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let boost = Arc::new(AtomicBool::new(false));
+        let mut app = App::new(
+            "test".into(),
+            (2560, 1600),
+            Arc::new(Mutex::new(Picture::default())),
+            tx,
+            WindowMemory::default(),
+            boost.clone(),
+        );
+        app.settings = ViewerSettings {
+            mouse: false,
+            clipboard: false,
+            game_boost: true,
+            ..ViewerSettings::default()
+        };
+        app.held_keys.insert(17); // held W must not remain stuck across switching
+        app.configure_boost();
+        assert_eq!(
+            rx.try_recv().unwrap(),
+            ClientMessage::Input(InputEvent::Key {
+                scancode: 17,
+                pressed: false,
+            })
+        );
+        assert_eq!(rx.try_recv().unwrap(), ClientMessage::ReleaseMouse);
+        assert_eq!(
+            rx.try_recv().unwrap(),
+            ClientMessage::SetGameBoost {
+                request: 1,
+                enabled: true,
+            }
+        );
+        assert!(rx.try_recv().is_err());
+        assert!(!boost.load(Ordering::Relaxed));
+        let status = StreamingStatus::requested(1, true, 30, 8_000_000);
+        app.host_message(ServerMessage::Streaming(StreamingStatus {
+            request: 0,
+            ..status
+        }));
+        assert!(!boost.load(Ordering::Relaxed));
+        app.host_message(ServerMessage::Streaming(status));
+        assert!(boost.load(Ordering::Relaxed));
+        assert!(!app.mouse_enabled());
+        assert!(!app.clipboard_enabled());
+        assert_eq!(app.remote_size, (2560, 1600));
+        app.settings.game_boost = false;
+        app.configure_boost();
+        assert!(!boost.load(Ordering::Relaxed));
+        app.host_message(ServerMessage::Streaming(status)); // late enable acknowledgement
+        assert!(!boost.load(Ordering::Relaxed));
+        assert!(app.boost_status.is_none());
+        let desktop = StreamingStatus::requested(2, false, 30, 8_000_000);
+        app.host_message(ServerMessage::Streaming(desktop));
+        assert_eq!(app.boost_status, Some(desktop));
+    }
+
+    #[test]
     fn cursor_telemetry_is_display_only_with_control_off_or_on() {
         let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
         let mut app = App::new(
@@ -608,6 +731,7 @@ mod tests {
             Arc::new(Mutex::new(Picture::default())),
             tx,
             WindowMemory::default(),
+            Arc::new(AtomicBool::new(false)),
         );
         app.settings = ViewerSettings::default();
         app.settings.mouse = false;

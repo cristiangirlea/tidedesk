@@ -75,6 +75,15 @@ try {
         throw 'README has stale license terms.'
     }
     $releaseNotes = Get-Content -LiteralPath (Join-Path $output 'release-notes.md') -Raw
+    foreach ($text in @($readme, $releaseNotes)) {
+        if ($text -notmatch 'protocol v3' -or $text -match 'uses protocol v2|compatible with v0.1.0-alpha.1') {
+            throw 'Release text has stale protocol compatibility.'
+        }
+        if ($text -notmatch '(?is)Game Boost.*experimental|experimental.*Game Boost' -or
+            $text -notmatch 'Ctrl\+Alt\+G') {
+            throw 'Release text must describe experimental Game Boost and its shortcut.'
+        }
+    }
     if ($releaseNotes -notmatch 'Business use requires separate written permission' -or
         $releaseNotes -match 'free, open-source') {
         throw 'Release notes have stale license terms.'

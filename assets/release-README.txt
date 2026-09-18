@@ -9,7 +9,13 @@ tidedesk-view.exe  Run on the computer you are sitting at. Enter the address and
 
 Viewer Settings: text clipboard off by default; mouse control on by default.
 In the focused remote window, Ctrl+Alt+C toggles clipboard, Ctrl+Alt+M toggles mouse
-control, and Ctrl+Alt+S opens settings. Toggle shortcuts are customizable.
+control, Ctrl+Alt+G toggles Game Boost, and Ctrl+Alt+S opens settings.
+Toggle shortcuts are customizable.
+Game Boost is EXPERIMENTAL and off by default. Its Settings button applies live,
+targeting 60 FPS with smaller audio/video buffers; actual performance varies.
+Switch it off to restore desktop settings. Host resolution and bitrate are unchanged.
+Software encoding and desktop mouse only: no GPU encoding or relative game-camera input.
+Audio is host system output to viewer only; microphone forwarding is not supported.
 Clipboard sharing must also be allowed in Host Settings; it shares new text copies.
 An amber arrow shows the host pointer; a separate crosshair is your local pointer.
 The viewer remembers each host window position and monitor. Sessions open at native
@@ -19,7 +25,9 @@ With mouse control off, the host arrow still updates and your crosshair stays in
 Native host cursor shapes and hidden-cursor states are not mirrored yet.
 After host mouse movement, the first viewer movement only aligns the viewer pointer
 to the host's current position. The next movement controls the host from there.
-Update BOTH executables: protocol v2 cannot connect to the original alpha's v1.
+Update BOTH executables: protocol v3 cannot connect to earlier v1/v2 alphas.
+This alpha is for testing, not production-critical remote access. Real-world
+two-computer gameplay and end-to-end latency validation are still pending.
 
 No installation needed. Allow the host through Windows Firewall on private networks.
 @SIGNING@

@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 /// Bumped on any incompatible change to the messages below.
-pub const PROTOCOL_VERSION: u16 = 2;
+pub const PROTOCOL_VERSION: u16 = 3;
 
 /// Text only; leave space for framing and variant metadata.
 pub const MAX_CLIPBOARD_BYTES: usize = 48 * 1024;
@@ -60,6 +60,11 @@ pub enum ClientMessage {
         event: InputEvent,
     },
     ReleaseMouse,
+    /// Live streaming preset; independent of clipboard and input permissions.
+    SetGameBoost {
+        request: u64,
+        enabled: bool,
+    },
 }
 
 /// Host → viewer control messages.
@@ -86,6 +91,8 @@ pub enum ServerMessage {
     },
     /// Display-only telemetry; never authorizes input or warps the viewer cursor.
     Cursor(crate::sharing::PointerPosition),
+    /// Acknowledged only after the encoder has produced a frame with this preset.
+    Streaming(crate::streaming::StreamingStatus),
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -308,6 +315,14 @@ mod tests {
                 event: InputEvent::MouseMove { x: 12, y: 34 },
             },
             ClientMessage::ReleaseMouse,
+            ClientMessage::SetGameBoost {
+                request: 18,
+                enabled: true,
+            },
+            ClientMessage::SetGameBoost {
+                request: 19,
+                enabled: false,
+            },
         ];
         let expected = messages.clone();
         let (mut a, mut b) = tokio::io::duplex(17);
@@ -342,6 +357,9 @@ mod tests {
             }),
             ServerMessage::Pointer(position),
             ServerMessage::Cursor(position),
+            ServerMessage::Streaming(crate::streaming::StreamingStatus::requested(
+                9, true, 30, 8_000_000,
+            )),
             ServerMessage::PointerAnchor {
                 request: 8,
                 position,

@@ -1,6 +1,7 @@
 # Clipboard and mouse controls
 
-These controls use protocol v2. Update both the host and viewer together.
+This development branch uses protocol v3. Update both the host and viewer together;
+earlier protocol v1/v2 releases cannot connect to it.
 The original v0.1.0-alpha executables use v1 and cannot connect to this build.
 
 ## Viewer settings
