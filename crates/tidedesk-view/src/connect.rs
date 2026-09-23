@@ -719,29 +719,12 @@ mod tests {
         session.conn.close(0u32.into(), b"done");
     }
 
-    /// The real rendezvous service on loopback, on two neighbouring ports.
-    async fn rendezvous_service() -> SocketAddr {
-        for _ in 0..50 {
-            let main = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
-            let port = main.local_addr().unwrap().port();
-            let Some(next) = port.checked_add(1) else {
-                continue;
-            };
-            if let Ok(alt) = tokio::net::UdpSocket::bind(("127.0.0.1", next)).await {
-                let server = tidedesk_rendezvous::Server::new(Default::default());
-                tokio::spawn(tidedesk_rendezvous::serve(main, alt, server));
-                return SocketAddr::from(([127, 0, 0, 1], port));
-            }
-        }
-        panic!("no two neighbouring free UDP ports on loopback");
-    }
-
     #[tokio::test]
     async fn viewer_dialer_connects_by_device_id() {
         use tidedesk_core::nat::AgentStatus;
         use tidedesk_core::nat::signal::RendezvousStatus;
 
-        let service = rendezvous_service().await;
+        let service = tidedesk_rendezvous_proto::test_service::spawn().await;
         let dir = temp_dir("dialer-device-id");
         let identity = HostIdentity::load_or_create(&dir).unwrap();
         let (host_socket, host_tap) = SharedSocket::bind("127.0.0.1:0".parse().unwrap()).unwrap();

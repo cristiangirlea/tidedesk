@@ -9,6 +9,9 @@
 //! Every datagram is `00 'T' 'D' 'R'`, a version byte, then a postcard-encoded
 //! message, at most [`MAX_DATAGRAM`] bytes in all.
 
+#[cfg(feature = "test-service")]
+pub mod test_service;
+
 use std::fmt;
 use std::net::SocketAddr;
 use std::str::FromStr;

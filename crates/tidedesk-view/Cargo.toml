@@ -39,5 +39,5 @@ features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Security_Cryptograp
 embed-resource = "3.0.11"
 
 [dev-dependencies]
-# The real rendezvous service, for end-to-end tests of connecting by device ID.
-tidedesk-rendezvous.workspace = true
+# The in-memory rendezvous service, for end-to-end tests of connecting by device ID.
+tidedesk-rendezvous-proto = { workspace = true, features = ["test-service"] }

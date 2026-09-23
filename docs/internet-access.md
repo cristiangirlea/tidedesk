@@ -59,8 +59,9 @@ With a rendezvous service, a viewer can reach a host by its **device ID**
 (`TD-1A2B-3C4D-5E6F-7A8B`, shown in the host window) without anyone typing internet
 addresses, and a host started with `--headless` can be reached too. The service only
 introduces the two computers; the path and the session are the same direct ones as
-above. TideDesk does not come with a service yet: run your own (see
-[running a rendezvous service](rendezvous-server.md)) or use one you trust.
+above. TideDesk's own service is being set up and will be built into a coming
+release; until then, leave the setting empty (the feature stays off) unless you were
+given a service address to enter.
 
 1. **Host:** set the service under Settings, Internet, "Rendezvous service" (or start
    it with `--rendezvous host:port`). The Status tab then shows the device ID as
@@ -71,9 +72,16 @@ above. TideDesk does not come with a service yet: run your own (see
    refused.
 
 From a terminal: `tidedesk-view TD-1A2B-3C4D-5E6F-7A8B --rendezvous host:port --code …`.
-The same limits apply: no symmetric NAT, IPv4 only. The service learns each registered
-host's device ID and public address; see the privacy notes in the
-[code signing policy](code-signing-policy.md).
+The same limits apply: no symmetric NAT, IPv4 only.
+
+What a service sees while a host is registered: the host's device ID and the public
+address and port it registered from, and which public address looked up which ID.
+It never sees access codes, screens, audio, input, clipboard or host names, and
+nothing once the two computers are connected. It cannot impersonate a host: the
+viewer checks that the host's certificate hashes to the device ID it asked for, and
+the access code never passes through the service. A broken or hostile service can at
+most send a viewer to a wrong address, where that check fails. See the privacy notes
+in the [code signing policy](code-signing-policy.md).
 
 ## 2. Tailscale
 

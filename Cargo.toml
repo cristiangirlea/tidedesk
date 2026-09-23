@@ -5,7 +5,6 @@ members = [
     "crates/tidedesk-host",
     "crates/tidedesk-view",
     "crates/tidedesk-rendezvous-proto",
-    "crates/tidedesk-rendezvous",
 ]
 exclude = ["third_party"]
 
@@ -20,7 +19,6 @@ rust-version = "1.88"
 [workspace.dependencies]
 tidedesk-core = { path = "crates/tidedesk-core" }
 tidedesk-rendezvous-proto = { path = "crates/tidedesk-rendezvous-proto" }
-tidedesk-rendezvous = { path = "crates/tidedesk-rendezvous" }
 anyhow = "1"
 arboard = { version = "3.6.1", default-features = false }
 bytes = "1"
