@@ -133,10 +133,15 @@ Keyboard and desktop mouse control work; relative mouse/game-camera capture,
 hardware video acceleration, controllers and USB forwarding are not implemented.
 See [Game Boost and testing](docs/game-boost.md).
 
-### Over the internet
+### Over the internet (experimental, v0.1.0-alpha.5)
 
-Built-in relay support is coming. Until then, see [internet access](docs/internet-access.md) —
-a free VPN such as Tailscale is the easiest and safest option.
+Direct internet connections run computer to computer, with no relay, by design. The
+host shows its internet address. In the viewer, tick **Over the internet**, connect to
+that address and give the viewer's address to the person at the host, who types it
+under **Viewer on another network** and presses **Open**. Where no direct path is
+possible (symmetric NAT, common on mobile data), a free VPN such as Tailscale still
+works. See [internet access](docs/internet-access.md) and the
+[design notes](docs/design/nat-traversal.md).
 
 ## Current limitations
 

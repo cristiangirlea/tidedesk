@@ -1,18 +1,68 @@
 # Using TideDesk over the internet
 
-Built-in relay and NAT traversal are planned for version 0.3 (see the [roadmap](ROADMAP.md)).
-The `--relay` option exists but only prints a notice for now.
+TideDesk never relays a session: every connection runs directly between the two
+computers. There are several ways to get there, listed from the simplest.
 
-Until then, pick one of these. They are listed from easiest and safest to least safe.
+## 1. Direct connection (experimental, from v0.1.0-alpha.5)
 
-## 1. Tailscale (recommended)
+Both computers learn their internet address, and each person types in the other's.
+The two computers then open a path through their routers and connect directly. Both
+need v0.1.0-alpha.5 or later.
+
+1. **Host:** start TideDesk Host. The Status tab shows its **Internet address**, for
+   example `203.0.113.5:40000`. Send it and the access code to the person at the
+   viewer.
+2. **Viewer:** in the connect window, type the host's internet address and the access
+   code, tick **Over the internet**, and press Connect. The window then shows
+   **this computer's internet address**; send it to the person at the host.
+3. **Host:** type the viewer's address under **Viewer on another network** and press
+   **Open**, within two minutes.
+4. The viewer connects. On the first connection, check that the fingerprint matches
+   the one in the host window.
+
+From a terminal, step 2 is:
+
+```
+tidedesk-view --internet 203.0.113.5:40000 --code K7QM-3XPA-WZ
+```
+
+`--stun a,b` picks other STUN servers. With `--stats` the viewer logs the network
+path and its round-trip time, so you can see it goes straight to the host.
+
+**What other servers see.** To learn a computer's internet address, TideDesk asks
+public STUN servers (by default Google's and Cloudflare's). They see that computer's
+public IP address and port and a 20-byte request, nothing else. The session itself never
+passes through them. The host can turn this off or choose other servers under
+Settings, Internet.
+
+**When it cannot work.**
+
+- **Symmetric NAT** on either side, common on mobile data and some providers'
+  carrier-grade NAT: the router uses a new port for every destination, so no direct
+  path can be opened. TideDesk detects this and says so. Use option 2 or 4 instead.
+- **Same network:** if both computers have the same internet address, connect to one
+  of the host's local addresses (shown in its window) without ticking the box.
+- IPv4 only. Someone must be at the host window to press Open: a host started with
+  `--headless` cannot open a path yet. A way to connect by a device ID without that
+  step is planned.
+
+**Firewall.** The host sends the first packets towards the viewer, so Windows Firewall
+should let the viewer's packets in as answers (not yet confirmed on every network
+type). If the connection does not come through, allow TideDesk Host on the network
+in use. The viewer needs no inbound rule.
+
+For how it works, see the [design notes](design/nat-traversal.md).
+
+## 2. Tailscale
 
 [Tailscale](https://tailscale.com) builds a private encrypted network between your devices and
-is free for personal use.
+is free for personal use. It also works where a direct connection cannot, such as on
+mobile data.
 
 1. Install Tailscale on both computers and sign in with the same account.
 2. On the host, run `tidedesk-host`.
-3. On the viewer, connect to the host's Tailscale name or `100.x.y.z` address:
+3. On the viewer, connect to the host's Tailscale name or `100.x.y.z` address, without
+   ticking "Over the internet":
 
    ```
    tidedesk-view my-desktop --code K7QM-3XPA-WZ
@@ -20,15 +70,16 @@ is free for personal use.
 
 Nothing is exposed to the public internet.
 
-## 2. WireGuard
+## 3. WireGuard
 
 If you run your own [WireGuard](https://www.wireguard.com) VPN (for example on your router),
 connect the viewer to the VPN and use the host's VPN address, exactly as above.
 
-## 3. Port forwarding
+## 4. Port forwarding
 
 Forward **UDP** port `47800` on your router to the host computer, then connect to your public
-IP address or dynamic-DNS name.
+IP address or dynamic-DNS name. With a forwarded port, "Over the internet" also works
+without anyone pressing Open, after a few seconds.
 
 This exposes TideDesk directly to the internet. The connection is always encrypted, the access
 code is never sent over the network, and repeated wrong codes lock the host out for up to 15
@@ -36,4 +87,4 @@ minutes. Even so:
 
 - Keep the default random access code; rotate it with `tidedesk-host --new-code`.
 - Stop the host when you don't need it.
-- Prefer options 1 or 2 whenever you can.
+- Prefer the other options whenever you can.

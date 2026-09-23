@@ -105,6 +105,9 @@ are separate from GitHub releases; portable ZIP users still update manually.
 - Prepare real screenshots, description, age ratings, support contact, a live
   app privacy-policy URL and reviewed custom license terms for the listing.
   Do not advertise passwords, 2FA, hardware encoding or a relay as implemented.
+  Describe direct internet connections as experimental, and make sure the privacy
+  policy mentions the STUN lookups (the host about every 25 seconds while running,
+  the viewer when it connects over the internet).
 - Explain the restricted runFullTrust capability in certification notes:
   TideDesk is a user-launched Win32 desktop app using DXGI screen capture,
   WASAPI audio and permitted keyboard/mouse input for an authenticated peer.

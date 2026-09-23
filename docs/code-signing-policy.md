@@ -48,6 +48,11 @@ content; the server learns the computer's public IP address and port, as any ser
 contacts would. Turn this off, or name other servers, under Settings, Internet (or
 with `discover_public_address = false` or `stun_servers` in `host.toml`).
 
+When connecting over the internet, TideDesk Viewer asks the same STUN servers once for
+its own address (`--stun` chooses others). The small punch packets that open the path
+(42 bytes, no content) go only to the address the user typed, and the session then runs
+directly between the two computers: TideDesk never relays it through a server.
+
 Operators choose their network destinations. If they use a separate VPN or other
 third-party network service, that service's privacy policy also applies.
 

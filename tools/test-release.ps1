@@ -88,6 +88,9 @@ try {
             $text -notmatch 'Ctrl\+Alt\+G') {
             throw 'Release text must describe experimental Game Boost and its shortcut.'
         }
+        if ($text -notmatch 'direct internet' -or $text -match 'relay support is coming') {
+            throw 'Release text must describe direct internet connections and promise no relay.'
+        }
     }
     if ($releaseNotes -notmatch 'Business use requires separate written permission' -or
         $releaseNotes -match 'free, open-source') {
