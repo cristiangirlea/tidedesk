@@ -39,7 +39,6 @@ jobs:
             target/release/tidedesk-host.exe
             target/release/tidedesk-view.exe
 
-  # The rendezvous service runs on Linux servers; check it there too.
   # The wire format is what the rendezvous service, a Linux program, builds on.
   proto-linux:
     runs-on: ubuntu-latest

@@ -197,7 +197,16 @@ pub async fn serve(main: UdpSocket, alt: UdpSocket, mut service: Service) {
 
 /// Starts a service on loopback and returns its main address. The second
 /// port is the next one up, as hosts and viewers expect.
+///
+/// With `TIDEDESK_TEST_SERVICE=ip:port` set, nothing is started and that
+/// address is returned instead: the way to run the same tests against a
+/// real service on this machine.
 pub async fn spawn() -> SocketAddr {
+    if let Ok(external) = std::env::var("TIDEDESK_TEST_SERVICE") {
+        return external
+            .parse()
+            .expect("TIDEDESK_TEST_SERVICE is an ip:port");
+    }
     for _ in 0..50 {
         let main = UdpSocket::bind("127.0.0.1:0")
             .await
