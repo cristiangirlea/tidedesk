@@ -89,6 +89,22 @@ pub fn client_endpoint_on(socket: Arc<SharedSocket>) -> Result<quinn::Endpoint> 
     Ok(ep)
 }
 
+/// `host`, `host:port`, `v4:port`, `[v6]:port` or a bare IPv6 address, with
+/// `default_port` added when none is given, ready for DNS lookup.
+pub fn with_default_port(host: &str, default_port: u16) -> String {
+    let has_port = host.parse::<SocketAddr>().is_ok()
+        || host
+            .rsplit_once(':')
+            .is_some_and(|(h, p)| !h.contains(':') && p.parse::<u16>().is_ok());
+    if has_port {
+        host.to_string()
+    } else if host.contains(':') && !host.starts_with('[') {
+        format!("[{host}]:{default_port}") // bare IPv6
+    } else {
+        format!("{host}:{default_port}")
+    }
+}
+
 /// The next connection attempt whose source address is proven: an
 /// unproven one is answered with a QUIC Retry (one extra round trip) and
 /// comes back proven, while a spoofed source never does. Keeps a host that
@@ -180,6 +196,25 @@ impl ServerCertVerifier for FingerprintVerifier {
 mod tests {
     use super::*;
     use crate::identity::test_identity;
+
+    #[test]
+    fn default_port_is_added_only_when_missing() {
+        assert_eq!(with_default_port("my-pc", 47800), "my-pc:47800");
+        assert_eq!(with_default_port("my-pc:5000", 47800), "my-pc:5000");
+        assert_eq!(with_default_port("192.0.2.1", 3478), "192.0.2.1:3478");
+        assert_eq!(
+            with_default_port("192.0.2.1:19302", 3478),
+            "192.0.2.1:19302"
+        );
+        assert_eq!(
+            with_default_port("2001:db8::1", 47800),
+            "[2001:db8::1]:47800"
+        );
+        assert_eq!(
+            with_default_port("[2001:db8::1]:9", 47800),
+            "[2001:db8::1]:9"
+        );
+    }
 
     #[tokio::test]
     async fn unvalidated_addresses_are_retried_before_the_handshake() {

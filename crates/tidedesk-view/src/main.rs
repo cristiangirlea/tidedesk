@@ -56,6 +56,16 @@ struct Args {
     #[arg(long)]
     accept_new_fingerprint: bool,
 
+    /// Reach a host on another network: HOST is the internet address its
+    /// window shows. The person at the host then types this computer's
+    /// internet address (printed here) and presses Open. No relay is used.
+    #[arg(long)]
+    internet: bool,
+
+    /// STUN servers for --internet, comma-separated [default: the built-in ones].
+    #[arg(long, value_delimiter = ',', requires = "internet")]
+    stun: Vec<String>,
+
     /// Connect through a relay server (not available yet).
     #[arg(long, value_name = "URL")]
     relay: Option<String>,
@@ -66,6 +76,19 @@ struct ProxyNotify(Mutex<EventLoopProxy<UiEvent>>);
 impl Notify for ProxyNotify {
     fn notify(&self, event: UiEvent) {
         let _ = self.0.lock().unwrap().send_event(event);
+    }
+}
+
+/// Shows how opening an internet path goes, on the console.
+fn print_progress(step: connect::Progress) {
+    match step {
+        connect::Progress::Status(text) => eprintln!("{text}"),
+        connect::Progress::ViewerAddress(me) => eprintln!(
+            "\n  This computer's internet address: {me}\n  \
+             Give it to the person at the host: they type it under \"Viewer on another network\" \
+             and press Open.\n"
+        ),
+        connect::Progress::PathOpen(path) => eprintln!("Path open to {}.", path.peer),
     }
 }
 
@@ -112,6 +135,18 @@ fn run() -> Result<()> {
     let Some(host) = args.host.clone() else {
         return launcher::run();
     };
+    let route = if args.internet {
+        connect::parse_internet_host(&host)?;
+        if args.stun.is_empty() {
+            connect::Route::internet()
+        } else {
+            connect::Route::Internet {
+                stun_servers: args.stun.clone(),
+            }
+        }
+    } else {
+        connect::Route::Direct
+    };
     let code = match args.code.clone() {
         Some(c) => c,
         None => prompt_code()?,
@@ -128,8 +163,9 @@ fn run() -> Result<()> {
         want_audio: !args.no_audio,
         expected_fingerprint: args.fingerprint.clone(),
         accept_new_fingerprint: args.accept_new_fingerprint,
+        route,
     };
-    let session = runtime.block_on(connect::connect(&opts))?;
+    let session = runtime.block_on(connect::connect(&opts, print_progress))?;
     tracing::info!(
         "connected to \"{}\" ({}x{}, audio {})",
         session.host_name,
@@ -137,6 +173,7 @@ fn run() -> Result<()> {
         session.height,
         if session.audio { "on" } else { "off" }
     );
+    tracing::info!("path: {}", session.route);
 
     let event_loop = EventLoop::<UiEvent>::with_user_event()
         .build()
@@ -174,6 +211,9 @@ fn run() -> Result<()> {
         height,
         ..
     } = session;
+    if args.stats {
+        runtime.spawn(tidedesk_core::stats::log_path(conn.clone(), "path to host"));
+    }
     {
         let stats = args.stats;
         let conn = conn.clone();

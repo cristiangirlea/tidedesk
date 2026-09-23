@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use tidedesk_core::nat::punch::KEEPALIVE_MAX;
-use tidedesk_core::nat::{Agent, PunchError};
+use tidedesk_core::nat::{Agent, NotPublic, PunchError, check_public};
 use tokio::runtime::Handle;
 
 use crate::session::HostState;
@@ -74,22 +74,22 @@ pub fn parse_expected_viewer(text: &str, own: Option<IpAddr>) -> Result<SocketAd
         }
         .to_string()
     })?;
-    let SocketAddr::V4(v4) = addr else {
-        return Err("Internet connections use IPv4 addresses for now.".into());
-    };
-    let ip = v4.ip();
-    let [a, b, ..] = ip.octets();
-    // 100.64.0.0/10: carrier-grade NAT, and VPNs such as Tailscale.
-    let carrier_or_vpn = a == 100 && b & 0xC0 == 64;
-    if ip.is_private() || ip.is_loopback() || ip.is_link_local() || carrier_or_vpn {
-        return Err(
-            "That is a local network address (or a VPN's, such as Tailscale). \
-             A viewer on that network can connect to this computer's addresses above directly."
-                .into(),
-        );
-    }
-    if ip.is_unspecified() || ip.is_broadcast() || ip.is_multicast() || v4.port() == 0 {
-        return Err("That is not an address a viewer can have.".into());
+    match check_public(addr) {
+        Ok(()) => {}
+        Err(NotPublic::Ipv6) => {
+            return Err("Internet connections use IPv4 addresses for now.".into());
+        }
+        Err(NotPublic::Local) => {
+            return Err(
+                "That is a local network address (or a VPN's, such as Tailscale). \
+                 A viewer on that network can connect to this computer's addresses above \
+                 directly."
+                    .into(),
+            );
+        }
+        Err(NotPublic::Unusable) => {
+            return Err("That is not an address a viewer can have.".into());
+        }
     }
     if own == Some(addr.ip()) {
         // Punching through one's own router needs hairpinning, which many
