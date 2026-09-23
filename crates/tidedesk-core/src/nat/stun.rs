@@ -37,6 +37,11 @@ const RETRANSMIT_AT: [Duration; 4] = [
 /// When to give up on servers that have not answered.
 const GIVE_UP_AFTER: Duration = Duration::from_millis(7500);
 
+/// Once one server has answered, how long to wait for the others. Their
+/// answers only refine the NAT classification, and this covers two of their
+/// retransmissions.
+const SECOND_OPINION_WAIT: Duration = Duration::from_secs(2);
+
 const BINDING_REQUEST: u16 = 0x0001;
 const BINDING_SUCCESS: u16 = 0x0101;
 const BINDING_ERROR: u16 = 0x0111;
@@ -197,8 +202,7 @@ pub struct PublicEndpoint {
 pub struct Discovery {
     started: Instant,
     servers: Vec<Query>,
-    /// Index of the server that answered first; its answer is the address.
-    first: Option<usize>,
+    first_answer_at: Option<Instant>,
     expired: bool,
 }
 
@@ -247,7 +251,7 @@ impl Discovery {
         Self {
             started: now,
             servers,
-            first: None,
+            first_answer_at: None,
             expired: false,
         }
     }
@@ -286,7 +290,7 @@ impl Discovery {
         match decode_binding_response(datagram) {
             Ok((_, addr)) => {
                 self.servers[index].answer = Some(addr);
-                self.first.get_or_insert(index);
+                self.first_answer_at.get_or_insert(now);
                 self.current()
             }
             Err(e) => {
@@ -309,14 +313,19 @@ impl Discovery {
             .min()
             .copied()
             .unwrap_or(GIVE_UP_AFTER);
-        Some(self.started + next)
+        let next = self.started + next;
+        Some(match self.second_opinion_end() {
+            Some(end) => next.min(end),
+            None => next,
+        })
     }
 
-    /// `None` while still waiting; the result once every server answered or
-    /// the time is up.
+    /// `None` while still waiting; the result once every server answered,
+    /// the others had a while to follow the first answer, or the time is up.
     pub fn outcome(&self, now: Instant) -> Option<Result<PublicEndpoint, String>> {
         let timed_out = now.saturating_duration_since(self.started) >= GIVE_UP_AFTER;
-        if !timed_out && !self.finished() {
+        let waited = self.second_opinion_end().is_some_and(|end| now >= end);
+        if !timed_out && !waited && !self.finished() {
             return None;
         }
         Some(self.current().ok_or_else(|| {
@@ -339,8 +348,14 @@ impl Discovery {
         self.servers.iter().all(|q| !q.pending())
     }
 
+    fn second_opinion_end(&self) -> Option<Instant> {
+        self.first_answer_at.map(|at| at + SECOND_OPINION_WAIT)
+    }
+
+    /// The answers so far. The earliest configured server that answered
+    /// names the address, so it does not change with which reply was faster.
     fn current(&self) -> Option<PublicEndpoint> {
-        let first = &self.servers[self.first?];
+        let first = self.servers.iter().find(|q| q.answer.is_some())?;
         let answers: Vec<SocketAddr> = self.servers.iter().filter_map(|q| q.answer).collect();
         let nat = match answers.as_slice() {
             [] | [_] => NatKind::Unknown,
@@ -679,6 +694,62 @@ mod tests {
             err.contains("strict (STUN error 401 Unauthorized)"),
             "{err}"
         );
+    }
+
+    #[test]
+    fn the_first_configured_server_names_the_address() {
+        // Whichever reply wins the race, the address must not flip between
+        // rounds; the configured order decides.
+        let t0 = Instant::now();
+        let mut d = Discovery::new(
+            vec![
+                server("a", "192.0.2.10:3478"),
+                server("b", "198.51.100.20:3478"),
+            ],
+            t0,
+        );
+        let requests = d.poll(t0);
+        let reply = |i: usize, mapped: &str| {
+            encode_binding_response(&id_of(&requests[i].1), mapped.parse().unwrap())
+        };
+        let early = d.on_datagram(&reply(1, "203.0.113.5:40001"), t0).unwrap();
+        assert_eq!(early.via, "b");
+        let both = d.on_datagram(&reply(0, "203.0.113.5:40000"), t0).unwrap();
+        assert_eq!((both.via.as_str(), both.addr.port()), ("a", 40000));
+        assert_eq!(d.outcome(t0).unwrap().unwrap(), both);
+    }
+
+    #[test]
+    fn a_silent_server_is_waited_for_only_briefly_after_another_answers() {
+        let t0 = Instant::now();
+        let ms = |n| t0 + Duration::from_millis(n);
+        let mut d = Discovery::new(
+            vec![
+                server("a", "192.0.2.10:3478"),
+                server("silent", "198.51.100.20:3478"),
+            ],
+            t0,
+        );
+        let requests = d.poll(t0);
+        let reply =
+            encode_binding_response(&id_of(&requests[0].1), "203.0.113.5:40000".parse().unwrap());
+        d.on_datagram(&reply, ms(100)).unwrap();
+
+        assert_eq!(
+            d.outcome(ms(100)),
+            None,
+            "the other server may still answer"
+        );
+        assert_eq!(
+            d.next_deadline(),
+            Some(ms(500)),
+            "its retransmission comes first"
+        );
+        assert_eq!(d.poll(ms(1500)).len(), 1);
+        assert_eq!(d.next_deadline(), Some(ms(2100)), "then the wait ends");
+        assert_eq!(d.outcome(ms(2099)), None);
+        let public = d.outcome(ms(2100)).expect("waited long enough").unwrap();
+        assert_eq!((public.via.as_str(), public.nat), ("a", NatKind::Unknown));
     }
 
     #[test]

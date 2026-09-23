@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use tidedesk_core::nat::stun::DEFAULT_STUN_SERVERS;
 use tidedesk_core::{DEFAULT_PORT, paths};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -22,6 +23,10 @@ pub struct HostConfig {
     pub show_in_taskbar: bool,
     /// Start with the window hidden in the tray.
     pub start_in_tray: bool,
+    /// Ask STUN servers for this computer's internet address.
+    pub discover_public_address: bool,
+    /// `host[:port]` of the STUN servers to ask; empty means the defaults.
+    pub stun_servers: Vec<String>,
 }
 
 impl Default for HostConfig {
@@ -36,6 +41,8 @@ impl Default for HostConfig {
             port: DEFAULT_PORT,
             show_in_taskbar: false,
             start_in_tray: false,
+            discover_public_address: true,
+            stun_servers: Vec::new(),
         }
     }
 }
@@ -77,6 +84,27 @@ impl HostConfig {
             .clamp(*Self::BITRATE_RANGE.start(), *Self::BITRATE_RANGE.end());
         self
     }
+
+    /// The STUN servers to ask: the configured ones, else the defaults. The
+    /// defaults are not saved, so a later version can change them.
+    pub fn effective_stun_servers(&self) -> Vec<String> {
+        let configured = parse_stun_servers(&self.stun_servers.join(","));
+        if configured.is_empty() {
+            DEFAULT_STUN_SERVERS.iter().map(|s| s.to_string()).collect()
+        } else {
+            configured
+        }
+    }
+}
+
+/// Reads a comma- or space-separated list of STUN servers as typed in the
+/// settings; empty entries are dropped.
+pub fn parse_stun_servers(text: &str) -> Vec<String> {
+    text.split([',', ' '])
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .collect()
 }
 
 #[cfg(test)]
@@ -90,6 +118,31 @@ mod tests {
         assert_eq!(cfg.fps, 60);
         assert!(cfg.show_in_taskbar);
         assert_eq!(cfg.port, DEFAULT_PORT);
+    }
+
+    #[test]
+    fn defaults_enable_discovery_with_two_stun_servers() {
+        let cfg = HostConfig::default();
+        assert!(cfg.discover_public_address);
+        assert_eq!(cfg.effective_stun_servers(), DEFAULT_STUN_SERVERS);
+        // The defaults are not written out, so a later release can change them.
+        assert!(cfg.stun_servers.is_empty());
+        let old: HostConfig = toml::from_str("fps = 30\nport = 47800").unwrap();
+        assert_eq!(old.effective_stun_servers(), DEFAULT_STUN_SERVERS);
+    }
+
+    #[test]
+    fn empty_stun_list_falls_back_to_defaults() {
+        let blank: HostConfig = toml::from_str("stun_servers = [\" \", \"\"]").unwrap();
+        assert_eq!(blank.effective_stun_servers(), DEFAULT_STUN_SERVERS);
+        assert!(parse_stun_servers("  , ").is_empty());
+        let chosen = parse_stun_servers(" stun.example.org, 192.0.2.1:3478 ,other");
+        assert_eq!(chosen, ["stun.example.org", "192.0.2.1:3478", "other"]);
+        let cfg = HostConfig {
+            stun_servers: chosen.clone(),
+            ..Default::default()
+        };
+        assert_eq!(cfg.effective_stun_servers(), chosen);
     }
 
     #[test]

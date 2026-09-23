@@ -6,9 +6,11 @@
 //! QUIC then runs over the opened path. All of this shares the one UDP socket
 //! QUIC listens on, because a router's mapping belongs to that socket's port.
 
+pub mod agent;
 pub mod socket;
 pub mod stun;
 
+pub use agent::{Agent, AgentStatus, PublicStatus};
 pub use socket::{RawDatagram, SharedSocket};
 pub use stun::{NatKind, PublicEndpoint};
 

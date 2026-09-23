@@ -19,10 +19,13 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::AtomicBool;
+use std::time::Duration;
 
 use anyhow::{Context, Result};
 use clap::Parser;
 use tidedesk_core::identity::HostIdentity;
+use tidedesk_core::nat::stun::STUN_REFRESH;
+use tidedesk_core::nat::{Agent, PublicStatus, SharedSocket};
 use tidedesk_core::{auth, net, paths};
 
 #[derive(Parser, Debug)]
@@ -165,15 +168,29 @@ fn run(args: Args) -> Result<()> {
         .worker_threads(2)
         .enable_all()
         .build()?;
-    let endpoint = {
+    let (endpoint, agent) = {
         let _guard = runtime.enter();
-        net::server_endpoint(listen, &identity)?
+        let (socket, side_channel) =
+            SharedSocket::bind(listen).with_context(|| format!("listening on {listen}"))?;
+        let agent = Agent::spawn(socket.clone(), side_channel)?;
+        (net::server_endpoint_on(socket, &identity)?, agent)
     };
+    if config.discover_public_address {
+        agent.start_refresh(config.effective_stun_servers(), STUN_REFRESH);
+    }
+    let mut agent_status = agent.status();
+    let repaint = state.clone();
+    runtime.spawn(async move {
+        while agent_status.changed().await.is_ok() {
+            repaint.changed();
+        }
+    });
     runtime.spawn(accept_loop(endpoint, state.clone()));
 
     if !args.headless {
         return gui::run(gui::HostInfo {
             state,
+            agent,
             start_hidden: args.tray || config.start_in_tray,
             config,
             fingerprint: identity.fingerprint(),
@@ -181,6 +198,13 @@ fn run(args: Args) -> Result<()> {
         });
     }
 
+    // A first answer usually takes a fraction of a second.
+    let internet = runtime.block_on(async {
+        let mut status = agent.status();
+        let looked_up = status.wait_for(|s| s.public != PublicStatus::Discovering);
+        let _ = tokio::time::timeout(Duration::from_secs(5), looked_up).await;
+        agent.public()
+    });
     let code = state.code.lock().unwrap().clone();
     println!();
     println!(
@@ -189,6 +213,7 @@ fn run(args: Args) -> Result<()> {
     );
     println!("  Access code:  {code}");
     println!("  Fingerprint:  {}", identity.fingerprint());
+    println!("  Internet address: {internet}");
     println!();
     println!("  Connect with: tidedesk-view <this-pc-address> --code {code}");
     println!();
