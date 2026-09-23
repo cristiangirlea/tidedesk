@@ -188,7 +188,8 @@ impl Launcher {
                 .unwrap_or_default();
             if service.is_empty() {
                 return self.fail(
-                    "Connecting by device ID needs a rendezvous service: set one in Settings."
+                    "Connecting by device ID needs a rendezvous service: enter it in Settings \
+                     and press Save settings."
                         .into(),
                 );
             }

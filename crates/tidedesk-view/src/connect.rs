@@ -431,9 +431,16 @@ impl Dialer {
         let display = &self.address;
         let mut known = self.known_hosts()?;
         match self.pin_status(&known, &fp) {
-            // Possibly under another address: an internet address and port
-            // can change with every restart, so this one is not remembered.
-            PinStatus::Trusted => {}
+            // An internet address and port can change with every restart, so
+            // one trusted by its fingerprint is not remembered. A device ID
+            // is stable: remember it, so the launcher lists it as recent.
+            PinStatus::Trusted => {
+                if self.route.kind == RouteKind::Rendezvous
+                    && known.check(display, &fp) != PinStatus::Trusted
+                {
+                    known.pin(display, &fp)?;
+                }
+            }
             PinStatus::Unknown => match &opts.expected_fingerprint {
                 Some(expected) if normalize_fingerprint(expected) != normalize_fingerprint(&fp) => {
                     bail!("host fingerprint {fp} does not match the one you supplied");
@@ -548,6 +555,10 @@ mod tests {
     use tidedesk_core::nat::stun::{self, TransactionId};
 
     use super::*;
+
+    fn temp_dir_path(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("tidedesk-test-{name}-{}", std::process::id()))
+    }
 
     fn temp_dir(name: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!("tidedesk-test-{name}-{}", std::process::id()));
@@ -766,6 +777,11 @@ mod tests {
         assert_eq!(session.route.peer, host_addr);
         assert_eq!(session.fingerprint, identity.fingerprint());
         session.conn.close(0u32.into(), b"done");
+        let known = KnownHosts::load(&temp_dir_path("dialer-device-id")).unwrap();
+        assert!(
+            known.addresses().any(|a| a == id),
+            "remembered under the ID, for the recent list"
+        );
 
         let unknown = Dialer::new(
             "TD-0000-0000-0000-0001",

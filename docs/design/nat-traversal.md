@@ -186,8 +186,10 @@ first 64 bits of the SHA-256 of the host's certificate, shown as
   it asked for, so neither the service nor anyone else can impersonate a host. There
   is no fingerprint question: the ID is the fingerprint's start. 64 bits keep forging
   an ID out of reach (about 2^64 work).
-- The service never sees the access code or session data, keeps everything in memory,
-  answers no question with more bytes than it was asked, and rate-limits each address.
+- The service never sees the access code or session data and keeps everything in
+  memory. A Hello is padded to at least the size of its answer; registrations and
+  lookups must return a challenge sent to the sender's own address, and refreshes a
+  secret token, so a forged source address gains nothing. Each address is rate-limited.
 
 ## Validation checklist
 

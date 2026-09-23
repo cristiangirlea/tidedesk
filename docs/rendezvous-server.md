@@ -63,6 +63,14 @@ The service keeps this in memory only and logs counts every five minutes, never 
 addresses. Operators publishing a service for others should still say so in their own
 privacy notice.
 
+## What a rendezvous service can and cannot do to its users
+
+A service cannot impersonate a host: the viewer checks that the host's certificate
+hashes to the device ID it asked for, and the access code never passes through the
+service. A hostile or broken service can send viewers to a wrong address, where the
+connection fails that check, and make a viewer punch that address for up to 20 seconds
+first. Use a service you trust.
+
 ## Limits and abuse
 
 - Each IP address may send 10 datagrams per second (bursts of 20); the rest are dropped.

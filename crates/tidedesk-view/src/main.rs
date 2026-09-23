@@ -212,6 +212,12 @@ fn run() -> Result<()> {
     let Some(host) = args.host.clone() else {
         return launcher::run();
     };
+    if args.rendezvous.is_some() && connect::parse_device_id(&host).is_none() {
+        bail!(
+            "--rendezvous is for connecting by device ID, and {host} is not one (device IDs \
+             look like TD-1A2B-3C4D-5E6F-7A8B)"
+        );
+    }
     let route = if connect::parse_device_id(&host).is_some() {
         if args.internet {
             bail!("a device ID is found through a rendezvous service; leave out --internet");

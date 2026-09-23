@@ -91,6 +91,8 @@ pub struct Lookup {
     device_id: DeviceId,
     started: Instant,
     nonce: Nonce,
+    /// Nonces of earlier rounds: a late answer to one still counts.
+    earlier: Vec<Nonce>,
     phase: LookupPhase,
     reflexive: Option<SocketAddr>,
     alt_reflexive: Option<SocketAddr>,
@@ -123,6 +125,7 @@ impl Lookup {
             device_id,
             started: now,
             nonce: random_bytes(),
+            earlier: Vec::new(),
             phase: LookupPhase::Hello {
                 next: now,
                 retry: LOOKUP_FIRST_RETRY,
@@ -154,7 +157,7 @@ impl Lookup {
             }
             LookupPhase::Asking { tries, .. } if *tries >= REGISTER_TRIES => {
                 // The challenge may have gone stale: ask for a new one.
-                self.nonce = random_bytes();
+                self.new_round();
                 self.phase = LookupPhase::Hello {
                     next: now,
                     retry: LOOKUP_FIRST_RETRY,
@@ -209,7 +212,7 @@ impl Lookup {
                 nonce,
                 session,
                 peer,
-            } if nonce == self.nonce => {
+            } if self.answers(&nonce) => {
                 let Some(reflexive) = self.reflexive else {
                     return;
                 };
@@ -225,13 +228,13 @@ impl Lookup {
                     nat,
                 }));
             }
-            FromServer::NotFound { nonce } if nonce == self.nonce => {
+            FromServer::NotFound { nonce } if self.answers(&nonce) => {
                 self.outcome = Some(LookupOutcome::NotFound);
             }
             FromServer::Error {
                 code: ErrorCode::UnknownChallenge,
             } => {
-                self.nonce = random_bytes();
+                self.new_round();
                 self.phase = LookupPhase::Hello {
                     next: now,
                     retry: LOOKUP_FIRST_RETRY,
@@ -254,6 +257,15 @@ impl Lookup {
 
     pub fn outcome(&self) -> Option<&LookupOutcome> {
         self.outcome.as_ref()
+    }
+
+    fn new_round(&mut self) {
+        self.earlier.push(self.nonce);
+        self.nonce = random_bytes();
+    }
+
+    fn answers(&self, nonce: &Nonce) -> bool {
+        *nonce == self.nonce || self.earlier.contains(nonce)
     }
 }
 
@@ -848,6 +860,34 @@ mod tests {
             "{:?}",
             silent.outcome()
         );
+    }
+
+    #[test]
+    fn lookup_accepts_a_late_answer_to_an_earlier_round() {
+        let t0 = Instant::now();
+        let mut l = Lookup::new("s".into(), addr(SERVICE), DeviceId([1; 8]), t0);
+        let first = lookup_hello_nonce(&mut l, t0);
+        let challenge = FromServer::Challenge {
+            nonce: first,
+            challenge: [4; 16],
+            reflexive: addr(ME),
+        };
+        l.on_datagram(addr(SERVICE), &encode(&challenge), t0);
+        l.poll(t0);
+        // The service forgot the challenge: a new round starts...
+        let stale = FromServer::Error {
+            code: ErrorCode::UnknownChallenge,
+        };
+        l.on_datagram(addr(SERVICE), &encode(&stale), t0);
+        assert_ne!(lookup_hello_nonce(&mut l, t0), first);
+        // ...and the answer to the first round, arriving late, still counts.
+        let late = FromServer::Introduced {
+            nonce: first,
+            session: [5; 8],
+            peer: addr(HOST),
+        };
+        l.on_datagram(addr(SERVICE), &encode(&late), t0);
+        assert!(matches!(l.outcome(), Some(LookupOutcome::Introduced(i)) if i.peer == addr(HOST)));
     }
 
     #[test]
