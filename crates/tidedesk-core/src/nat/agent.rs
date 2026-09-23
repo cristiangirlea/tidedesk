@@ -1,6 +1,7 @@
 //! The side-channel actor: owns the shared socket's tap and runs STUN on the
 //! port QUIC uses, so the address it learns is the one peers must reach.
 
+use std::collections::HashMap;
 use std::fmt;
 use std::io;
 use std::net::SocketAddr;
@@ -8,9 +9,10 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use tokio::runtime::Handle;
-use tokio::sync::{broadcast, mpsc, watch};
+use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 
+use super::punch::{Exchange, Punched, SessionId, State};
 use super::socket::{RawDatagram, SharedSocket};
 use super::stun::{Discovery, NatKind, PublicEndpoint, resolve_servers};
 
@@ -40,6 +42,26 @@ impl fmt::Display for PublicStatus {
     }
 }
 
+/// Why [`Agent::punch`] did not open a path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PunchError {
+    /// The window passed without an answer from the peer.
+    NoReply,
+    /// Punching towards this peer was stopped or started again.
+    Stopped,
+}
+
+impl fmt::Display for PunchError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::NoReply => "no reply from the other computer",
+            Self::Stopped => "stopped before the other computer replied",
+        })
+    }
+}
+
+impl std::error::Error for PunchError {}
+
 /// Everything the agent reports. Later increments add hole-punching state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentStatus {
@@ -51,6 +73,8 @@ pub struct Agent {
     runtime: Handle,
     dispatcher: JoinHandle<()>,
     refresh: Mutex<Option<JoinHandle<()>>>,
+    /// Punch exchanges by the peer address they were started with.
+    paths: Mutex<HashMap<SocketAddr, JoinHandle<()>>>,
 }
 
 /// What a task working for the agent needs; cheap to clone into one.
@@ -92,6 +116,7 @@ impl Agent {
             runtime,
             dispatcher,
             refresh: Mutex::new(None),
+            paths: Mutex::new(HashMap::new()),
         }))
     }
 
@@ -140,6 +165,43 @@ impl Agent {
         }
     }
 
+    /// Punches towards `peer` until it answers or `window` passes, and
+    /// resolves once the path is open. Keepalives then continue for a while
+    /// (see [`super::punch`]) unless [`Agent::stop_punching`] ends them.
+    /// Punching again towards the same `peer` replaces the earlier exchange.
+    ///
+    /// The side that starts a connection passes a new session ID; the other
+    /// side may pass `None` to take the first session it sees.
+    pub async fn punch(
+        &self,
+        peer: SocketAddr,
+        session: Option<SessionId>,
+        window: Duration,
+    ) -> Result<Punched, PunchError> {
+        let (opened, result) = oneshot::channel();
+        let link = self.link.clone();
+        let exchange = self.runtime.spawn(async move {
+            link.run_exchange(peer, session, window, opened).await;
+        });
+        {
+            let mut paths = self.paths.lock().unwrap();
+            paths.retain(|_, task| !task.is_finished());
+            if let Some(earlier) = paths.insert(peer, exchange) {
+                earlier.abort();
+            }
+        }
+        // A dropped sender means the exchange was aborted.
+        result.await.unwrap_or(Err(PunchError::Stopped))
+    }
+
+    /// Stops punching and keepalives towards `peer` (as passed to
+    /// [`Agent::punch`]).
+    pub fn stop_punching(&self, peer: SocketAddr) {
+        if let Some(exchange) = self.paths.lock().unwrap().remove(&peer) {
+            exchange.abort();
+        }
+    }
+
     /// Stops asking and marks discovery as turned off.
     pub fn stop_refresh(&self) {
         if let Some(task) = self.refresh.lock().unwrap().take() {
@@ -159,6 +221,9 @@ impl Drop for Agent {
         self.dispatcher.abort();
         if let Some(task) = self.refresh.get_mut().unwrap().take() {
             task.abort();
+        }
+        for exchange in self.paths.get_mut().unwrap().values() {
+            exchange.abort();
         }
     }
 }
@@ -205,6 +270,61 @@ impl Link {
         }
     }
 
+    /// Runs one punch exchange, reporting to `opened` once it opens or
+    /// expires; keepalives then go on until the exchange finishes. Stops
+    /// early if the caller stops waiting before the path opened.
+    async fn run_exchange(
+        &self,
+        peer: SocketAddr,
+        session: Option<SessionId>,
+        window: Duration,
+        opened: oneshot::Sender<Result<Punched, PunchError>>,
+    ) {
+        let mut datagrams = self.datagrams.subscribe();
+        let mut exchange = Exchange::new(peer, session, window, Instant::now());
+        let mut waiting = Some(opened);
+        loop {
+            if let Some((to, punch)) = exchange.poll(Instant::now()) {
+                self.send(to, &punch).await;
+            }
+            match exchange.state() {
+                State::Open(path) => {
+                    if let Some(caller) = waiting.take() {
+                        let _ = caller.send(Ok(path.clone()));
+                    }
+                }
+                State::Expired => {
+                    if let Some(caller) = waiting.take() {
+                        let _ = caller.send(Err(PunchError::NoReply));
+                    }
+                    return;
+                }
+                State::Punching => {}
+            }
+            let Some(wake) = exchange.next_deadline() else {
+                return; // keepalives are over
+            };
+            tokio::select! {
+                _ = tokio::time::sleep_until(wake.into()) => {}
+                () = caller_gone(&mut waiting) => return,
+                received = datagrams.recv() => {
+                    if let Ok(datagram) = received
+                        && let Some((to, ack)) =
+                            exchange.on_datagram(datagram.from, &datagram.data, Instant::now())
+                    {
+                        self.send(to, &ack).await;
+                    }
+                }
+            }
+        }
+    }
+
+    async fn send(&self, to: SocketAddr, datagram: &[u8]) {
+        if let Err(e) = self.socket.send_raw(to, datagram).await {
+            tracing::debug!("cannot send a punch to {to}: {e}");
+        }
+    }
+
     /// Marks the first round as under way; later rounds keep showing the
     /// last result until they have a new one.
     fn begin(&self) {
@@ -240,6 +360,15 @@ impl Link {
     }
 }
 
+/// Resolves when the caller stops waiting for a path that has not opened;
+/// never once it has its answer.
+async fn caller_gone(waiting: &mut Option<oneshot::Sender<Result<Punched, PunchError>>>) {
+    match waiting {
+        Some(caller) => caller.closed().await,
+        None => std::future::pending().await,
+    }
+}
+
 /// A round that saw fewer servers keeps the classification of an earlier
 /// round for the same address, so one lost reply does not hide what is known.
 fn merge(previous: &PublicStatus, mut new: PublicEndpoint) -> PublicEndpoint {
@@ -257,6 +386,8 @@ mod tests {
     use std::sync::atomic::{AtomicU16, Ordering};
 
     use super::*;
+    use crate::identity::test_identity;
+    use crate::nat::punch::{KEEPALIVE_INTERVAL, new_session};
     use crate::nat::stun::{self, TransactionId};
     use crate::net;
 
@@ -369,6 +500,101 @@ mod tests {
 
         agent.stop_refresh();
         assert_eq!(agent.public(), PublicStatus::Disabled);
+    }
+
+    #[tokio::test]
+    async fn quic_handshake_succeeds_through_a_punched_path() {
+        let identity = test_identity("nat-agent");
+        let loopback: SocketAddr = "127.0.0.1:0".parse().unwrap();
+        let (host_socket, host_tap) = SharedSocket::bind(loopback).unwrap();
+        let (viewer_socket, viewer_tap) = SharedSocket::bind(loopback).unwrap();
+        let host_addr = host_socket.local_addr().unwrap();
+        let viewer_addr = viewer_socket.local_addr().unwrap();
+        let host_endpoint = net::server_endpoint_on(host_socket.clone(), &identity).unwrap();
+        let viewer_endpoint = net::client_endpoint_on(viewer_socket.clone()).unwrap();
+        let host = Agent::spawn(host_socket, host_tap).unwrap();
+        let viewer = Agent::spawn(viewer_socket, viewer_tap).unwrap();
+
+        // Each side has typed the other's address; only the viewer has a session.
+        let window = Duration::from_secs(10);
+        let (host_side, viewer_side) = tokio::join!(
+            host.punch(viewer_addr, None, window),
+            viewer.punch(host_addr, Some(new_session()), window),
+        );
+        let expected = Punched {
+            peer: host_addr,
+            observed_self: Some(viewer_addr),
+        };
+        assert_eq!(viewer_side.unwrap(), expected);
+        assert_eq!(host_side.unwrap().peer, viewer_addr);
+
+        let server = tokio::spawn(async move {
+            let conn = host_endpoint.accept().await.unwrap().await.unwrap();
+            let (mut send, mut recv) = conn.accept_bi().await.unwrap();
+            let mut buf = [0u8; 1024];
+            while let Some(n) = recv.read(&mut buf).await.unwrap() {
+                send.write_all(&buf[..n]).await.unwrap();
+            }
+            send.finish().unwrap();
+            conn.closed().await;
+        });
+        let conn = viewer_endpoint
+            .connect(host_addr, "tidedesk-host")
+            .unwrap()
+            .await
+            .unwrap();
+        assert_eq!(net::peer_fingerprint(&conn), Some(identity.fingerprint()));
+
+        // Talk for longer than a keepalive interval, so keepalive punches and
+        // QUIC share both ports meanwhile.
+        let (mut send, mut recv) = conn.open_bi().await.unwrap();
+        let until = Instant::now() + KEEPALIVE_INTERVAL + Duration::from_millis(500);
+        let mut round = 0u32;
+        while Instant::now() < until {
+            send.write_all(&round.to_be_bytes()).await.unwrap();
+            let mut back = [0u8; 4];
+            recv.read_exact(&mut back).await.unwrap();
+            assert_eq!(u32::from_be_bytes(back), round);
+            round += 1;
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        assert!(conn.close_reason().is_none(), "{:?}", conn.close_reason());
+        send.finish().unwrap();
+        assert_eq!(recv.read_to_end(16).await.unwrap(), b"");
+        conn.close(0u32.into(), b"done");
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_path_nobody_answers_reports_no_reply() {
+        let (agent, _endpoint, _) = agent_on_loopback();
+        let silent = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let result = agent
+            .punch(
+                silent.local_addr().unwrap(),
+                None,
+                Duration::from_millis(500),
+            )
+            .await;
+        assert_eq!(result, Err(PunchError::NoReply));
+    }
+
+    #[tokio::test]
+    async fn stopping_a_path_ends_the_wait() {
+        let (agent, _endpoint, _) = agent_on_loopback();
+        let silent = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let peer = silent.local_addr().unwrap();
+        let waiting = tokio::spawn({
+            let agent = agent.clone();
+            async move { agent.punch(peer, None, Duration::from_secs(60)).await }
+        });
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        agent.stop_punching(peer);
+        let result = tokio::time::timeout(Duration::from_secs(5), waiting)
+            .await
+            .expect("the wait ends")
+            .unwrap();
+        assert_eq!(result, Err(PunchError::Stopped));
     }
 
     #[test]

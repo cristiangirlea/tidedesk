@@ -186,7 +186,7 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
-    use crate::identity::HostIdentity;
+    use crate::identity::test_identity;
     use crate::nat::{PUNCH_MAGIC, STUN_MAGIC_COOKIE};
     use crate::net;
 
@@ -296,16 +296,9 @@ mod tests {
         assert_eq!(from, shared.local_addr().unwrap());
     }
 
-    fn test_identity() -> HostIdentity {
-        let dir =
-            std::env::temp_dir().join(format!("tidedesk-test-nat-socket-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        HostIdentity::load_or_create(&dir).unwrap()
-    }
-
     #[tokio::test]
     async fn side_channel_datagrams_are_diverted_while_quic_connects() {
-        let identity = test_identity();
+        let identity = test_identity("nat-socket");
         let (host_socket, mut host_tap) =
             SharedSocket::bind("127.0.0.1:0".parse().unwrap()).unwrap();
         let (viewer_socket, _viewer_tap) =

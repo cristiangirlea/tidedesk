@@ -7,10 +7,12 @@
 //! QUIC listens on, because a router's mapping belongs to that socket's port.
 
 pub mod agent;
+pub mod punch;
 pub mod socket;
 pub mod stun;
 
-pub use agent::{Agent, AgentStatus, PublicStatus};
+pub use agent::{Agent, AgentStatus, PublicStatus, PunchError};
+pub use punch::{Punched, SessionId};
 pub use socket::{RawDatagram, SharedSocket};
 pub use stun::{NatKind, PublicEndpoint};
 
