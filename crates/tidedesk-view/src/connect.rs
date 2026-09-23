@@ -14,9 +14,10 @@ use std::time::Duration;
 use anyhow::{Context, Result, anyhow, bail};
 use tidedesk_core::identity::{KnownHosts, PinStatus, normalize_fingerprint};
 use tidedesk_core::nat::punch::new_session;
+use tidedesk_core::nat::signal::{LookupOutcome, resolve_service};
 use tidedesk_core::nat::stun::{DEFAULT_STUN_SERVERS, resolve_servers};
 use tidedesk_core::nat::{
-    Agent, NatKind, NotPublic, PunchError, Punched, SharedSocket, check_public,
+    Agent, DeviceId, NatKind, NotPublic, PunchError, Punched, SharedSocket, check_public,
 };
 use tidedesk_core::protocol::{self, ClientMessage, PROTOCOL_VERSION, ServerMessage};
 use tidedesk_core::{DEFAULT_PORT, auth, net, paths};
@@ -24,6 +25,10 @@ use tidedesk_core::{DEFAULT_PORT, auth, net, paths};
 /// How long to punch towards the host: the person there has this long to
 /// type this computer's address and press Open.
 pub const PUNCH_WINDOW: Duration = Duration::from_secs(120);
+
+/// How long to punch towards a host the rendezvous service introduced: it
+/// punches back at once, for 30 seconds.
+const RENDEZVOUS_PUNCH_WINDOW: Duration = Duration::from_secs(20);
 
 pub struct Session {
     pub endpoint: quinn::Endpoint,
@@ -55,6 +60,9 @@ pub enum Route {
     /// At its internet address through a punched path, which the person at
     /// the host opens with this computer's internet address.
     Internet { stun_servers: Vec<String> },
+    /// By device ID, through a rendezvous service (`host[:port]`) that
+    /// introduces the two computers; the path is punched as for `Internet`.
+    Rendezvous { service: String },
 }
 
 impl Route {
@@ -79,6 +87,7 @@ pub enum Progress {
 pub enum RouteKind {
     Direct,
     Internet,
+    Rendezvous,
 }
 
 /// How a session reaches its host. Logged, so users can check that the
@@ -96,6 +105,7 @@ impl fmt::Display for RouteInfo {
         let kind = match self.kind {
             RouteKind::Direct => "direct",
             RouteKind::Internet => "internet, direct",
+            RouteKind::Rendezvous => "by device ID, direct",
         };
         write!(f, "{kind} to {}", self.peer)?;
         if let Some(me) = self.observed_self {
@@ -103,6 +113,28 @@ impl fmt::Display for RouteInfo {
         }
         Ok(())
     }
+}
+
+/// A device ID in the host argument: `TD-1A2B-3C4D-5E6F-7A8B`, in any case
+/// and spacing. The `TD` is required, so a host name that happens to be 16
+/// hex digits stays a host name.
+pub fn parse_device_id(text: &str) -> Option<DeviceId> {
+    let text = text.trim();
+    let prefixed = text.get(..2).is_some_and(|p| p.eq_ignore_ascii_case("td"));
+    if prefixed { text.parse().ok() } else { None }
+}
+
+/// A device ID is the start of the host certificate's hash: the computer
+/// that answered must be the one asked for.
+fn verify_device_id(expected: DeviceId, fingerprint: &str) -> Result<()> {
+    if DeviceId::from_fingerprint_hex(fingerprint) == Some(expected) {
+        return Ok(());
+    }
+    bail!(
+        "the computer that answered is not {expected}: its certificate does not match that \
+         device ID. Someone may be intercepting the connection, or the rendezvous service is \
+         wrong."
+    )
 }
 
 /// Reads a host's internet address, as its window shows it, for
@@ -194,6 +226,8 @@ pub struct Dialer {
     route: RouteInfo,
     /// Where `known_hosts.txt` lives; the user's configuration by default.
     config_dir: Option<PathBuf>,
+    /// For the rendezvous route: the host must be this one.
+    device_id: Option<DeviceId>,
     /// Keeps the punched path's keepalives running.
     _agent: Option<Arc<Agent>>,
 }
@@ -215,10 +249,14 @@ impl Dialer {
                         observed_self: None,
                     },
                     config_dir: None,
+                    device_id: None,
                     _agent: None,
                 });
             }
             Route::Internet { stun_servers } => stun_servers,
+            Route::Rendezvous { service } => {
+                return Self::by_device_id(host, service, progress).await;
+            }
         };
 
         let host_addr: SocketAddr = host
@@ -290,6 +328,73 @@ impl Dialer {
                 observed_self: Some(public.addr),
             },
             config_dir: None,
+            device_id: None,
+            _agent: Some(agent),
+        })
+    }
+
+    /// The rendezvous route: the service introduces this computer to the
+    /// host with the device ID, then both punch.
+    async fn by_device_id(host: &str, service: &str, progress: impl Fn(Progress)) -> Result<Self> {
+        let device_id = parse_device_id(host).with_context(|| {
+            format!("{host} is not a device ID (they look like TD-1A2B-3C4D-5E6F-7A8B)")
+        })?;
+        let (socket, side_channel) = SharedSocket::bind(SocketAddr::from(([0, 0, 0, 0], 0)))
+            .context("opening a UDP socket")?;
+        let endpoint = net::client_endpoint_on(socket.clone())?;
+        let agent = Agent::spawn(socket, side_channel)?;
+
+        progress(Progress::Status(format!(
+            "Asking {service} for {device_id}…"
+        )));
+        let main = resolve_service(service)
+            .await
+            .with_context(|| format!("cannot find the rendezvous service {service}"))?;
+        let introduction = match agent.lookup(service.to_string(), main, device_id).await {
+            LookupOutcome::Introduced(introduction) => introduction,
+            LookupOutcome::NotFound => {
+                bail!("{device_id} is not online right now (not registered at {service})")
+            }
+            LookupOutcome::Unreachable(reason) => bail!("{reason}"),
+        };
+        if introduction.nat == NatKind::Symmetric {
+            bail!(symmetric_nat());
+        }
+        let peer = introduction.peer;
+        progress(Progress::Status(format!(
+            "Opening a path to {device_id} at {peer}…"
+        )));
+        let path = match agent
+            .punch(peer, Some(introduction.session), RENDEZVOUS_PUNCH_WINDOW)
+            .await
+        {
+            Ok(path) => path,
+            // Tried anyway: some routers do loop traffic back to themselves.
+            Err(_) if introduction.reflexive.ip() == peer.ip() => bail!(
+                "{device_id} did not answer. It has the same internet address as this computer \
+                 ({}), so both are on the same network and the router may not loop traffic \
+                 back: connect directly to one of the host's local addresses instead (the \
+                 host's window lists them)",
+                peer.ip()
+            ),
+            Err(_) => bail!(
+                "{device_id} did not answer at {peer}. If either network uses a symmetric NAT \
+                 (common on mobile data and carrier-grade NAT), a direct connection is \
+                 impossible: TideDesk never relays, so use a VPN such as Tailscale or forward \
+                 UDP port {DEFAULT_PORT} on the host's router. See docs/internet-access.md."
+            ),
+        };
+        progress(Progress::PathOpen(path.clone()));
+        Ok(Self {
+            address: device_id.to_string(),
+            endpoint,
+            route: RouteInfo {
+                kind: RouteKind::Rendezvous,
+                peer: path.peer,
+                observed_self: Some(introduction.reflexive),
+            },
+            config_dir: None,
+            device_id: Some(device_id),
             _agent: Some(agent),
         })
     }
@@ -301,6 +406,9 @@ impl Dialer {
         let conn = self.handshake().await?;
         let fingerprint = net::peer_fingerprint(&conn).context("host presented no certificate")?;
         conn.close(0u32.into(), b"probe");
+        if let Some(device_id) = self.device_id {
+            verify_device_id(device_id, &fingerprint)?;
+        }
         let status = self.pin_status(&self.known_hosts()?, &fingerprint);
         Ok(Probe {
             address: self.address.clone(),
@@ -314,12 +422,25 @@ impl Dialer {
 
         // Verify who we are talking to *before* using the access code.
         let fp = net::peer_fingerprint(&conn).context("host presented no certificate")?;
+        if let Some(device_id) = self.device_id
+            && let Err(e) = verify_device_id(device_id, &fp)
+        {
+            conn.close(0u32.into(), b"not the host asked for");
+            return Err(e);
+        }
         let display = &self.address;
         let mut known = self.known_hosts()?;
         match self.pin_status(&known, &fp) {
-            // Possibly under another address: an internet address and port
-            // can change with every restart, so this one is not remembered.
-            PinStatus::Trusted => {}
+            // An internet address and port can change with every restart, so
+            // one trusted by its fingerprint is not remembered. A device ID
+            // is stable: remember it, so the launcher lists it as recent.
+            PinStatus::Trusted => {
+                if self.route.kind == RouteKind::Rendezvous
+                    && known.check(display, &fp) != PinStatus::Trusted
+                {
+                    known.pin(display, &fp)?;
+                }
+            }
             PinStatus::Unknown => match &opts.expected_fingerprint {
                 Some(expected) if normalize_fingerprint(expected) != normalize_fingerprint(&fp) => {
                     bail!("host fingerprint {fp} does not match the one you supplied");
@@ -404,6 +525,8 @@ impl Dialer {
             RouteKind::Direct => known.check(&self.address, fp),
             // A router's public address and port change while the host does not.
             RouteKind::Internet => known.check_fingerprint_first(&self.address, fp),
+            // Checked against the device ID, which is the certificate's hash.
+            RouteKind::Rendezvous => PinStatus::Trusted,
         }
     }
 
@@ -433,6 +556,10 @@ mod tests {
 
     use super::*;
 
+    fn temp_dir_path(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!("tidedesk-test-{name}-{}", std::process::id()))
+    }
+
     fn temp_dir(name: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!("tidedesk-test-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
@@ -458,6 +585,28 @@ mod tests {
         }
         let local = parse_internet_host("192.168.1.5:47800").unwrap_err();
         assert!(local.to_string().contains("directly"), "{local}");
+    }
+
+    #[test]
+    fn device_ids_are_recognised_in_the_host_argument() {
+        let id = DeviceId([0x1A, 0x2B, 0x3C, 0x4D, 0x5E, 0x6F, 0x7A, 0x8B]);
+        assert_eq!(parse_device_id("TD-1A2B-3C4D-5E6F-7A8B"), Some(id));
+        assert_eq!(parse_device_id(" td 1a2b 3c4d 5e6f 7a8b "), Some(id));
+        assert_eq!(
+            parse_device_id("1A2B3C4D5E6F7A8B"),
+            None,
+            "a host name made of hex digits stays a host name"
+        );
+        assert_eq!(parse_device_id("my-pc"), None);
+        assert_eq!(parse_device_id("tdhost"), None);
+    }
+
+    #[test]
+    fn a_host_must_match_the_device_id_asked_for() {
+        let identity = HostIdentity::load_or_create(&temp_dir("device-id-check")).unwrap();
+        assert!(verify_device_id(identity.device_id(), &identity.fingerprint()).is_ok());
+        let err = verify_device_id(DeviceId([0; 8]), &identity.fingerprint()).unwrap_err();
+        assert!(err.to_string().contains("TD-0000-0000-0000-0000"), "{err}");
     }
 
     #[tokio::test]
@@ -568,6 +717,82 @@ mod tests {
         let known = KnownHosts::load(&dir).unwrap();
         assert_eq!(known.addresses().collect::<Vec<_>>(), [earlier]);
         session.conn.close(0u32.into(), b"done");
+    }
+
+    /// The real rendezvous service on loopback, on two neighbouring ports.
+    async fn rendezvous_service() -> SocketAddr {
+        for _ in 0..50 {
+            let main = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+            let port = main.local_addr().unwrap().port();
+            let Some(next) = port.checked_add(1) else {
+                continue;
+            };
+            if let Ok(alt) = tokio::net::UdpSocket::bind(("127.0.0.1", next)).await {
+                let server = tidedesk_rendezvous::Server::new(Default::default());
+                tokio::spawn(tidedesk_rendezvous::serve(main, alt, server));
+                return SocketAddr::from(([127, 0, 0, 1], port));
+            }
+        }
+        panic!("no two neighbouring free UDP ports on loopback");
+    }
+
+    #[tokio::test]
+    async fn viewer_dialer_connects_by_device_id() {
+        use tidedesk_core::nat::AgentStatus;
+        use tidedesk_core::nat::signal::RendezvousStatus;
+
+        let service = rendezvous_service().await;
+        let dir = temp_dir("dialer-device-id");
+        let identity = HostIdentity::load_or_create(&dir).unwrap();
+        let (host_socket, host_tap) = SharedSocket::bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        let host_addr = host_socket.local_addr().unwrap();
+        fake_host(net::server_endpoint_on(host_socket.clone(), &identity).unwrap());
+        let host = Agent::spawn(host_socket, host_tap).unwrap();
+        host.start_rendezvous(service.to_string(), identity.rendezvous_credentials());
+        let registered =
+            |s: &AgentStatus| matches!(s.rendezvous, RendezvousStatus::Registered { .. });
+        tokio::time::timeout(Duration::from_secs(10), host.status().wait_for(registered))
+            .await
+            .expect("the host registers")
+            .unwrap();
+
+        let id = identity.device_id().to_string();
+        let route = Route::Rendezvous {
+            service: service.to_string(),
+        };
+        let dialer = Dialer::new(&id, &route, |_| {})
+            .await
+            .unwrap()
+            .with_config_dir(dir);
+        let probe = dialer.probe().await.unwrap();
+        assert_eq!(
+            probe.status,
+            PinStatus::Trusted,
+            "the ID vouches for the host"
+        );
+        assert_eq!(probe.address, id);
+
+        let session = dialer.connect(&options(host_addr, route)).await.unwrap();
+        assert_eq!(session.route.kind, RouteKind::Rendezvous);
+        assert_eq!(session.route.peer, host_addr);
+        assert_eq!(session.fingerprint, identity.fingerprint());
+        session.conn.close(0u32.into(), b"done");
+        let known = KnownHosts::load(&temp_dir_path("dialer-device-id")).unwrap();
+        assert!(
+            known.addresses().any(|a| a == id),
+            "remembered under the ID, for the recent list"
+        );
+
+        let unknown = Dialer::new(
+            "TD-0000-0000-0000-0001",
+            &Route::Rendezvous {
+                service: service.to_string(),
+            },
+            |_| {},
+        )
+        .await;
+        let err = unknown.err().expect("nobody has that ID").to_string();
+        assert!(err.contains("not online"), "{err}");
     }
 
     #[tokio::test]

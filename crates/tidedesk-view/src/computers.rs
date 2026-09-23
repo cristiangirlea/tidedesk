@@ -93,8 +93,13 @@ impl AddressBook {
     }
 }
 
-/// Compares addresses ignoring case and the default port.
+/// Compares addresses ignoring case and the default port; device IDs in
+/// any spelling.
 pub fn same_address(a: &str, b: &str) -> bool {
+    use crate::connect::parse_device_id;
+    if let (Some(a), Some(b)) = (parse_device_id(a), parse_device_id(b)) {
+        return a == b;
+    }
     let norm = |s: &str| {
         let s = s.trim().to_lowercase();
         s.strip_suffix(&format!(":{}", tidedesk_core::DEFAULT_PORT))
@@ -201,6 +206,19 @@ mod tests {
         assert!(same_address("203.0.113.5:40000", " 203.0.113.5:40000"));
         assert!(same_address("203.0.113.5", "203.0.113.5:47800"));
         assert!(!same_address("203.0.113.5:40000", "203.0.113.5:40001"));
+    }
+
+    #[test]
+    fn same_address_treats_device_ids_canonically() {
+        assert!(same_address(
+            "TD-1A2B-3C4D-5E6F-7A8B",
+            "td 1a2b 3c4d 5e6f 7a8b"
+        ));
+        assert!(!same_address(
+            "TD-1A2B-3C4D-5E6F-7A8B",
+            "TD-1A2B-3C4D-5E6F-7A8C"
+        ));
+        assert!(same_address("my-pc", "MY-PC:47800"), "host names as before");
     }
 
     #[test]

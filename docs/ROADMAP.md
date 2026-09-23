@@ -57,11 +57,12 @@ Every session runs directly between the two computers; TideDesk never relays.
 - Two-network validation is still pending. See
   [internet access](internet-access.md) and the [design notes](design/nat-traversal.md).
 
-## Planned: connect by device ID
+### Experimental: connect by device ID
 
-- A small, self-hostable rendezvous service so a viewer can reach a host by a stable
-  device ID instead of both people typing addresses. It only introduces the two
-  computers and never carries session data; direct paths only, no relay.
+- A small, self-hostable rendezvous service lets a viewer reach a host by a stable
+  device ID instead of both people typing addresses, headless hosts included. It only
+  introduces the two computers and never carries session data; direct paths only, no
+  relay. Off until a service is configured; none is built in yet.
 
 ## Next: Game mode — keyboard, mouse and streaming
 

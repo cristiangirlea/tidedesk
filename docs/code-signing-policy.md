@@ -57,7 +57,9 @@ If a rendezvous service is set under Settings, Internet (none is by default), Ti
 Host registers with it: the service learns the host's device ID, its certificate (which
 is public) and its public IP address and port, refreshed about every 25 seconds, so that
 it can introduce viewers who ask for that ID. It never carries sessions, access codes or
-anything else. Clear the setting to stop.
+anything else. Clear the setting to stop. A viewer connecting by device ID asks the
+service it is set to use for that ID, which tells the service the viewer's public
+address and which ID it asked for.
 
 Operators choose their network destinations. If they use a separate VPN or other
 third-party network service, that service's privacy policy also applies.

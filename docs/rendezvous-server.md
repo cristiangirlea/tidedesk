@@ -6,8 +6,9 @@ registered host's internet address, introduces a viewer and a host to each other
 then drops out: the two computers punch a direct path and the session runs between
 them. **It never carries session data.** See the [design notes](design/nat-traversal.md).
 
-Status: the service is ready to run; hosts and viewers start using it in a later
-release.
+Status: experimental. Hosts use it when a service is set under Settings, Internet (or
+with `--rendezvous`); viewers when one is set in Viewer Settings (or with
+`--rendezvous`). None is built in.
 
 ## What it needs
 
@@ -61,6 +62,14 @@ host names, or anything once the two computers are connected.
 The service keeps this in memory only and logs counts every five minutes, never IDs or
 addresses. Operators publishing a service for others should still say so in their own
 privacy notice.
+
+## What a rendezvous service can and cannot do to its users
+
+A service cannot impersonate a host: the viewer checks that the host's certificate
+hashes to the device ID it asked for, and the access code never passes through the
+service. A hostile or broken service can send viewers to a wrong address, where the
+connection fails that check, and make a viewer punch that address for up to 20 seconds
+first. Use a service you trust.
 
 ## Limits and abuse
 

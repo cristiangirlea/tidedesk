@@ -91,6 +91,9 @@ try {
         if ($text -notmatch 'direct internet' -or $text -match 'relay support is coming') {
             throw 'Release text must describe direct internet connections and promise no relay.'
         }
+        if ($text -notmatch 'device ID') {
+            throw 'Release text must describe connecting by device ID.'
+        }
     }
     if ($releaseNotes -notmatch 'Business use requires separate written permission' -or
         $releaseNotes -match 'free, open-source') {

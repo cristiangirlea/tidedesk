@@ -18,6 +18,7 @@ pub use socket::{RawDatagram, SharedSocket};
 
 use std::net::SocketAddr;
 pub use stun::{NatKind, PublicEndpoint};
+pub use tidedesk_rendezvous_proto::DeviceId;
 
 /// RFC 5389 magic cookie, found at bytes 4..8 of every STUN message.
 pub const STUN_MAGIC_COOKIE: [u8; 4] = [0x21, 0x12, 0xA4, 0x42];

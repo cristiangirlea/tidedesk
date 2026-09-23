@@ -38,6 +38,15 @@ struct Target {
     internet: bool,
 }
 
+/// How a session process reaches its host.
+enum SessionRoute {
+    /// Probed by the launcher already.
+    Direct,
+    Internet,
+    /// By device ID, through this rendezvous service.
+    Rendezvous(String),
+}
+
 /// Writes answers to a session process that is still connecting.
 #[derive(Clone)]
 struct SessionControl(Arc<Mutex<Option<ChildStdin>>>);
@@ -171,10 +180,27 @@ impl Launcher {
         }
         self.message = None;
         let host = target.address.trim().to_string();
+        // Internet and device-ID sessions open their path and probe the host
+        // themselves, in the session process that owns the path.
+        if let Some(id) = connect::parse_device_id(&host) {
+            let service = crate::settings::ViewerSettings::load()
+                .map(|s| s.rendezvous_server.trim().to_string())
+                .unwrap_or_default();
+            if service.is_empty() {
+                return self.fail(
+                    "Connecting by device ID needs a rendezvous service: enter it in Settings \
+                     and press Save settings."
+                        .into(),
+                );
+            }
+            let route = SessionRoute::Rendezvous(service);
+            return self.start_session(ctx, id.to_string(), &target, route);
+        }
         if target.internet {
-            // The session process opens the path and probes the host itself.
             return match connect::parse_internet_host(&host) {
-                Ok(addr) => self.start_session(ctx, addr.to_string(), &target),
+                Ok(addr) => {
+                    self.start_session(ctx, addr.to_string(), &target, SessionRoute::Internet)
+                }
                 Err(e) => self.fail(format!("{e:#}")),
             };
         }
@@ -190,7 +216,13 @@ impl Launcher {
         });
     }
 
-    fn start_session(&mut self, ctx: &egui::Context, host: String, target: &Target) {
+    fn start_session(
+        &mut self,
+        ctx: &egui::Context,
+        host: String,
+        target: &Target,
+        route: SessionRoute,
+    ) {
         let exe = match std::env::current_exe() {
             Ok(p) => p,
             Err(e) => return self.fail(format!("cannot locate viewer: {e}")),
@@ -206,8 +238,15 @@ impl Launcher {
         if !target.sound {
             cmd.arg("--no-audio");
         }
-        if target.internet {
-            cmd.arg("--internet");
+        let opening = !matches!(route, SessionRoute::Direct);
+        match route {
+            SessionRoute::Direct => {}
+            SessionRoute::Internet => {
+                cmd.arg("--internet");
+            }
+            SessionRoute::Rendezvous(service) => {
+                cmd.arg("--rendezvous").arg(service);
+            }
         }
         #[cfg(windows)]
         {
@@ -222,7 +261,7 @@ impl Launcher {
 
         let control = SessionControl(Arc::new(Mutex::new(child.stdin.take())));
         self.message = None;
-        if target.internet {
+        if opening {
             self.phase = Phase::Opening {
                 host: host.clone(),
                 status: "Starting…".into(),
@@ -339,7 +378,7 @@ impl Launcher {
                     match result {
                         Err(e) => self.fail(format!("{e:#}")),
                         Ok(probe) if probe.status == PinStatus::Trusted => {
-                            self.start_session(ctx, probe.address, &target)
+                            self.start_session(ctx, probe.address, &target, SessionRoute::Direct)
                         }
                         Ok(probe) => self.phase = Phase::Confirm(probe, target),
                     }
@@ -363,7 +402,7 @@ impl Launcher {
             .and_then(|d| KnownHosts::load(&d))
             .and_then(|mut k| k.pin(&probe.address, &probe.fingerprint));
         match pinned {
-            Ok(()) => self.start_session(ctx, probe.address.clone(), target),
+            Ok(()) => self.start_session(ctx, probe.address.clone(), target, SessionRoute::Direct),
             Err(e) => self.fail(format!("cannot remember this host: {e:#}")),
         }
     }
@@ -447,7 +486,9 @@ impl Launcher {
                     .and_then(|i| self.book.computers.get(i).cloned())
                     .unwrap_or_else(|| Computer::new(String::new(), String::new(), true));
                 pc.name = if name.is_empty() { address } else { name }.to_string();
-                pc.address = address.to_string();
+                // Device IDs are kept in one spelling.
+                pc.address = connect::parse_device_id(address)
+                    .map_or_else(|| address.to_string(), |id| id.to_string());
                 pc.sound = ed.sound;
                 pc.internet = ed.internet;
                 let code_result = if !ed.remember_code {
@@ -521,6 +562,9 @@ impl Launcher {
                         self.connect(&ctx, target);
                     }
                 });
+            if connect::parse_device_id(&self.address).is_some() {
+                ui.small("Device ID: found through the rendezvous service set in Settings.");
+            }
             ui.checkbox(&mut self.sound, "Play sound from the remote computer");
             ui.checkbox(&mut self.internet, INTERNET_OPTION);
             ui.horizontal(|ui| {
@@ -786,6 +830,9 @@ fn address_problem(address: &str, internet: bool) -> Option<String> {
     if address.trim().is_empty() {
         return Some("Enter the computer's address.".into());
     }
+    if connect::parse_device_id(address).is_some() {
+        return None; // found through the rendezvous service, not by address
+    }
     if internet && let Err(e) = connect::parse_internet_host(address) {
         return Some(format!("{e:#}"));
     }
@@ -796,7 +843,7 @@ fn address_hint(internet: bool) -> &'static str {
     if internet {
         "its internet address, like 203.0.113.5:40000"
     } else {
-        "192.168.1.50 or my-pc"
+        "192.168.1.50, my-pc or a device ID"
     }
 }
 

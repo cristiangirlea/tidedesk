@@ -14,7 +14,9 @@ use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 
 use super::punch::{Exchange, Punched, SessionId, State};
-use super::signal::{Credentials, Event, Registration, RendezvousStatus, resolve_service};
+use super::signal::{
+    Credentials, Event, Lookup, LookupOutcome, Registration, RendezvousStatus, resolve_service,
+};
 use super::socket::{RawDatagram, SharedSocket};
 use super::stun::{Discovery, NatKind, PublicEndpoint, resolve_servers};
 
@@ -240,6 +242,36 @@ impl Agent {
             s.rendezvous = RendezvousStatus::Off;
             changed
         });
+    }
+
+    /// Asks the rendezvous service at `service` (named `name` in messages)
+    /// to introduce this computer to the host with `device_id`.
+    pub async fn lookup(
+        &self,
+        name: String,
+        service: SocketAddr,
+        device_id: tidedesk_rendezvous_proto::DeviceId,
+    ) -> LookupOutcome {
+        // Subscribe before sending, so no early answer is missed.
+        let mut datagrams = self.link.datagrams.subscribe();
+        let mut lookup = Lookup::new(name, service, device_id, Instant::now());
+        loop {
+            for (to, datagram) in lookup.poll(Instant::now()) {
+                self.link.send(to, &datagram).await;
+            }
+            if let Some(outcome) = lookup.outcome() {
+                return outcome.clone();
+            }
+            let wake = lookup.next_deadline().unwrap_or_else(Instant::now);
+            tokio::select! {
+                _ = tokio::time::sleep_until(wake.into()) => {}
+                received = datagrams.recv() => {
+                    if let Ok(datagram) = received {
+                        lookup.on_datagram(datagram.from, &datagram.data, Instant::now());
+                    }
+                }
+            }
+        }
     }
 
     pub fn rendezvous(&self) -> RendezvousStatus {
@@ -877,6 +909,51 @@ mod tests {
 
         host.stop_rendezvous();
         assert_eq!(host.rendezvous(), RendezvousStatus::Off);
+    }
+
+    #[tokio::test]
+    async fn viewer_looks_up_a_registered_host_and_both_punch() {
+        let service = rendezvous_service().await;
+        let identity = test_identity("nat-lookup");
+        let (host, _host_endpoint, host_addr) = agent_on_loopback();
+        host.start_rendezvous(service.to_string(), identity.rendezvous_credentials());
+        let mut status = host.status();
+        let registered =
+            |s: &AgentStatus| matches!(s.rendezvous, RendezvousStatus::Registered { .. });
+        tokio::time::timeout(Duration::from_secs(10), status.wait_for(registered))
+            .await
+            .expect("the host registers")
+            .unwrap();
+
+        let (viewer, _viewer_endpoint, viewer_addr) = agent_on_loopback();
+        let outcome = viewer
+            .lookup("test service".into(), service, identity.device_id())
+            .await;
+        let LookupOutcome::Introduced(introduction) = outcome else {
+            panic!("expected an introduction, got {outcome:?}");
+        };
+        assert_eq!(introduction.peer, host_addr);
+        assert_eq!(introduction.reflexive, viewer_addr);
+        assert_eq!(introduction.nat, NatKind::EndpointIndependent);
+
+        let path = viewer
+            .punch(
+                introduction.peer,
+                Some(introduction.session),
+                Duration::from_secs(10),
+            )
+            .await
+            .expect("the host punches back in the same session");
+        assert_eq!(path.peer, host_addr);
+
+        let nobody = viewer
+            .lookup(
+                "test service".into(),
+                service,
+                tidedesk_rendezvous_proto::DeviceId([9; 8]),
+            )
+            .await;
+        assert_eq!(nobody, LookupOutcome::NotFound);
     }
 
     #[test]

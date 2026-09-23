@@ -73,6 +73,8 @@ pub struct ViewerSettings {
     pub clipboard_shortcut: Shortcut,
     pub mouse_shortcut: Shortcut,
     pub game_boost_shortcut: Shortcut,
+    /// `host[:port]` of the rendezvous service used to connect by device ID.
+    pub rendezvous_server: String,
 }
 
 impl Default for ViewerSettings {
@@ -84,6 +86,7 @@ impl Default for ViewerSettings {
             clipboard_shortcut: Shortcut::default_for("KeyC"),
             mouse_shortcut: Shortcut::default_for("KeyM"),
             game_boost_shortcut: Shortcut::default_for("KeyG"),
+            rendezvous_server: String::new(),
         }
     }
 }
@@ -212,6 +215,17 @@ impl Editor {
         shortcut_ui(ui, "Mouse", &mut self.config.mouse_shortcut);
         shortcut_ui(ui, "Game Boost", &mut self.config.game_boost_shortcut);
         ui.small("Ctrl+Alt+S opens these settings during a session.");
+        ui.separator();
+        ui.label("Rendezvous service, for connecting by device ID");
+        ui.add(
+            egui::TextEdit::singleline(&mut self.config.rendezvous_server)
+                .hint_text("host:port")
+                .desired_width(240.0),
+        );
+        ui.small(
+            "Use the service the host registers with. It only introduces the two computers; \
+             sessions run directly between them.",
+        );
         ui.add_space(8.0);
         if ui.button("Save settings").clicked() {
             self.message = Some(match self.config.save() {
@@ -276,6 +290,10 @@ mod tests {
         assert!(!config.mouse);
         assert!(!config.game_boost);
         assert!(ViewerSettings::default().mouse);
+        assert_eq!(
+            config.rendezvous_server, "",
+            "no rendezvous service unless one is set"
+        );
         config.validate().unwrap();
         let back: ViewerSettings = toml::from_str(&toml::to_string(&config).unwrap()).unwrap();
         assert_eq!(config, back);

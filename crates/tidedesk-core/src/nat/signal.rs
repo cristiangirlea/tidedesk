@@ -57,6 +57,218 @@ impl fmt::Display for RendezvousStatus {
     }
 }
 
+/// What a viewer's lookup found.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Introduction {
+    /// The punch session both sides use.
+    pub session: Session,
+    /// The host's internet address.
+    pub peer: SocketAddr,
+    /// This computer's internet address, as the service saw it.
+    pub reflexive: SocketAddr,
+    /// This computer's NAT, from the service's two ports.
+    pub nat: NatKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LookupOutcome {
+    Introduced(Introduction),
+    /// No host is registered under the ID right now.
+    NotFound,
+    Unreachable(String),
+}
+
+/// How long a lookup tries before giving up.
+const LOOKUP_GIVE_UP: Duration = Duration::from_secs(10);
+
+/// A viewer asking a rendezvous service to be introduced to a host.
+///
+/// Pure state machine, like [`Registration`].
+pub struct Lookup {
+    name: String,
+    main: SocketAddr,
+    alt: SocketAddr,
+    device_id: DeviceId,
+    started: Instant,
+    nonce: Nonce,
+    /// Nonces of earlier rounds: a late answer to one still counts.
+    earlier: Vec<Nonce>,
+    phase: LookupPhase,
+    reflexive: Option<SocketAddr>,
+    alt_reflexive: Option<SocketAddr>,
+    outcome: Option<LookupOutcome>,
+}
+
+enum LookupPhase {
+    Hello {
+        next: Instant,
+        retry: Duration,
+    },
+    Asking {
+        challenge: Challenge,
+        next: Instant,
+        tries: u32,
+    },
+}
+
+/// First Hello resend of a lookup; a person is waiting, so it is quicker than
+/// a host's registration.
+const LOOKUP_FIRST_RETRY: Duration = Duration::from_millis(500);
+const LOOKUP_MAX_RETRY: Duration = Duration::from_secs(2);
+
+impl Lookup {
+    pub fn new(name: String, main: SocketAddr, device_id: DeviceId, now: Instant) -> Self {
+        Self {
+            name,
+            main,
+            alt: SocketAddr::new(main.ip(), main.port().wrapping_add(1)),
+            device_id,
+            started: now,
+            nonce: random_bytes(),
+            earlier: Vec::new(),
+            phase: LookupPhase::Hello {
+                next: now,
+                retry: LOOKUP_FIRST_RETRY,
+            },
+            reflexive: None,
+            alt_reflexive: None,
+            outcome: None,
+        }
+    }
+
+    /// Datagrams due at `now`.
+    pub fn poll(&mut self, now: Instant) -> Vec<(SocketAddr, Vec<u8>)> {
+        if self.outcome.is_some() {
+            return Vec::new();
+        }
+        if now.saturating_duration_since(self.started) >= LOOKUP_GIVE_UP {
+            self.outcome = Some(LookupOutcome::Unreachable(format!(
+                "no answer from the rendezvous service {}",
+                self.name
+            )));
+            return Vec::new();
+        }
+        match &mut self.phase {
+            LookupPhase::Hello { next, retry } if now >= *next => {
+                *next = now + *retry;
+                *retry = (*retry * 2).min(LOOKUP_MAX_RETRY);
+                let hello = encode(&ToServer::hello(self.nonce));
+                vec![(self.main, hello.clone()), (self.alt, hello)]
+            }
+            LookupPhase::Asking { tries, .. } if *tries >= REGISTER_TRIES => {
+                // The challenge may have gone stale: ask for a new one.
+                self.new_round();
+                self.phase = LookupPhase::Hello {
+                    next: now,
+                    retry: LOOKUP_FIRST_RETRY,
+                };
+                self.poll(now)
+            }
+            LookupPhase::Asking {
+                challenge,
+                next,
+                tries,
+            } if now >= *next => {
+                *tries += 1;
+                *next = now + FIRST_RETRY;
+                let lookup = ToServer::Lookup {
+                    device_id: self.device_id,
+                    nonce: self.nonce,
+                    challenge: *challenge,
+                };
+                vec![(self.main, encode(&lookup))]
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    pub fn on_datagram(&mut self, from: SocketAddr, datagram: &[u8], now: Instant) {
+        if self.outcome.is_some() || (from != self.main && from != self.alt) {
+            return;
+        }
+        let Some(message) = decode::<FromServer>(datagram) else {
+            return;
+        };
+        match message {
+            FromServer::Challenge {
+                nonce, reflexive, ..
+            } if nonce == self.nonce && from == self.alt => {
+                self.alt_reflexive = Some(reflexive);
+            }
+            _ if from == self.alt => {}
+            FromServer::Challenge {
+                nonce,
+                challenge,
+                reflexive,
+            } if nonce == self.nonce && matches!(self.phase, LookupPhase::Hello { .. }) => {
+                self.reflexive = Some(reflexive);
+                self.phase = LookupPhase::Asking {
+                    challenge,
+                    next: now,
+                    tries: 0,
+                };
+            }
+            FromServer::Introduced {
+                nonce,
+                session,
+                peer,
+            } if self.answers(&nonce) => {
+                let Some(reflexive) = self.reflexive else {
+                    return;
+                };
+                let nat = match self.alt_reflexive {
+                    Some(other) if other == reflexive => NatKind::EndpointIndependent,
+                    Some(_) => NatKind::Symmetric,
+                    None => NatKind::Unknown,
+                };
+                self.outcome = Some(LookupOutcome::Introduced(Introduction {
+                    session,
+                    peer,
+                    reflexive,
+                    nat,
+                }));
+            }
+            FromServer::NotFound { nonce } if self.answers(&nonce) => {
+                self.outcome = Some(LookupOutcome::NotFound);
+            }
+            FromServer::Error {
+                code: ErrorCode::UnknownChallenge,
+            } => {
+                self.new_round();
+                self.phase = LookupPhase::Hello {
+                    next: now,
+                    retry: LOOKUP_FIRST_RETRY,
+                };
+            }
+            _ => {}
+        }
+    }
+
+    /// When [`Lookup::poll`] next has work, or `None` once there is an outcome.
+    pub fn next_deadline(&self) -> Option<Instant> {
+        if self.outcome.is_some() {
+            return None;
+        }
+        let next = match &self.phase {
+            LookupPhase::Hello { next, .. } | LookupPhase::Asking { next, .. } => *next,
+        };
+        Some(next.min(self.started + LOOKUP_GIVE_UP))
+    }
+
+    pub fn outcome(&self) -> Option<&LookupOutcome> {
+        self.outcome.as_ref()
+    }
+
+    fn new_round(&mut self) {
+        self.earlier.push(self.nonce);
+        self.nonce = random_bytes();
+    }
+
+    fn answers(&self, nonce: &Nonce) -> bool {
+        *nonce == self.nonce || self.earlier.contains(nonce)
+    }
+}
+
 /// Finds a rendezvous service given as `host[:port]` (IPv4, like all
 /// internet paths here).
 pub async fn resolve_service(name: &str) -> Option<SocketAddr> {
@@ -563,6 +775,150 @@ mod tests {
                 nat,
             };
             assert_eq!(r.status(), &expected);
+        }
+    }
+
+    const HOST: &str = "192.0.2.50:41000";
+
+    fn lookup_hello_nonce(l: &mut Lookup, now: Instant) -> Nonce {
+        let hellos = sent(&l.poll(now));
+        assert_eq!(hellos.len(), 2, "both ports: {hellos:?}");
+        match &hellos[0] {
+            (to, ToServer::Hello { nonce, .. }) if *to == addr(SERVICE) => *nonce,
+            other => panic!("expected a Hello to the service, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn lookup_asks_for_a_challenge_first_then_is_introduced() {
+        let t0 = Instant::now();
+        let id = DeviceId([1; 8]);
+        let mut l = Lookup::new("s".into(), addr(SERVICE), id, t0);
+        let nonce = lookup_hello_nonce(&mut l, t0);
+        assert_eq!(l.outcome(), None);
+
+        let challenge = FromServer::Challenge {
+            nonce,
+            challenge: [4; 16],
+            reflexive: addr(ME),
+        };
+        l.on_datagram(addr(SERVICE), &encode(&challenge), t0);
+        let asked = sent(&l.poll(t0));
+        assert_eq!(
+            asked,
+            [(
+                addr(SERVICE),
+                ToServer::Lookup {
+                    device_id: id,
+                    nonce,
+                    challenge: [4; 16]
+                }
+            )]
+        );
+
+        let stranger = FromServer::Introduced {
+            nonce,
+            session: [6; 8],
+            peer: addr("192.0.2.66:1"),
+        };
+        l.on_datagram(addr("192.0.2.66:47900"), &encode(&stranger), t0);
+        assert_eq!(l.outcome(), None, "only the service introduces");
+
+        let introduced = FromServer::Introduced {
+            nonce,
+            session: [5; 8],
+            peer: addr(HOST),
+        };
+        l.on_datagram(addr(SERVICE), &encode(&introduced), t0);
+        let expected = Introduction {
+            session: [5; 8],
+            peer: addr(HOST),
+            reflexive: addr(ME),
+            nat: NatKind::Unknown,
+        };
+        assert_eq!(l.outcome(), Some(&LookupOutcome::Introduced(expected)));
+        assert_eq!(l.next_deadline(), None);
+    }
+
+    #[test]
+    fn lookup_reports_not_found_and_gives_up_on_silence() {
+        let t0 = Instant::now();
+        let mut l = Lookup::new("s".into(), addr(SERVICE), DeviceId([1; 8]), t0);
+        let nonce = lookup_hello_nonce(&mut l, t0);
+        l.on_datagram(addr(SERVICE), &encode(&FromServer::NotFound { nonce }), t0);
+        assert_eq!(l.outcome(), Some(&LookupOutcome::NotFound));
+
+        let mut silent = Lookup::new("rv.example".into(), addr(SERVICE), DeviceId([1; 8]), t0);
+        let mut sends = 0;
+        while let Some(at) = silent.next_deadline() {
+            sends += silent.poll(at).len();
+            assert!(at <= t0 + LOOKUP_GIVE_UP);
+        }
+        assert!(sends >= 6, "Hellos are resent: {sends}");
+        assert!(
+            matches!(silent.outcome(), Some(LookupOutcome::Unreachable(why)) if why.contains("rv.example")),
+            "{:?}",
+            silent.outcome()
+        );
+    }
+
+    #[test]
+    fn lookup_accepts_a_late_answer_to_an_earlier_round() {
+        let t0 = Instant::now();
+        let mut l = Lookup::new("s".into(), addr(SERVICE), DeviceId([1; 8]), t0);
+        let first = lookup_hello_nonce(&mut l, t0);
+        let challenge = FromServer::Challenge {
+            nonce: first,
+            challenge: [4; 16],
+            reflexive: addr(ME),
+        };
+        l.on_datagram(addr(SERVICE), &encode(&challenge), t0);
+        l.poll(t0);
+        // The service forgot the challenge: a new round starts...
+        let stale = FromServer::Error {
+            code: ErrorCode::UnknownChallenge,
+        };
+        l.on_datagram(addr(SERVICE), &encode(&stale), t0);
+        assert_ne!(lookup_hello_nonce(&mut l, t0), first);
+        // ...and the answer to the first round, arriving late, still counts.
+        let late = FromServer::Introduced {
+            nonce: first,
+            session: [5; 8],
+            peer: addr(HOST),
+        };
+        l.on_datagram(addr(SERVICE), &encode(&late), t0);
+        assert!(matches!(l.outcome(), Some(LookupOutcome::Introduced(i)) if i.peer == addr(HOST)));
+    }
+
+    #[test]
+    fn lookup_classifies_nat_from_the_second_port() {
+        let t0 = Instant::now();
+        for (seen_on_alt, nat) in [
+            (ME, NatKind::EndpointIndependent),
+            ("203.0.113.5:49999", NatKind::Symmetric),
+        ] {
+            let mut l = Lookup::new("s".into(), addr(SERVICE), DeviceId([1; 8]), t0);
+            let nonce = lookup_hello_nonce(&mut l, t0);
+            let alt = FromServer::Challenge {
+                nonce,
+                challenge: [0; 16],
+                reflexive: addr(seen_on_alt),
+            };
+            l.on_datagram(addr(ALT), &encode(&alt), t0);
+            let main = FromServer::Challenge {
+                nonce,
+                challenge: [4; 16],
+                reflexive: addr(ME),
+            };
+            l.on_datagram(addr(SERVICE), &encode(&main), t0);
+            l.poll(t0);
+            let introduced = FromServer::Introduced {
+                nonce,
+                session: [5; 8],
+                peer: addr(HOST),
+            };
+            l.on_datagram(addr(SERVICE), &encode(&introduced), t0);
+            assert!(matches!(l.outcome(), Some(LookupOutcome::Introduced(i)) if i.nat == nat));
         }
     }
 
