@@ -36,6 +36,13 @@ Allow the host through Windows Firewall on private networks.
 Code signing policy:
 https://github.com/cristiangirlea/tidedesk/blob/main/docs/code-signing-policy.md
 
+Direct internet connections are EXPERIMENTAL. The host shows its internet address.
+In the viewer, tick "Over the internet", connect to that address, and give the viewer's
+address to the person at the host, who types it under "Viewer on another network" and
+presses Open. The session runs directly between the two computers: TideDesk never relays.
+Symmetric NAT (common on mobile data) prevents a direct path; use a VPN such as Tailscale.
+Addresses are looked up from public STUN servers, which see only the public IP address.
+
 Windows to Windows, one viewer at a time. For internet connections, see:
 https://github.com/cristiangirlea/tidedesk/blob/main/docs/internet-access.md
 

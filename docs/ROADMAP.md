@@ -44,6 +44,25 @@ password, 2FA or paid-feature enforcement is implemented.
 
 See [Game Boost](game-boost.md) for use and limitations. This is not a stable feature.
 
+## Experimental in v0.1.0-alpha.5: direct internet connections
+
+Every session runs directly between the two computers; TideDesk never relays.
+
+- The host learns its internet address from public STUN servers (configurable, can be
+  turned off) and shows it; the viewer does the same when connecting over the internet.
+- Both computers punch a path through their routers on the QUIC port; QUIC, TLS,
+  access-code proof and pinning run over it unchanged (protocol v3).
+- Symmetric NAT and same-network cases are detected with clear advice; forwarded
+  ports work without the manual step.
+- Two-network validation is still pending. See
+  [internet access](internet-access.md) and the [design notes](design/nat-traversal.md).
+
+## Planned: connect by device ID
+
+- A small, self-hostable rendezvous service so a viewer can reach a host by a stable
+  device ID instead of both people typing addresses. It only introduces the two
+  computers and never carries session data; direct paths only, no relay.
+
 ## Next: Game mode — keyboard, mouse and streaming
 
 The first gaming milestone is fast, responsive screen/audio streaming with
@@ -74,7 +93,6 @@ virtual-device drivers are outside this milestone and must not delay it.
   disconnect/recovery before implementation. Keep this separate from controller
   emulation and ordinary file transfer; do not automatically forward storage
   devices or security keys.
-- Direct internet connectivity, NAT traversal and relay options.
 - Linux and mobile clients; macOS support.
 - File transfer, session recording and multiple viewers.
 - Team administration, shared device lists and ticketing integration.

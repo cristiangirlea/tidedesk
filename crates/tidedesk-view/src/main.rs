@@ -71,7 +71,7 @@ struct Args {
     #[arg(long, value_delimiter = ',', requires = "internet")]
     stun: Vec<String>,
 
-    /// Connect through a relay server (not available yet).
+    /// Not supported: TideDesk never relays sessions. Prints how to connect directly.
     #[arg(long, value_name = "URL")]
     relay: Option<String>,
 }
@@ -197,9 +197,10 @@ fn run() -> Result<()> {
     }
     if args.relay.is_some() {
         eprintln!(
-            "Relay connections are not implemented yet.\n\
-             For now, connect through a VPN such as Tailscale or WireGuard, or have the host \
-             forward its UDP port. See docs/internet-access.md."
+            "TideDesk never relays sessions: every connection runs directly between the two \
+             computers.\n\
+             To reach a host on another network, connect with --internet to the internet address \
+             its window shows, or use a VPN such as Tailscale. See docs/internet-access.md."
         );
         std::process::exit(2);
     }

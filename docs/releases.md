@@ -6,10 +6,13 @@ pushing a branch, tagging or publishing.
 
 ## Build and archive
 
-v0.1.0-alpha.4 links the C runtime statically, so the executables no longer need the
-Microsoft Visual C++ Redistributable, and ships third-party license notices in the
-archive. It keeps protocol v3 and connects to v0.1.0-alpha.3; earlier v1/v2 builds
-cannot connect. Game Boost, introduced in v0.1.0-alpha.3, remains **experimental**.
+v0.1.0-alpha.5 adds **experimental** direct internet connections: hole punching
+through both routers, never a relay (see [internet access](internet-access.md) and the
+[design notes](design/nat-traversal.md)). It keeps protocol v3: v0.1.0-alpha.3 and later
+still connect on a local network, while internet connections need both computers on
+alpha.5; earlier v1/v2 builds cannot connect. Since v0.1.0-alpha.4 the executables link
+the C runtime statically, so they need no Microsoft Visual C++ Redistributable, and the
+archive ships third-party license notices. Game Boost, introduced in v0.1.0-alpha.3, remains **experimental**.
 Publish it as a prerelease, not a stable release. Automated checks do not replace
 two-computer validation. Audio remains host system output to viewer only.
 

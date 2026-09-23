@@ -76,14 +76,15 @@ struct Args {
     #[arg(long)]
     list_displays: bool,
 
-    /// Reach this host through a relay server (not available yet).
+    /// Not supported: TideDesk never relays sessions. Prints how to connect directly.
     #[arg(long, value_name = "URL")]
     relay: Option<String>,
 }
 
-const RELAY_NOTICE: &str = "Relay connections are not implemented yet.\n\
-For now, reach this host over the internet through a VPN such as Tailscale or WireGuard, \
-or forward its UDP port on your router. See docs/internet-access.md.";
+const RELAY_NOTICE: &str = "TideDesk never relays sessions: every connection runs directly \
+between the two computers.\n\
+To reach this host from another network, open a path to the viewer under \"Viewer on another \
+network\" in the host window, or use a VPN such as Tailscale. See docs/internet-access.md.";
 
 /// Reads the saved access code, creating one if missing or `regenerate` is set.
 pub fn load_code(regenerate: bool) -> Result<String> {
