@@ -11,7 +11,7 @@ use std::sync::atomic::Ordering;
 use anyhow::{Result, anyhow};
 use egui::{Color32, RichText};
 use egui_software_backend::{SoftwareBackend, SoftwareBackendAppConfiguration};
-use tidedesk_core::nat::stun::STUN_REFRESH;
+use tidedesk_core::nat::stun::{DEFAULT_STUN_SERVERS, STUN_REFRESH};
 use tidedesk_core::nat::{Agent, NatKind, PublicStatus};
 
 use crate::capture::{self, DisplayInfo};
@@ -360,7 +360,8 @@ impl HostApp {
         );
         ui.horizontal(|ui| {
             ui.label("STUN servers");
-            let field = egui::TextEdit::singleline(&mut self.stun_text).hint_text("host:port, …");
+            let field = egui::TextEdit::singleline(&mut self.stun_text)
+                .hint_text(DEFAULT_STUN_SERVERS.join(", "));
             if ui
                 .add_enabled(cfg.discover_public_address, field)
                 .lost_focus()
@@ -369,7 +370,7 @@ impl HostApp {
                 self.stun_text = cfg.stun_servers.join(", ");
             }
         });
-        ui.small("Separate servers with commas; leave empty for the defaults.");
+        ui.small("host:port, separated by commas. Leave empty for the defaults.");
 
         if *cfg != before {
             {
@@ -388,7 +389,7 @@ impl HostApp {
                 || cfg.stun_servers != before.stun_servers
             {
                 if cfg.discover_public_address {
-                    let servers = cfg.stun_servers.clone();
+                    let servers = cfg.effective_stun_servers();
                     self.info.agent.start_refresh(servers, STUN_REFRESH);
                 } else {
                     self.info.agent.stop_refresh();

@@ -176,7 +176,7 @@ fn run(args: Args) -> Result<()> {
         (net::server_endpoint_on(socket, &identity)?, agent)
     };
     if config.discover_public_address {
-        agent.start_refresh(config.stun_servers.clone(), STUN_REFRESH);
+        agent.start_refresh(config.effective_stun_servers(), STUN_REFRESH);
     }
     let mut agent_status = agent.status();
     let repaint = state.clone();

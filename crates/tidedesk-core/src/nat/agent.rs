@@ -8,17 +8,11 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use tokio::runtime::Handle;
-use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::{broadcast, mpsc, watch};
 use tokio::task::JoinHandle;
 
 use super::socket::{RawDatagram, SharedSocket};
 use super::stun::{Discovery, NatKind, PublicEndpoint, resolve_servers};
-
-/// Once one server has answered, how long to wait for the others. Their
-/// answers only refine the NAT classification, and this covers two of their
-/// retransmissions.
-const SECOND_OPINION_WAIT: Duration = Duration::from_secs(2);
 
 /// Side-channel datagrams buffered per listener before the oldest are dropped.
 const FAN_OUT_CAPACITY: usize = 64;
@@ -101,10 +95,6 @@ impl Agent {
         }))
     }
 
-    pub fn socket(&self) -> &Arc<SharedSocket> {
-        &self.link.socket
-    }
-
     /// Watches the agent's status; see [`Agent::public`] for a one-off read.
     pub fn status(&self) -> watch::Receiver<AgentStatus> {
         self.link.status.subscribe()
@@ -119,6 +109,7 @@ impl Agent {
         &self,
         servers: Vec<(String, SocketAddr)>,
     ) -> Result<PublicEndpoint, String> {
+        self.link.begin();
         self.link.discover(servers).await
     }
 
@@ -131,11 +122,16 @@ impl Agent {
         self.link.begin();
         let link = self.link.clone();
         let task = self.runtime.spawn(async move {
+            let mut resolved = Vec::new();
             loop {
-                // Resolved every round: a computer that starts offline
-                // cannot resolve anything until its network is up.
-                let resolved = resolve_servers(&servers).await;
-                let _ = link.discover(resolved).await;
+                // Looked up again after a failed round: a computer that starts
+                // offline cannot resolve anything until its network is up.
+                if resolved.is_empty() {
+                    resolved = resolve_servers(&servers).await;
+                }
+                if link.discover(resolved.clone()).await.is_err() {
+                    resolved.clear();
+                }
                 tokio::time::sleep(every).await;
             }
         });
@@ -149,7 +145,12 @@ impl Agent {
         if let Some(task) = self.refresh.lock().unwrap().take() {
             task.abort();
         }
-        self.link.publish(PublicStatus::Disabled);
+        // A task already past its last await may still publish; see `publish`.
+        self.link.status.send_if_modified(|s| {
+            let changed = s.public != PublicStatus::Disabled;
+            s.public = PublicStatus::Disabled;
+            changed
+        });
     }
 }
 
@@ -165,61 +166,41 @@ impl Drop for Agent {
 impl Link {
     /// One round of asking `servers`, publishing the outcome.
     async fn discover(&self, servers: Vec<(String, SocketAddr)>) -> Result<PublicEndpoint, String> {
+        let outcome = self.ask(servers).await;
+        self.publish(outcome.clone());
+        outcome
+    }
+
+    async fn ask(&self, servers: Vec<(String, SocketAddr)>) -> Result<PublicEndpoint, String> {
         // Subscribe before sending, so no early reply is missed.
         let mut datagrams = self.datagrams.subscribe();
-        self.begin();
-
         let mut discovery = Discovery::new(servers, Instant::now());
-        // The latest answer and when the first one came.
-        let mut answered: Option<(PublicEndpoint, Instant)> = None;
-        let outcome = loop {
+        let mut send_error = None;
+        loop {
             let now = Instant::now();
             for (to, request) in discovery.poll(now) {
                 if let Err(e) = self.socket.send_raw(to, &request).await {
-                    tracing::debug!("cannot send a STUN request to {to}: {e}");
+                    send_error = Some(format!("cannot send to {to}: {e}"));
                 }
             }
             if let Some(outcome) = discovery.outcome(now) {
-                break outcome;
+                // A socket that cannot reach the servers must not pass for
+                // servers that do not answer.
+                return outcome.map_err(|reason| match send_error {
+                    Some(error) => format!("{reason}; {error}"),
+                    None => reason,
+                });
             }
-            let wait_until = answered
-                .as_ref()
-                .map(|(_, first)| *first + SECOND_OPINION_WAIT);
-            if let Some((public, _)) = answered.as_ref()
-                && wait_until.is_some_and(|end| now >= end)
-            {
-                break Ok(public.clone());
-            }
-            let wake = [discovery.next_deadline(), wait_until]
-                .into_iter()
-                .flatten()
-                .min()
-                .unwrap_or(now);
+            let wake = discovery.next_deadline().unwrap_or(now);
             tokio::select! {
                 _ = tokio::time::sleep_until(wake.into()) => {}
-                received = datagrams.recv() => match received {
-                    Ok(datagram) => {
-                        let now = Instant::now();
-                        if let Some(public) = discovery.on_datagram(&datagram.data, now) {
-                            let first = answered.map_or(now, |(_, first)| first);
-                            answered = Some((public, first));
-                        }
+                received = datagrams.recv() => {
+                    // Lagged: lost replies are retransmitted. Closed cannot
+                    // happen while `self` holds a sender.
+                    if let Ok(datagram) = received {
+                        discovery.on_datagram(&datagram.data, Instant::now());
                     }
-                    Err(RecvError::Lagged(_)) => {}
-                    Err(RecvError::Closed) => break Err("the socket was closed".to_string()),
-                },
-            }
-        };
-
-        match outcome {
-            Ok(public) => {
-                let public = merge(&self.status.borrow().public, public);
-                self.publish(PublicStatus::Ready(public.clone()));
-                Ok(public)
-            }
-            Err(reason) => {
-                self.publish(PublicStatus::Unavailable(reason.clone()));
-                Err(reason)
+                }
             }
         }
     }
@@ -236,15 +217,26 @@ impl Link {
         });
     }
 
-    fn publish(&self, public: PublicStatus) {
+    /// Shows a round's outcome, unless discovery was turned off meanwhile.
+    fn publish(&self, outcome: Result<PublicEndpoint, String>) {
+        let mut shown = None;
         self.status.send_if_modified(|s| {
+            let public = match outcome {
+                _ if s.public == PublicStatus::Disabled => return false,
+                Ok(public) => PublicStatus::Ready(merge(&s.public, public)),
+                Err(reason) => PublicStatus::Unavailable(reason),
+            };
             if s.public == public {
                 return false;
             }
-            tracing::info!("internet address: {public}");
+            shown = Some(public.to_string());
             s.public = public;
             true
         });
+        // Logged outside the lock: a blocked console must not stall readers.
+        if let Some(shown) = shown {
+            tracing::info!("internet address: {shown}");
+        }
     }
 }
 
@@ -263,7 +255,6 @@ fn merge(previous: &PublicStatus, mut new: PublicEndpoint) -> PublicEndpoint {
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicU16, Ordering};
-    use std::time::Instant;
 
     use super::*;
     use crate::nat::stun::{self, TransactionId};
@@ -341,26 +332,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_silent_second_server_does_not_hold_up_the_answer() {
+    async fn a_result_arriving_after_stop_does_not_undo_it() {
         let (agent, _endpoint, local) = agent_on_loopback();
-        let answering = fake_stun_server(Arc::default()).await;
-        // Bound but never read: requests to it go unanswered.
-        let silent = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
-
-        let started = Instant::now();
-        let public = agent
-            .discover(vec![
-                fake("answering", answering),
-                fake("silent", silent.local_addr().unwrap()),
-            ])
-            .await
-            .unwrap();
-        assert_eq!((public.addr, public.nat), (local, NatKind::Unknown));
-        assert!(
-            started.elapsed() < Duration::from_secs(5),
-            "waited {:?} for the silent server",
-            started.elapsed()
-        );
+        agent.start_refresh(Vec::new(), Duration::from_secs(60));
+        agent.stop_refresh();
+        // What a refresh task already past its last await could still do.
+        agent.link.publish(Ok(PublicEndpoint {
+            addr: local,
+            nat: NatKind::Unknown,
+            via: "late".into(),
+        }));
+        assert_eq!(agent.public(), PublicStatus::Disabled);
     }
 
     #[tokio::test]

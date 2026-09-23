@@ -42,7 +42,7 @@ impl Default for HostConfig {
             show_in_taskbar: false,
             start_in_tray: false,
             discover_public_address: true,
-            stun_servers: default_stun_servers(),
+            stun_servers: Vec::new(),
         }
     }
 }
@@ -82,33 +82,29 @@ impl HostConfig {
         self.bitrate_kbps = self
             .bitrate_kbps
             .clamp(*Self::BITRATE_RANGE.start(), *Self::BITRATE_RANGE.end());
-        self.stun_servers = stun_servers_or_defaults(self.stun_servers);
         self
     }
-}
 
-fn default_stun_servers() -> Vec<String> {
-    DEFAULT_STUN_SERVERS.iter().map(|s| s.to_string()).collect()
+    /// The STUN servers to ask: the configured ones, else the defaults. The
+    /// defaults are not saved, so a later version can change them.
+    pub fn effective_stun_servers(&self) -> Vec<String> {
+        let configured = parse_stun_servers(&self.stun_servers.join(","));
+        if configured.is_empty() {
+            DEFAULT_STUN_SERVERS.iter().map(|s| s.to_string()).collect()
+        } else {
+            configured
+        }
+    }
 }
 
 /// Reads a comma- or space-separated list of STUN servers as typed in the
-/// settings; an empty list means the defaults.
+/// settings; empty entries are dropped.
 pub fn parse_stun_servers(text: &str) -> Vec<String> {
-    stun_servers_or_defaults(text.split([',', ' ']).map(String::from).collect())
-}
-
-fn stun_servers_or_defaults(servers: Vec<String>) -> Vec<String> {
-    let servers: Vec<String> = servers
-        .iter()
-        .map(|s| s.trim())
+    text.split([',', ' '])
+        .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(String::from)
-        .collect();
-    if servers.is_empty() {
-        default_stun_servers()
-    } else {
-        servers
-    }
+        .collect()
 }
 
 #[cfg(test)]
@@ -128,26 +124,25 @@ mod tests {
     fn defaults_enable_discovery_with_two_stun_servers() {
         let cfg = HostConfig::default();
         assert!(cfg.discover_public_address);
-        assert_eq!(cfg.stun_servers, DEFAULT_STUN_SERVERS);
-        assert_eq!(cfg.stun_servers.len(), 2);
-        // Settings saved by older versions gain the new fields.
-        let old: HostConfig = toml::from_str(
-            "fps = 30
-port = 47800",
-        )
-        .unwrap();
-        assert_eq!(old.clamped().stun_servers, DEFAULT_STUN_SERVERS);
+        assert_eq!(cfg.effective_stun_servers(), DEFAULT_STUN_SERVERS);
+        // The defaults are not written out, so a later release can change them.
+        assert!(cfg.stun_servers.is_empty());
+        let old: HostConfig = toml::from_str("fps = 30\nport = 47800").unwrap();
+        assert_eq!(old.effective_stun_servers(), DEFAULT_STUN_SERVERS);
     }
 
     #[test]
     fn empty_stun_list_falls_back_to_defaults() {
         let blank: HostConfig = toml::from_str("stun_servers = [\" \", \"\"]").unwrap();
-        assert_eq!(blank.clamped().stun_servers, DEFAULT_STUN_SERVERS);
-        assert_eq!(parse_stun_servers("  , "), DEFAULT_STUN_SERVERS);
-        assert_eq!(
-            parse_stun_servers(" stun.example.org, 192.0.2.1:3478 ,other"),
-            ["stun.example.org", "192.0.2.1:3478", "other"]
-        );
+        assert_eq!(blank.effective_stun_servers(), DEFAULT_STUN_SERVERS);
+        assert!(parse_stun_servers("  , ").is_empty());
+        let chosen = parse_stun_servers(" stun.example.org, 192.0.2.1:3478 ,other");
+        assert_eq!(chosen, ["stun.example.org", "192.0.2.1:3478", "other"]);
+        let cfg = HostConfig {
+            stun_servers: chosen.clone(),
+            ..Default::default()
+        };
+        assert_eq!(cfg.effective_stun_servers(), chosen);
     }
 
     #[test]

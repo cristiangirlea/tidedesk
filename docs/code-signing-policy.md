@@ -45,7 +45,8 @@ To show the host's internet address, TideDesk Host asks public STUN servers (by
 default `stun.l.google.com` and `stun.cloudflare.com`) which address and port its
 router uses, about every 25 seconds while it runs. Each request is 20 bytes with no
 content; the server learns the computer's public IP address and port, as any server it
-contacts would. Turn this off, or name other servers, under Settings, Internet.
+contacts would. Turn this off, or name other servers, under Settings, Internet (or
+with `discover_public_address = false` or `stun_servers` in `host.toml`).
 
 Operators choose their network destinations. If they use a separate VPN or other
 third-party network service, that service's privacy policy also applies.
