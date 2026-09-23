@@ -816,13 +816,25 @@ mod tests {
         assert_eq!(result, Err(PunchError::Stopped));
     }
 
+    /// A real rendezvous service on this machine, named by
+    /// `TIDEDESK_TEST_SERVICE=ip:port`; its second port must be the next one
+    /// up. The tests that need one are ignored until it is set:
+    /// `cargo test -p tidedesk-core -- --ignored host_registers viewer_looks_up`.
+    fn external_service() -> SocketAddr {
+        std::env::var("TIDEDESK_TEST_SERVICE")
+            .expect("TIDEDESK_TEST_SERVICE=ip:port names a rendezvous service on this machine")
+            .parse()
+            .expect("TIDEDESK_TEST_SERVICE is an ip:port")
+    }
+
     #[tokio::test]
+    #[ignore = "needs a rendezvous service on this machine: TIDEDESK_TEST_SERVICE=ip:port"]
     async fn host_registers_with_a_service_and_punches_an_introduced_viewer() {
         use tidedesk_rendezvous_proto::{FromServer, ToServer, decode, encode};
 
         use crate::nat::punch::{Kind, Packet};
 
-        let service = tidedesk_rendezvous_proto::test_service::spawn().await;
+        let service = external_service();
         let identity = test_identity("nat-rendezvous");
         let (host, _endpoint, host_addr) = agent_on_loopback();
         assert_eq!(host.rendezvous(), RendezvousStatus::Off);
@@ -894,8 +906,9 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "needs a rendezvous service on this machine: TIDEDESK_TEST_SERVICE=ip:port"]
     async fn viewer_looks_up_a_registered_host_and_both_punch() {
-        let service = tidedesk_rendezvous_proto::test_service::spawn().await;
+        let service = external_service();
         let identity = test_identity("nat-lookup");
         let (host, _host_endpoint, host_addr) = agent_on_loopback();
         host.start_rendezvous(service.to_string(), identity.rendezvous_credentials());

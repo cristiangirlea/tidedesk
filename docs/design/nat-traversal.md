@@ -170,8 +170,9 @@ inbound rule.
 A small UDP service remembers each registered host's public address under a stable
 **device ID**: the first 64 bits of the SHA-256 of the host's certificate, shown as
 `TD-XXXX-XXXX-XXXX-XXXX`. It is off until a service is configured on both sides. The
-wire format is the `tidedesk-rendezvous-proto` crate here, which also holds a minimal
-in-memory service for tests; the service TideDesk runs is maintained separately.
+wire format is the `tidedesk-rendezvous-proto` crate here; the service TideDesk runs
+is maintained separately, and the host and viewer tests that need one run against it
+(`TIDEDESK_TEST_SERVICE=ip:port`, otherwise ignored).
 
 - **Registration.** The host says Hello to both service ports (the second port's
   answer classifies its NAT), gets a challenge bound to its address, and registers by

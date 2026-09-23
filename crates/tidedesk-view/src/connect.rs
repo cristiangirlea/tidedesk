@@ -719,12 +719,24 @@ mod tests {
         session.conn.close(0u32.into(), b"done");
     }
 
+    /// A real rendezvous service on this machine, named by
+    /// `TIDEDESK_TEST_SERVICE=ip:port`; its second port must be the next one
+    /// up. The tests that need one are ignored until it is set:
+    /// `cargo test -p tidedesk-view -- --ignored viewer_dialer_connects_by_device_id`.
+    fn external_service() -> SocketAddr {
+        std::env::var("TIDEDESK_TEST_SERVICE")
+            .expect("TIDEDESK_TEST_SERVICE=ip:port names a rendezvous service on this machine")
+            .parse()
+            .expect("TIDEDESK_TEST_SERVICE is an ip:port")
+    }
+
     #[tokio::test]
+    #[ignore = "needs a rendezvous service on this machine: TIDEDESK_TEST_SERVICE=ip:port"]
     async fn viewer_dialer_connects_by_device_id() {
         use tidedesk_core::nat::AgentStatus;
         use tidedesk_core::nat::signal::RendezvousStatus;
 
-        let service = tidedesk_rendezvous_proto::test_service::spawn().await;
+        let service = external_service();
         let dir = temp_dir("dialer-device-id");
         let identity = HostIdentity::load_or_create(&dir).unwrap();
         let (host_socket, host_tap) = SharedSocket::bind("127.0.0.1:0".parse().unwrap()).unwrap();
