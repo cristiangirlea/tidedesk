@@ -67,9 +67,9 @@ privacy notice.
 - Each IP address may send 10 datagrams per second (bursts of 20); the rest are dropped.
   At most 100,000 addresses are tracked at once; during a flood from more, new
   addresses wait.
-- Every message that could be sent on someone else's behalf needs a challenge the
-  service sent to the sender's own address first, and every question is at least as
-  large as its answer, so a forged source address gains nothing: the service introduces
+- A Hello is padded to be at least as large as its answer. Registrations and lookups
+  must return a challenge the service sent to the sender's own address, and refreshes
+  a secret token, so a forged source address gains nothing: the service introduces
   only addresses that proved they are real.
 - Registrations expire 75 seconds after the last refresh.
 - At most 10,000 hosts are registered at once, and at most 32 from one IP address;
