@@ -11,9 +11,11 @@ use std::sync::atomic::Ordering;
 use anyhow::{Result, anyhow};
 use egui::{Color32, RichText};
 use egui_software_backend::{SoftwareBackend, SoftwareBackendAppConfiguration};
+use tidedesk_core::nat::stun::STUN_REFRESH;
+use tidedesk_core::nat::{Agent, NatKind, PublicStatus};
 
 use crate::capture::{self, DisplayInfo};
-use crate::config::HostConfig;
+use crate::config::{HostConfig, parse_stun_servers};
 use crate::session::HostState;
 use crate::tray::Tray;
 use crate::{icon, platform};
@@ -23,6 +25,7 @@ pub const WINDOW_TITLE: &str = "TideDesk Host";
 
 pub struct HostInfo {
     pub state: Arc<HostState>,
+    pub agent: Arc<Agent>,
     pub config: HostConfig,
     pub fingerprint: String,
     pub port: u16,
@@ -41,6 +44,8 @@ struct HostApp {
     displays: Vec<DisplayInfo>,
     addresses: Vec<Address>,
     show_all_addresses: bool,
+    /// The STUN server list as typed; applied when the field loses focus.
+    stun_text: String,
     notice: Option<String>,
     settings_error: Option<String>,
     autostart: bool,
@@ -113,12 +118,14 @@ pub fn run(info: HostInfo) -> Result<()> {
         .with_visible(!info.start_hidden);
     let displays = capture::list_displays().unwrap_or_default();
     let addresses = local_addresses(info.port);
+    let stun_text = info.config.stun_servers.join(", ");
     let mut app = Some(HostApp {
         info,
         tab: Tab::Status,
         displays,
         addresses,
         show_all_addresses: false,
+        stun_text,
         notice: None,
         settings_error: None,
         autostart: platform::autostart_enabled(),
@@ -224,12 +231,48 @@ impl HostApp {
         }
         ui.add_space(6.0);
 
+        ui.label("Internet address");
+        self.internet_address(ui);
+        ui.add_space(6.0);
+
         ui.label("Fingerprint");
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new(&self.info.fingerprint).monospace().small());
             copy_button(ui, &self.info.fingerprint);
         });
         ui.small("Viewers see this on first connect; it should match.");
+    }
+
+    fn internet_address(&self, ui: &mut egui::Ui) {
+        match self.info.agent.public() {
+            PublicStatus::Disabled => {
+                ui.small("Not looked up. Turn it on under Settings, Internet.");
+            }
+            PublicStatus::Discovering => {
+                ui.small("Looking it up…");
+            }
+            PublicStatus::Unavailable(reason) => {
+                ui.small(format!("Unavailable: {reason}"));
+            }
+            PublicStatus::Ready(public) if public.nat == NatKind::Symmetric => {
+                ui.small(
+                    "Unavailable: this network uses a symmetric NAT, so direct internet \
+                     connections will not work from here. A VPN or port forwarding still works.",
+                );
+            }
+            PublicStatus::Ready(public) => {
+                let text = public.addr.to_string();
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(&text).monospace());
+                    copy_button(ui, &text);
+                });
+                ui.small(RichText::new(format!("via {}, NAT: {}", public.via, public.nat)).weak());
+                ui.small(
+                    "Viewers cannot use this address yet: direct internet connections \
+                     come in a later version.",
+                );
+            }
+        }
     }
 
     fn settings_tab(&mut self, ui: &mut egui::Ui) {
@@ -304,6 +347,29 @@ impl HostApp {
         if cfg.port != self.info.port {
             ui.small("The new port is used after TideDesk Host restarts.");
         }
+        ui.add_space(8.0);
+
+        ui.label(RichText::new("Internet").strong());
+        ui.checkbox(
+            &mut cfg.discover_public_address,
+            "Look up this computer's internet address (STUN)",
+        )
+        .on_hover_text(
+            "Asks public STUN servers which address and port your router gives TideDesk. \
+             They see this computer's public IP address and a 20-byte request, nothing else.",
+        );
+        ui.horizontal(|ui| {
+            ui.label("STUN servers");
+            let field = egui::TextEdit::singleline(&mut self.stun_text).hint_text("host:port, …");
+            if ui
+                .add_enabled(cfg.discover_public_address, field)
+                .lost_focus()
+            {
+                cfg.stun_servers = parse_stun_servers(&self.stun_text);
+                self.stun_text = cfg.stun_servers.join(", ");
+            }
+        });
+        ui.small("Separate servers with commas; leave empty for the defaults.");
 
         if *cfg != before {
             {
@@ -317,6 +383,16 @@ impl HostApp {
             state.mouse.store(cfg.allow_mouse, Ordering::SeqCst);
             if cfg.show_in_taskbar != before.show_in_taskbar {
                 platform::set_taskbar_button(WINDOW_TITLE, cfg.show_in_taskbar);
+            }
+            if cfg.discover_public_address != before.discover_public_address
+                || cfg.stun_servers != before.stun_servers
+            {
+                if cfg.discover_public_address {
+                    let servers = cfg.stun_servers.clone();
+                    self.info.agent.start_refresh(servers, STUN_REFRESH);
+                } else {
+                    self.info.agent.stop_refresh();
+                }
             }
             self.save();
         }

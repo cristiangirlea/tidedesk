@@ -68,13 +68,6 @@ pub fn client_config() -> Result<quinn::ClientConfig> {
     Ok(cfg)
 }
 
-/// Host endpoint on its own socket. Must be called inside a tokio runtime.
-pub fn server_endpoint(listen: SocketAddr, id: &HostIdentity) -> Result<quinn::Endpoint> {
-    let (socket, _side_channel) =
-        SharedSocket::bind(listen).with_context(|| format!("listening on {listen}"))?;
-    server_endpoint_on(socket, id)
-}
-
 /// Host endpoint on a socket shared with the NAT side channel.
 pub fn server_endpoint_on(socket: Arc<SharedSocket>, id: &HostIdentity) -> Result<quinn::Endpoint> {
     endpoint_on(socket, Some(server_config(id)?))
