@@ -144,6 +144,26 @@ fn no_reply(host: SocketAddr, me: SocketAddr) -> String {
     )
 }
 
+/// While punching, when to start trying the host's address directly too.
+const DIRECT_TRY_AFTER: Duration = Duration::from_secs(5);
+const DIRECT_TRY_TIMEOUT: Duration = Duration::from_secs(3);
+const DIRECT_TRY_EVERY: Duration = Duration::from_secs(5);
+
+/// Resolves once a QUIC handshake with `host` succeeds: a host whose UDP port
+/// is forwarded answers without anyone opening a path at its side.
+async fn answers_directly(endpoint: &quinn::Endpoint, host: SocketAddr) {
+    tokio::time::sleep(DIRECT_TRY_AFTER).await;
+    loop {
+        if let Ok(connecting) = endpoint.connect(host, "tidedesk-host")
+            && let Ok(Ok(conn)) = tokio::time::timeout(DIRECT_TRY_TIMEOUT, connecting).await
+        {
+            conn.close(0u32.into(), b"reachable");
+            return;
+        }
+        tokio::time::sleep(DIRECT_TRY_EVERY).await;
+    }
+}
+
 /// `host`, `host:port`, `[v6]:port` → `(display form, socket address)`.
 async fn resolve(host: &str) -> Result<(String, SocketAddr)> {
     let with_port = net::with_default_port(host, DEFAULT_PORT);
@@ -225,9 +245,7 @@ impl Dialer {
                      internet connection and the STUN servers"
                 )
             })?;
-        if public.nat == NatKind::Symmetric {
-            bail!(symmetric_nat());
-        }
+        // Checked first: on one network the local address works whatever the NAT.
         if public.addr.ip() == host_addr.ip() {
             bail!(
                 "the host has the same internet address as this computer ({}), so both are on \
@@ -236,27 +254,38 @@ impl Dialer {
                 public.addr.ip()
             );
         }
+        if public.nat == NatKind::Symmetric {
+            bail!(symmetric_nat());
+        }
         progress(Progress::ViewerAddress(public.addr));
         progress(Progress::Status(format!(
             "Waiting for the host to open a path to {}…",
             public.addr
         )));
-        let path = match agent
-            .punch(host_addr, Some(new_session()), PUNCH_WINDOW)
-            .await
-        {
-            Ok(path) => path,
-            Err(PunchError::NoReply) => bail!(no_reply(host_addr, public.addr)),
-            Err(PunchError::Stopped) => bail!("stopped opening a path to {host_addr}"),
+        let punching = agent.punch(host_addr, Some(new_session()), PUNCH_WINDOW);
+        let peer = tokio::select! {
+            punched = punching => match punched {
+                Ok(path) => {
+                    progress(Progress::PathOpen(path.clone()));
+                    path.peer
+                }
+                Err(PunchError::NoReply) => bail!(no_reply(host_addr, public.addr)),
+                Err(PunchError::Stopped) => bail!("stopped opening a path to {host_addr}"),
+            },
+            () = answers_directly(&endpoint, host_addr) => {
+                progress(Progress::Status(format!(
+                    "{host_addr} answered directly (its port is forwarded)."
+                )));
+                host_addr
+            }
         };
-        progress(Progress::PathOpen(path.clone()));
         Ok(Self {
             address: host_addr.to_string(),
             endpoint,
             route: RouteInfo {
                 kind: RouteKind::Internet,
-                peer: path.peer,
-                observed_self: path.observed_self.or(Some(public.addr)),
+                peer,
+                observed_self: Some(public.addr),
             },
             config_dir: None,
             _agent: Some(agent),
@@ -286,12 +315,9 @@ impl Dialer {
         let display = &self.address;
         let mut known = self.known_hosts()?;
         match self.pin_status(&known, &fp) {
-            PinStatus::Trusted => {
-                // Trusted under another address: remember this one too.
-                if known.check(display, &fp) != PinStatus::Trusted {
-                    known.pin(display, &fp)?;
-                }
-            }
+            // Possibly under another address: an internet address and port
+            // can change with every restart, so this one is not remembered.
+            PinStatus::Trusted => {}
             PinStatus::Unknown => match &opts.expected_fingerprint {
                 Some(expected) if normalize_fingerprint(expected) != normalize_fingerprint(&fp) => {
                     bail!("host fingerprint {fp} does not match the one you supplied");
@@ -474,23 +500,79 @@ mod tests {
         addr
     }
 
-    /// Welcomes the first viewer without checking its code.
-    fn fake_host(endpoint: quinn::Endpoint) -> tokio::task::JoinHandle<()> {
+    /// Welcomes every viewer that says Hello, without checking its code;
+    /// handshake-only connections (probes) just end.
+    fn fake_host(endpoint: quinn::Endpoint) {
         tokio::spawn(async move {
-            let incoming = net::accept_validated(&endpoint).await.unwrap();
-            let conn = incoming.await.unwrap();
-            let (mut send, mut recv) = conn.accept_bi().await.unwrap();
-            let hello = protocol::read_message::<_, ClientMessage>(&mut recv).await;
-            assert!(matches!(hello, Ok(Some(ClientMessage::Hello { .. }))));
-            let welcome = ServerMessage::Welcome {
-                host_name: "test-host".into(),
-                width: 640,
-                height: 480,
-                audio: false,
-            };
-            protocol::write_message(&mut send, &welcome).await.unwrap();
-            conn.closed().await;
-        })
+            while let Some(incoming) = net::accept_validated(&endpoint).await {
+                tokio::spawn(async move {
+                    let Ok(conn) = incoming.await else { return };
+                    let Ok((mut send, mut recv)) = conn.accept_bi().await else {
+                        return;
+                    };
+                    let hello = protocol::read_message::<_, ClientMessage>(&mut recv).await;
+                    if matches!(hello, Ok(Some(ClientMessage::Hello { .. }))) {
+                        let welcome = ServerMessage::Welcome {
+                            host_name: "test-host".into(),
+                            width: 640,
+                            height: 480,
+                            audio: false,
+                        };
+                        let _ = protocol::write_message(&mut send, &welcome).await;
+                    }
+                    conn.closed().await;
+                });
+            }
+        });
+    }
+
+    fn options(host: SocketAddr, route: Route) -> ConnectOptions {
+        ConnectOptions {
+            host: host.to_string(),
+            code: "ABCD-EFGH".into(),
+            want_audio: false,
+            expected_fingerprint: None,
+            accept_new_fingerprint: false,
+            route,
+        }
+    }
+
+    #[tokio::test]
+    async fn internet_route_uses_a_forwarded_port_without_punching() {
+        // Nobody at the host opens a path, but its UDP port is forwarded:
+        // the host answers QUIC at its address, and never a punch.
+        let dir = temp_dir("dialer-forwarded");
+        let identity = HostIdentity::load_or_create(&dir).unwrap();
+        let (host_socket, _) = SharedSocket::bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        let host_addr = host_socket.local_addr().unwrap();
+        fake_host(net::server_endpoint_on(host_socket, &identity).unwrap());
+        let stun = fake_stun_behind_router(Ipv4Addr::new(203, 0, 113, 9)).await;
+        // Known from an earlier connection at another public port.
+        let earlier = "203.0.113.5:40999";
+        KnownHosts::load(&dir)
+            .unwrap()
+            .pin(earlier, &identity.fingerprint())
+            .unwrap();
+
+        let route = Route::Internet {
+            stun_servers: vec![stun.to_string()],
+        };
+        let dialer = tokio::time::timeout(
+            Duration::from_secs(20),
+            Dialer::new(&host_addr.to_string(), &route, |_| {}),
+        )
+        .await
+        .expect("the forwarded port is tried long before the punch window ends")
+        .unwrap()
+        .with_config_dir(dir.clone());
+        let session = dialer.connect(&options(host_addr, route)).await.unwrap();
+        assert_eq!(session.route.kind, RouteKind::Internet);
+        assert_eq!(session.route.peer, host_addr);
+
+        // Trusted by its fingerprint; the ephemeral address is not remembered.
+        let known = KnownHosts::load(&dir).unwrap();
+        assert_eq!(known.addresses().collect::<Vec<_>>(), [earlier]);
+        session.conn.close(0u32.into(), b"done");
     }
 
     #[tokio::test]
@@ -501,7 +583,7 @@ mod tests {
         let host_addr = host_socket.local_addr().unwrap();
         let host_endpoint = net::server_endpoint_on(host_socket.clone(), &identity).unwrap();
         let host_agent = Agent::spawn(host_socket, host_tap).unwrap();
-        let host = fake_host(host_endpoint);
+        fake_host(host_endpoint);
         let stun = fake_stun_behind_router(Ipv4Addr::new(203, 0, 113, 9)).await;
 
         // The person at the host types the address the viewer shows; the
@@ -529,15 +611,7 @@ mod tests {
             .await
             .unwrap()
             .with_config_dir(dir);
-        let opts = ConnectOptions {
-            host: host_addr.to_string(),
-            code: "ABCD-EFGH".into(),
-            want_audio: false,
-            expected_fingerprint: None,
-            accept_new_fingerprint: false,
-            route,
-        };
-        let session = dialer.connect(&opts).await.unwrap();
+        let session = dialer.connect(&options(host_addr, route)).await.unwrap();
 
         assert_eq!(session.fingerprint, identity.fingerprint());
         assert_eq!(session.host_name, "test-host");
@@ -549,6 +623,5 @@ mod tests {
             .expect("the viewer showed its address");
         assert_eq!(shown.ip(), IpAddr::from([203, 0, 113, 9]));
         session.conn.close(0u32.into(), b"done");
-        host.await.unwrap();
     }
 }
