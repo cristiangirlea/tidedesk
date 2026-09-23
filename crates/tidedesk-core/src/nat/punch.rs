@@ -22,9 +22,7 @@
 use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 use std::time::{Duration, Instant};
 
-use ring::rand::{SecureRandom, SystemRandom};
-
-use super::PUNCH_MAGIC;
+use super::{PUNCH_MAGIC, random_bytes};
 
 pub const PUNCH_LEN: usize = 42;
 
@@ -38,16 +36,18 @@ pub const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(2);
 /// How long keepalives continue after the path opened.
 pub const KEEPALIVE_MAX: Duration = Duration::from_secs(180);
 
+/// Longest punching window: bounds the datagrams sent to an address nobody
+/// answers from, such as a mistyped one.
+pub const MAX_WINDOW: Duration = Duration::from_secs(180);
+
 const VERSION: u8 = 1;
 
 pub type SessionId = [u8; 8];
 
 /// A session ID for a new exchange. Never zero, which means "not known".
 pub fn new_session() -> SessionId {
-    let rng = SystemRandom::new();
     loop {
-        let mut session = [0u8; 8];
-        rng.fill(&mut session).expect("system RNG failed");
+        let session = random_bytes();
         if session != [0; 8] {
             return session;
         }
@@ -114,11 +114,6 @@ impl Packet {
     }
 }
 
-/// Whether a datagram is a punch or ack this version understands.
-pub fn is_punch(datagram: &[u8]) -> bool {
-    Packet::decode(datagram).is_some()
-}
-
 /// A path that answered.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Punched {
@@ -148,13 +143,16 @@ pub enum State {
 /// Packets are accepted from the peer's IP address on any port: routers may
 /// use another port towards us than the one the peer learnt from STUN, and
 /// punches then follow the port that answered. With a `session`, packets of
-/// other sessions are ignored; without one, the first session seen is taken.
+/// other sessions are ignored. Without one, every session is answered and
+/// punches carry the latest, so the other side can retry with a new one.
 ///
 /// Pure state machine: time is passed in, and the caller sends what
 /// [`Exchange::poll`] and [`Exchange::on_datagram`] return.
 pub struct Exchange {
     peer: SocketAddr,
     session: Option<SessionId>,
+    /// The session was given, not taken from the peer.
+    fixed_session: bool,
     token: [u8; 8],
     state: State,
     next_send: Instant,
@@ -171,17 +169,15 @@ impl Exchange {
         window: Duration,
         now: Instant,
     ) -> Self {
-        let mut token = [0u8; 8];
-        SystemRandom::new()
-            .fill(&mut token)
-            .expect("system RNG failed");
+        let session = session.filter(|s| *s != [0; 8]);
         Self {
             peer,
-            session: session.filter(|s| *s != [0; 8]),
-            token,
+            session,
+            fixed_session: session.is_some(),
+            token: random_bytes(),
             state: State::Punching,
             next_send: now,
-            until: now + window,
+            until: now + window.min(MAX_WINDOW),
             finished: false,
         }
     }
@@ -217,7 +213,7 @@ impl Exchange {
         }
         let packet = Packet::decode(datagram)?;
         let known = packet.session != [0; 8];
-        if known && self.session.is_some_and(|ours| ours != packet.session) {
+        if known && self.fixed_session && self.session != Some(packet.session) {
             return None; // another exchange with the same computer
         }
         if packet.kind == Kind::Ack && packet.token != self.token {
@@ -232,7 +228,12 @@ impl Exchange {
             Kind::Punch => {
                 let ack = Packet {
                     kind: Kind::Ack,
-                    session: self.session.unwrap_or_default(),
+                    // Their session if they have one: ours may be older.
+                    session: if known {
+                        packet.session
+                    } else {
+                        self.session.unwrap_or_default()
+                    },
                     token: packet.token,
                     observed: Some(from),
                 };
@@ -312,7 +313,7 @@ mod tests {
         );
         assert!(!stun::is_stun(&p));
         assert!(is_side_channel(&p));
-        assert!(is_punch(&p));
+        assert!(Packet::decode(&p).is_some());
     }
 
     #[test]
@@ -444,6 +445,40 @@ mod tests {
 
         host.on_datagram(addr(VIEWER), &packet(Kind::Ack, session, mine.token), t0);
         assert!(matches!(host.state(), State::Open(_)));
+    }
+
+    #[test]
+    fn a_responder_without_a_session_answers_a_retry() {
+        // The viewer's first attempt opened the path; it then retries from a
+        // new socket with a new session while the host still keeps alive.
+        let t0 = Instant::now();
+        let mut host = Exchange::new(addr(VIEWER), None, WINDOW, t0);
+        let (_, mine) = host.poll(t0).unwrap();
+        let mine = Packet::decode(&mine).unwrap();
+        host.on_datagram(addr(VIEWER), &packet(Kind::Punch, [1; 8], [1; 8]), t0);
+        host.on_datagram(addr(VIEWER), &packet(Kind::Ack, [1; 8], mine.token), t0);
+        assert!(matches!(host.state(), State::Open(_)));
+
+        let retry = addr("203.0.113.5:40777");
+        let (to, ack) = host
+            .on_datagram(retry, &packet(Kind::Punch, [2; 8], [3; 8]), t0)
+            .expect("the retry is answered");
+        let ack = Packet::decode(&ack).unwrap();
+        assert_eq!((to, ack.session, ack.token), (retry, [2; 8], [3; 8]));
+        let (to, keepalive) = host.poll(t0 + KEEPALIVE_INTERVAL).unwrap();
+        assert_eq!(
+            (to, Packet::decode(&keepalive).unwrap().session),
+            (retry, [2; 8])
+        );
+    }
+
+    #[test]
+    fn windows_are_capped_at_three_minutes() {
+        let t0 = Instant::now();
+        let mut viewer = Exchange::new(addr(HOST), Some([1; 8]), Duration::MAX, t0);
+        assert!(viewer.poll(t0).is_some());
+        assert_eq!(viewer.poll(t0 + MAX_WINDOW), None);
+        assert_eq!(viewer.state(), &State::Expired);
     }
 
     #[test]

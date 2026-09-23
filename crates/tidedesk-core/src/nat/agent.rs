@@ -1,5 +1,6 @@
-//! The side-channel actor: owns the shared socket's tap and runs STUN on the
-//! port QUIC uses, so the address it learns is the one peers must reach.
+//! The side-channel actor: owns the shared socket's tap and runs STUN and
+//! hole punching on the port QUIC uses, so the address it learns is the one
+//! peers must reach and the paths it opens are the ones QUIC will use.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -62,7 +63,7 @@ impl fmt::Display for PunchError {
 
 impl std::error::Error for PunchError {}
 
-/// Everything the agent reports. Later increments add hole-punching state.
+/// Everything the agent reports. Punch results come from [`Agent::punch`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentStatus {
     pub public: PublicStatus,
@@ -179,16 +180,18 @@ impl Agent {
         window: Duration,
     ) -> Result<Punched, PunchError> {
         let (opened, result) = oneshot::channel();
-        let link = self.link.clone();
-        let exchange = self.runtime.spawn(async move {
-            link.run_exchange(peer, session, window, opened).await;
-        });
         {
             let mut paths = self.paths.lock().unwrap();
             paths.retain(|_, task| !task.is_finished());
-            if let Some(earlier) = paths.insert(peer, exchange) {
+            // The earlier exchange goes first, so the two never answer together.
+            if let Some(earlier) = paths.remove(&peer) {
                 earlier.abort();
             }
+            let link = self.link.clone();
+            let exchange = self.runtime.spawn(async move {
+                link.run_exchange(peer, session, window, opened).await;
+            });
+            paths.insert(peer, exchange);
         }
         // A dropped sender means the exchange was aborted.
         result.await.unwrap_or(Err(PunchError::Stopped))
@@ -588,7 +591,7 @@ mod tests {
             let agent = agent.clone();
             async move { agent.punch(peer, None, Duration::from_secs(60)).await }
         });
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        tokio::task::yield_now().await; // let it start punching
         agent.stop_punching(peer);
         let result = tokio::time::timeout(Duration::from_secs(5), waiting)
             .await

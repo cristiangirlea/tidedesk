@@ -24,6 +24,16 @@ pub const STUN_MAGIC_COOKIE: [u8; 4] = [0x21, 0x12, 0xA4, 0x42];
 /// and the rest keeps it apart from STUN.
 pub const PUNCH_MAGIC: [u8; 4] = [0x00, b'T', b'D', b'P'];
 
+/// Random bytes for IDs and tokens.
+pub(crate) fn random_bytes<const N: usize>() -> [u8; N] {
+    use ring::rand::{SecureRandom, SystemRandom};
+    let mut bytes = [0u8; N];
+    SystemRandom::new()
+        .fill(&mut bytes)
+        .expect("system RNG failed");
+    bytes
+}
+
 /// Whether a datagram belongs to the side channel rather than to QUIC.
 ///
 /// Matching is by explicit magic only. The QUIC fixed bit cannot be trusted:
