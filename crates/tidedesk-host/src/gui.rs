@@ -283,8 +283,8 @@ impl HostApp {
                 });
                 ui.small(RichText::new(format!("via {}, NAT: {}", public.via, public.nat)).weak());
                 ui.small(
-                    "Viewers cannot use this address yet: direct internet connections \
-                     come in a later version.",
+                    "A viewer on another network connects to this address with \
+                     tidedesk-view --internet, once you open a path to it below.",
                 );
             }
         }

@@ -383,15 +383,7 @@ pub async fn resolve_servers(servers: &[String]) -> Vec<(String, SocketAddr)> {
 }
 
 async fn resolve_one(name: String) -> Option<(String, SocketAddr)> {
-    let has_port = name.parse::<SocketAddr>().is_ok()
-        || name
-            .rsplit_once(':')
-            .is_some_and(|(host, port)| !host.contains(':') && port.parse::<u16>().is_ok());
-    let target = if has_port {
-        name.clone()
-    } else {
-        format!("{name}:{DEFAULT_STUN_PORT}")
-    };
+    let target = crate::net::with_default_port(&name, DEFAULT_STUN_PORT);
     match tokio::net::lookup_host(&target).await {
         Ok(addrs) => match addrs.into_iter().find(SocketAddr::is_ipv4) {
             Some(addr) => Some((name, addr)),
@@ -407,10 +399,9 @@ async fn resolve_one(name: String) -> Option<(String, SocketAddr)> {
     }
 }
 
-/// Builds the reply a STUN server would send; for tests of code that talks
-/// to a (fake) server.
-#[cfg(test)]
-pub(crate) fn encode_binding_response(id: &TransactionId, mapped: SocketAddr) -> Vec<u8> {
+/// Builds the Binding success response a STUN server sends, telling the
+/// client it was seen at `mapped`. For tests and small servers.
+pub fn encode_binding_response(id: &TransactionId, mapped: SocketAddr) -> Vec<u8> {
     let mut value = vec![0u8, 0];
     let port = mapped.port() ^ u16::from_be_bytes([STUN_MAGIC_COOKIE[0], STUN_MAGIC_COOKIE[1]]);
     let mut mask = STUN_MAGIC_COOKIE.to_vec();
@@ -430,7 +421,6 @@ pub(crate) fn encode_binding_response(id: &TransactionId, mapped: SocketAddr) ->
     message(BINDING_SUCCESS, id, &[(ATTR_XOR_MAPPED_ADDRESS, value)])
 }
 
-#[cfg(test)]
 fn message(kind: u16, id: &TransactionId, attributes: &[(u16, Vec<u8>)]) -> Vec<u8> {
     let mut body = Vec::new();
     for (t, v) in attributes {

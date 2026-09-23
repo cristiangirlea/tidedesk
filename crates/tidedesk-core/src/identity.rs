@@ -104,6 +104,23 @@ impl KnownHosts {
         }
     }
 
+    /// Whether this fingerprint is pinned under any address.
+    pub fn is_trusted_fingerprint(&self, fp: &str) -> bool {
+        let fp = normalize_fingerprint(fp);
+        self.entries.values().any(|pinned| *pinned == fp)
+    }
+
+    /// Like [`KnownHosts::check`], but a fingerprint pinned under any
+    /// address is trusted: for keys that change while the host does not,
+    /// such as a home router's public address and port.
+    pub fn check_fingerprint_first(&self, addr: &str, fp: &str) -> PinStatus {
+        if self.is_trusted_fingerprint(fp) {
+            PinStatus::Trusted
+        } else {
+            self.check(addr, fp)
+        }
+    }
+
     /// Addresses of hosts connected to before, in sorted order.
     pub fn addresses(&self) -> impl Iterator<Item = &str> {
         self.entries.keys().map(String::as_str)
@@ -140,6 +157,56 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d
+    }
+
+    #[test]
+    fn fingerprint_trusted_under_another_address_is_trusted() {
+        let mut known = KnownHosts::load(&temp_dir("fp-first")).unwrap();
+        known.pin("203.0.113.5:40000", "AAAA 1111").unwrap();
+        assert!(known.is_trusted_fingerprint("aaaa1111"));
+        assert_eq!(
+            known.check_fingerprint_first("203.0.113.5:40999", "AAAA 1111"),
+            PinStatus::Trusted
+        );
+        // The exact check still sees a new address as unknown.
+        assert_eq!(
+            known.check("203.0.113.5:40999", "AAAA 1111"),
+            PinStatus::Unknown
+        );
+    }
+
+    #[test]
+    fn mismatch_still_reported_when_fingerprint_is_unknown() {
+        let mut known = KnownHosts::load(&temp_dir("fp-mismatch")).unwrap();
+        known.pin("203.0.113.5:40000", "AAAA 1111").unwrap();
+        assert_eq!(
+            known.check_fingerprint_first("203.0.113.5:40000", "BBBB 2222"),
+            PinStatus::Mismatch {
+                pinned: "AAAA1111".into()
+            }
+        );
+        assert_eq!(
+            known.check_fingerprint_first("198.51.100.1:47800", "BBBB 2222"),
+            PinStatus::Unknown
+        );
+        assert!(!known.is_trusted_fingerprint("BBBB 2222"));
+    }
+
+    #[test]
+    fn repinning_a_new_key_keeps_the_old_one() {
+        let dir = temp_dir("fp-repin");
+        let mut known = KnownHosts::load(&dir).unwrap();
+        known.pin("203.0.113.5:40000", "AAAA 1111").unwrap();
+        known.pin("203.0.113.5:40999", "AAAA 1111").unwrap();
+        let reloaded = KnownHosts::load(&dir).unwrap();
+        assert_eq!(
+            reloaded.check("203.0.113.5:40000", "AAAA1111"),
+            PinStatus::Trusted
+        );
+        assert_eq!(
+            reloaded.check("203.0.113.5:40999", "AAAA1111"),
+            PinStatus::Trusted
+        );
     }
 
     #[test]
