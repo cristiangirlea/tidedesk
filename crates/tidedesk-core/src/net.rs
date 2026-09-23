@@ -77,13 +77,7 @@ pub fn server_endpoint(listen: SocketAddr, id: &HostIdentity) -> Result<quinn::E
 
 /// Host endpoint on a socket shared with the NAT side channel.
 pub fn server_endpoint_on(socket: Arc<SharedSocket>, id: &HostIdentity) -> Result<quinn::Endpoint> {
-    quinn::Endpoint::new_with_abstract_socket(
-        endpoint_config(),
-        Some(server_config(id)?),
-        socket,
-        Arc::new(quinn::TokioRuntime),
-    )
-    .context("starting the QUIC endpoint")
+    endpoint_on(socket, Some(server_config(id)?))
 }
 
 pub fn client_endpoint() -> Result<quinn::Endpoint> {
@@ -97,15 +91,22 @@ pub fn client_endpoint() -> Result<quinn::Endpoint> {
 
 /// Viewer endpoint on a socket shared with the NAT side channel.
 pub fn client_endpoint_on(socket: Arc<SharedSocket>) -> Result<quinn::Endpoint> {
-    let mut ep = quinn::Endpoint::new_with_abstract_socket(
+    let mut ep = endpoint_on(socket, None)?;
+    ep.set_default_client_config(client_config()?);
+    Ok(ep)
+}
+
+fn endpoint_on(
+    socket: Arc<SharedSocket>,
+    server: Option<quinn::ServerConfig>,
+) -> Result<quinn::Endpoint> {
+    quinn::Endpoint::new_with_abstract_socket(
         endpoint_config(),
-        None,
+        server,
         socket,
         Arc::new(quinn::TokioRuntime),
     )
-    .context("starting the QUIC endpoint")?;
-    ep.set_default_client_config(client_config()?);
-    Ok(ep)
+    .context("starting the QUIC endpoint")
 }
 
 /// Fingerprint of the certificate the host presented on `conn`.

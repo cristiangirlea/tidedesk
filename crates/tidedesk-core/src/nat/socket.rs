@@ -32,6 +32,7 @@ const TAP_CAPACITY: usize = 256;
 pub struct SharedSocket {
     inner: Arc<dyn AsyncUdpSocket>,
     tap: mpsc::Sender<RawDatagram>,
+    ipv6: bool,
 }
 
 impl SharedSocket {
@@ -44,9 +45,13 @@ impl SharedSocket {
     pub fn from_std(
         socket: std::net::UdpSocket,
     ) -> io::Result<(Arc<Self>, mpsc::Receiver<RawDatagram>)> {
+        if tokio::runtime::Handle::try_current().is_err() {
+            return Err(io::Error::other("no tokio runtime to drive the socket"));
+        }
+        let ipv6 = socket.local_addr()?.is_ipv6();
         let inner = quinn::TokioRuntime.wrap_udp_socket(socket)?;
         let (tap, side_channel) = mpsc::channel(TAP_CAPACITY);
-        Ok((Arc::new(Self { inner, tap }), side_channel))
+        Ok((Arc::new(Self { inner, tap, ipv6 }), side_channel))
     }
 
     pub fn local_addr(&self) -> io::Result<SocketAddr> {
@@ -57,14 +62,18 @@ impl SharedSocket {
     /// take it. As with any UDP send, delivery is not guaranteed.
     pub async fn send_raw(&self, to: SocketAddr, data: &[u8]) -> io::Result<()> {
         let transmit = Transmit {
-            destination: to,
+            destination: destination(self.ipv6, to),
             ecn: None,
             contents: data,
             segment_size: None,
             src_ip: None,
         };
+        match self.inner.try_send(&transmit) {
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => {}
+            result => return result,
+        }
         // The runtime only lets a send through once it has seen the socket
-        // become writable, so wait for that first, as quinn itself does.
+        // become writable; wait for that, as quinn itself does.
         let mut poller = self.inner.clone().create_io_poller();
         loop {
             std::future::poll_fn(|cx| poller.as_mut().poll_writable(cx)).await?;
@@ -82,6 +91,17 @@ impl SharedSocket {
             from,
             data: data.to_vec(),
         });
+    }
+}
+
+/// An IPv6 socket reaches IPv4 peers through IPv4-mapped addresses, the same
+/// mapping quinn applies to its own sends.
+fn destination(ipv6_socket: bool, to: SocketAddr) -> SocketAddr {
+    match to {
+        SocketAddr::V4(v4) if ipv6_socket => {
+            SocketAddr::new(v4.ip().to_ipv6_mapped().into(), v4.port())
+        }
+        other => other,
     }
 }
 
@@ -240,6 +260,24 @@ mod tests {
         assert_eq!((m.len, buf), (1200, q));
     }
 
+    #[test]
+    fn ipv4_destinations_are_mapped_on_ipv6_sockets() {
+        let v4: SocketAddr = "203.0.113.7:3478".parse().unwrap();
+        let v6: SocketAddr = "[2001:db8::1]:3478".parse().unwrap();
+        assert_eq!(destination(false, v4), v4);
+        assert_eq!(
+            destination(true, v4),
+            "[::ffff:203.0.113.7]:3478".parse().unwrap()
+        );
+        assert_eq!(destination(true, v6), v6);
+    }
+
+    #[test]
+    fn binding_outside_a_runtime_is_an_error_not_a_panic() {
+        let err = SharedSocket::bind("127.0.0.1:0".parse().unwrap()).unwrap_err();
+        assert!(err.to_string().contains("tokio runtime"), "{err}");
+    }
+
     #[tokio::test]
     async fn send_raw_reaches_a_plain_udp_socket() {
         let (shared, _tap) = SharedSocket::bind("127.0.0.1:0".parse().unwrap()).unwrap();
@@ -325,6 +363,9 @@ mod tests {
             assert_eq!(d.from, viewer_addr);
             received.push(d.data);
         }
+        // UDP promises neither order nor delivery; compare as multisets.
+        received.sort();
+        expected.sort();
         assert_eq!(received, expected);
 
         conn.close(0u32.into(), b"done");
