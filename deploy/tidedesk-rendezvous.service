@@ -1,0 +1,25 @@
+# systemd unit for the TideDesk rendezvous service.
+# Copy the binary to /usr/local/bin, this file to /etc/systemd/system, then:
+#   systemctl daemon-reload && systemctl enable --now tidedesk-rendezvous
+
+[Unit]
+Description=TideDesk rendezvous (introduces viewers to hosts; never relays sessions)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/tidedesk-rendezvous --listen 0.0.0.0:47900 --alt-listen 0.0.0.0:47901
+Restart=always
+RestartSec=2
+DynamicUser=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6
+MemoryMax=256M
+
+[Install]
+WantedBy=multi-user.target

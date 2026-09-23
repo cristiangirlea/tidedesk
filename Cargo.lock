@@ -3572,6 +3572,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidedesk-rendezvous"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "rcgen",
+ "ring",
+ "tidedesk-rendezvous-proto",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "tidedesk-rendezvous-proto"
+version = "0.1.0"
+dependencies = [
+ "postcard",
+ "rcgen",
+ "ring",
+ "serde",
+]
+
+[[package]]
 name = "tidedesk-view"
 version = "0.1.0"
 dependencies = [

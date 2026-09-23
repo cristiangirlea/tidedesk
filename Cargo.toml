@@ -1,6 +1,12 @@
 [workspace]
 resolver = "3"
-members = ["crates/tidedesk-core", "crates/tidedesk-host", "crates/tidedesk-view"]
+members = [
+    "crates/tidedesk-core",
+    "crates/tidedesk-host",
+    "crates/tidedesk-view",
+    "crates/tidedesk-rendezvous-proto",
+    "crates/tidedesk-rendezvous",
+]
 exclude = ["third_party"]
 
 [workspace.package]
@@ -13,6 +19,7 @@ rust-version = "1.88"
 
 [workspace.dependencies]
 tidedesk-core = { path = "crates/tidedesk-core" }
+tidedesk-rendezvous-proto = { path = "crates/tidedesk-rendezvous-proto" }
 anyhow = "1"
 arboard = { version = "3.6.1", default-features = false }
 bytes = "1"

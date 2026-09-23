@@ -1,0 +1,21 @@
+[package]
+name = "tidedesk-rendezvous"
+description = "Self-hostable rendezvous service for TideDesk: introduces viewers to hosts, never carries sessions."
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+ring.workspace = true
+tidedesk-rendezvous-proto.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[dev-dependencies]
+rcgen.workspace = true
