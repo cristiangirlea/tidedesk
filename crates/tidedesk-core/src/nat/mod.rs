@@ -8,6 +8,7 @@
 
 pub mod agent;
 pub mod punch;
+pub mod signal;
 pub mod socket;
 pub mod stun;
 
@@ -72,7 +73,9 @@ pub(crate) fn random_bytes<const N: usize>() -> [u8; N] {
 /// quinn clears it at random on packets to peers that allow "greasing", which
 /// is why endpoints on a [`SharedSocket`] disable greasing (see `net.rs`).
 pub(crate) fn is_side_channel(datagram: &[u8]) -> bool {
-    stun::is_stun(datagram) || datagram.starts_with(&PUNCH_MAGIC)
+    stun::is_stun(datagram)
+        || datagram.starts_with(&PUNCH_MAGIC)
+        || tidedesk_rendezvous_proto::is_signal(datagram)
 }
 
 #[cfg(test)]
@@ -128,5 +131,9 @@ mod tests {
         // Too short to be STUN, wrong magic for a punch.
         assert!(!is_side_channel(&stun[..19]));
         assert!(!is_side_channel(b"\x00TDX"));
+        // Rendezvous service messages.
+        let hello =
+            tidedesk_rendezvous_proto::encode(&tidedesk_rendezvous_proto::ToServer::hello([1; 8]));
+        assert!(is_side_channel(&hello));
     }
 }

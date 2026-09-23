@@ -17,5 +17,10 @@ rcgen.workspace = true
 ring.workspace = true
 rustls.workspace = true
 serde.workspace = true
+tidedesk-rendezvous-proto.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+
+[dev-dependencies]
+# The real service, for end-to-end tests of the rendezvous client.
+tidedesk-rendezvous.workspace = true

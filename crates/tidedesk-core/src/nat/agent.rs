@@ -2,7 +2,7 @@
 //! hole punching on the port QUIC uses, so the address it learns is the one
 //! peers must reach and the paths it opens are the ones QUIC will use.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::io;
 use std::net::SocketAddr;
@@ -14,11 +14,23 @@ use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 
 use super::punch::{Exchange, Punched, SessionId, State};
+use super::signal::{Credentials, Event, Registration, RendezvousStatus, resolve_service};
 use super::socket::{RawDatagram, SharedSocket};
 use super::stun::{Discovery, NatKind, PublicEndpoint, resolve_servers};
 
 /// Side-channel datagrams buffered per listener before the oldest are dropped.
 const FAN_OUT_CAPACITY: usize = 64;
+
+/// How long a host punches towards a viewer the rendezvous service introduced.
+const INCOMING_WINDOW: Duration = Duration::from_secs(30);
+
+/// Introductions a host acts on per minute, whatever the service sends.
+const MAX_INCOMING_PER_MINUTE: usize = 10;
+
+/// How long to wait before looking a rendezvous service's name up again.
+const RESOLVE_RETRY: Duration = Duration::from_secs(30);
+
+type Exchanges = Arc<Mutex<HashMap<SocketAddr, JoinHandle<()>>>>;
 
 /// What is known about this computer's internet address.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -67,15 +79,14 @@ impl std::error::Error for PunchError {}
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentStatus {
     pub public: PublicStatus,
+    pub rendezvous: RendezvousStatus,
 }
 
 pub struct Agent {
     link: Link,
-    runtime: Handle,
     dispatcher: JoinHandle<()>,
     refresh: Mutex<Option<JoinHandle<()>>>,
-    /// Punch exchanges by the peer address they were started with.
-    paths: Mutex<HashMap<SocketAddr, JoinHandle<()>>>,
+    rendezvous: Mutex<Option<JoinHandle<()>>>,
 }
 
 /// What a task working for the agent needs; cheap to clone into one.
@@ -85,6 +96,9 @@ struct Link {
     /// Every side-channel datagram, for whichever task is waiting for one.
     datagrams: broadcast::Sender<RawDatagram>,
     status: watch::Sender<AgentStatus>,
+    runtime: Handle,
+    /// Punch exchanges by the peer address they were started with.
+    exchanges: Exchanges,
 }
 
 impl Agent {
@@ -107,17 +121,19 @@ impl Agent {
         });
         let status = watch::Sender::new(AgentStatus {
             public: PublicStatus::Disabled,
+            rendezvous: RendezvousStatus::Off,
         });
         Ok(Arc::new(Self {
             link: Link {
                 socket,
                 datagrams,
                 status,
+                runtime,
+                exchanges: Arc::default(),
             },
-            runtime,
             dispatcher,
             refresh: Mutex::new(None),
-            paths: Mutex::new(HashMap::new()),
+            rendezvous: Mutex::new(None),
         }))
     }
 
@@ -147,7 +163,7 @@ impl Agent {
         // next must not see "turned off".
         self.link.begin();
         let link = self.link.clone();
-        let task = self.runtime.spawn(async move {
+        let task = self.link.runtime.spawn(async move {
             let mut resolved = Vec::new();
             loop {
                 // Looked up again after a failed round: a computer that starts
@@ -180,19 +196,8 @@ impl Agent {
         window: Duration,
     ) -> Result<Punched, PunchError> {
         let (opened, result) = oneshot::channel();
-        {
-            let mut paths = self.paths.lock().unwrap();
-            paths.retain(|_, task| !task.is_finished());
-            // The earlier exchange goes first, so the two never answer together.
-            if let Some(earlier) = paths.remove(&peer) {
-                earlier.abort();
-            }
-            let link = self.link.clone();
-            let exchange = self.runtime.spawn(async move {
-                link.run_exchange(peer, session, window, opened).await;
-            });
-            paths.insert(peer, exchange);
-        }
+        self.link
+            .start_exchange(peer, session, window, Some(opened));
         // A dropped sender means the exchange was aborted.
         result.await.unwrap_or(Err(PunchError::Stopped))
     }
@@ -200,9 +205,45 @@ impl Agent {
     /// Stops punching and keepalives towards `peer` (as passed to
     /// [`Agent::punch`]).
     pub fn stop_punching(&self, peer: SocketAddr) {
-        if let Some(exchange) = self.paths.lock().unwrap().remove(&peer) {
+        if let Some(exchange) = self.link.exchanges.lock().unwrap().remove(&peer) {
             exchange.abort();
         }
+    }
+
+    /// Registers this host with a rendezvous service (`host[:port]`) and
+    /// keeps the registration alive; viewers the service introduces are
+    /// punched towards automatically. Replaces an earlier registration.
+    pub fn start_rendezvous(&self, service: String, credentials: Arc<Credentials>) {
+        self.link.status.send_if_modified(|s| {
+            let changed = s.rendezvous != RendezvousStatus::Connecting;
+            s.rendezvous = RendezvousStatus::Connecting;
+            changed
+        });
+        let link = self.link.clone();
+        let task = self
+            .link
+            .runtime
+            .spawn(async move { link.run_rendezvous(service, credentials).await });
+        if let Some(earlier) = self.rendezvous.lock().unwrap().replace(task) {
+            earlier.abort();
+        }
+    }
+
+    /// Ends the registration; the service forgets this host within a minute.
+    pub fn stop_rendezvous(&self) {
+        if let Some(task) = self.rendezvous.lock().unwrap().take() {
+            task.abort();
+        }
+        // As with discovery, a late update from the task cannot undo this.
+        self.link.status.send_if_modified(|s| {
+            let changed = s.rendezvous != RendezvousStatus::Off;
+            s.rendezvous = RendezvousStatus::Off;
+            changed
+        });
+    }
+
+    pub fn rendezvous(&self) -> RendezvousStatus {
+        self.link.status.borrow().rendezvous.clone()
     }
 
     /// Stops asking and marks discovery as turned off.
@@ -222,10 +263,12 @@ impl Agent {
 impl Drop for Agent {
     fn drop(&mut self) {
         self.dispatcher.abort();
-        if let Some(task) = self.refresh.get_mut().unwrap().take() {
-            task.abort();
+        for task in [self.refresh.get_mut(), self.rendezvous.get_mut()] {
+            if let Some(task) = task.unwrap().take() {
+                task.abort();
+            }
         }
-        for exchange in self.paths.get_mut().unwrap().values() {
+        for exchange in self.link.exchanges.lock().unwrap().values() {
             exchange.abort();
         }
     }
@@ -273,6 +316,30 @@ impl Link {
         }
     }
 
+    /// Starts a punch exchange, replacing one towards the same peer. With
+    /// `opened`, the exchange reports there and stops if nobody waits for it
+    /// any more; without, it runs on its own (a host answering a viewer the
+    /// rendezvous service introduced).
+    fn start_exchange(
+        &self,
+        peer: SocketAddr,
+        session: Option<SessionId>,
+        window: Duration,
+        opened: Option<oneshot::Sender<Result<Punched, PunchError>>>,
+    ) {
+        let mut exchanges = self.exchanges.lock().unwrap();
+        exchanges.retain(|_, task| !task.is_finished());
+        // The earlier exchange goes first, so the two never answer together.
+        if let Some(earlier) = exchanges.remove(&peer) {
+            earlier.abort();
+        }
+        let link = self.clone();
+        let exchange = self.runtime.spawn(async move {
+            link.run_exchange(peer, session, window, opened).await;
+        });
+        exchanges.insert(peer, exchange);
+    }
+
     /// Runs one punch exchange, reporting to `opened` once it opens or
     /// expires; keepalives then go on until the exchange finishes. Stops
     /// early if the caller stops waiting before the path opened.
@@ -281,11 +348,11 @@ impl Link {
         peer: SocketAddr,
         session: Option<SessionId>,
         window: Duration,
-        opened: oneshot::Sender<Result<Punched, PunchError>>,
+        opened: Option<oneshot::Sender<Result<Punched, PunchError>>>,
     ) {
         let mut datagrams = self.datagrams.subscribe();
         let mut exchange = Exchange::new(peer, session, window, Instant::now());
-        let mut waiting = Some(opened);
+        let mut waiting = opened;
         loop {
             if let Some((to, punch)) = exchange.poll(Instant::now()) {
                 self.send(to, &punch).await;
@@ -324,7 +391,77 @@ impl Link {
 
     async fn send(&self, to: SocketAddr, datagram: &[u8]) {
         if let Err(e) = self.socket.send_raw(to, datagram).await {
-            tracing::debug!("cannot send a punch to {to}: {e}");
+            tracing::debug!("cannot send to {to}: {e}");
+        }
+    }
+
+    /// Keeps a registration with a rendezvous service and punches towards
+    /// the viewers it introduces.
+    async fn run_rendezvous(&self, service: String, credentials: Arc<Credentials>) {
+        let mut main = loop {
+            if let Some(main) = resolve_service(&service).await {
+                break main;
+            }
+            let reason = format!("cannot find the rendezvous service {service}");
+            self.set_rendezvous(RendezvousStatus::Unreachable(reason));
+            tokio::time::sleep(RESOLVE_RETRY).await;
+        };
+        let mut resolved_at = Instant::now();
+        let mut datagrams = self.datagrams.subscribe();
+        let mut registration =
+            Registration::new(service.clone(), main, credentials.clone(), Instant::now());
+        let mut introductions = IntroductionLimit::default();
+        loop {
+            // A service that stopped answering may have moved: look it up again.
+            let now = Instant::now();
+            if matches!(registration.status(), RendezvousStatus::Unreachable(_))
+                && now.saturating_duration_since(resolved_at) >= RESOLVE_RETRY
+            {
+                resolved_at = now;
+                if let Some(moved) = resolve_service(&service).await
+                    && moved != main
+                {
+                    main = moved;
+                    registration =
+                        Registration::new(service.clone(), main, credentials.clone(), now);
+                }
+            }
+            for (to, datagram) in registration.poll(Instant::now()) {
+                self.send(to, &datagram).await;
+            }
+            self.set_rendezvous(registration.status().clone());
+            let wake = registration.next_deadline();
+            tokio::select! {
+                _ = tokio::time::sleep_until(wake.into()) => {}
+                received = datagrams.recv() => {
+                    let Ok(datagram) = received else { continue };
+                    let now = Instant::now();
+                    let event = registration.on_datagram(datagram.from, &datagram.data, now);
+                    if let Some(Event::Incoming { session, peer }) = event {
+                        if introductions.allow(now) {
+                            self.start_exchange(peer, Some(session), INCOMING_WINDOW, None);
+                        } else {
+                            tracing::debug!("too many introductions; ignoring one");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Shows the registration's state, unless it was turned off meanwhile.
+    fn set_rendezvous(&self, status: RendezvousStatus) {
+        let mut shown = None;
+        self.status.send_if_modified(|s| {
+            if s.rendezvous == RendezvousStatus::Off || s.rendezvous == status {
+                return false;
+            }
+            shown = Some(status.to_string());
+            s.rendezvous = status;
+            true
+        });
+        if let Some(shown) = shown {
+            tracing::info!("rendezvous: {shown}");
         }
     }
 
@@ -360,6 +497,30 @@ impl Link {
         if let Some(shown) = shown {
             tracing::info!("internet address: {shown}");
         }
+    }
+}
+
+/// How many introduced viewers a host punches towards: whatever a service
+/// sends, at most [`MAX_INCOMING_PER_MINUTE`] a minute.
+#[derive(Default)]
+struct IntroductionLimit {
+    recent: VecDeque<Instant>,
+}
+
+impl IntroductionLimit {
+    fn allow(&mut self, now: Instant) -> bool {
+        while self
+            .recent
+            .front()
+            .is_some_and(|at| now.saturating_duration_since(*at) >= Duration::from_secs(60))
+        {
+            self.recent.pop_front();
+        }
+        if self.recent.len() >= MAX_INCOMING_PER_MINUTE {
+            return false;
+        }
+        self.recent.push_back(now);
+        true
     }
 }
 
@@ -621,6 +782,114 @@ mod tests {
             .expect("the wait ends")
             .unwrap();
         assert_eq!(result, Err(PunchError::Stopped));
+    }
+
+    /// The real rendezvous service on loopback. Its second port must be the
+    /// first plus one, so a free pair is searched for.
+    async fn rendezvous_service() -> SocketAddr {
+        for _ in 0..50 {
+            let main = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+            let port = main.local_addr().unwrap().port();
+            let Some(next) = port.checked_add(1) else {
+                continue;
+            };
+            if let Ok(alt) = tokio::net::UdpSocket::bind(("127.0.0.1", next)).await {
+                let server = tidedesk_rendezvous::Server::new(Default::default());
+                tokio::spawn(tidedesk_rendezvous::serve(main, alt, server));
+                return SocketAddr::from(([127, 0, 0, 1], port));
+            }
+        }
+        panic!("no two neighbouring free UDP ports on loopback");
+    }
+
+    #[tokio::test]
+    async fn host_registers_with_a_service_and_punches_an_introduced_viewer() {
+        use tidedesk_rendezvous_proto::{FromServer, ToServer, decode, encode};
+
+        use crate::nat::punch::{Kind, Packet};
+
+        let service = rendezvous_service().await;
+        let identity = test_identity("nat-rendezvous");
+        let (host, _endpoint, host_addr) = agent_on_loopback();
+        assert_eq!(host.rendezvous(), RendezvousStatus::Off);
+        host.start_rendezvous(service.to_string(), identity.rendezvous_credentials());
+        assert_eq!(host.rendezvous(), RendezvousStatus::Connecting);
+        let mut status = host.status();
+        let registered =
+            |s: &AgentStatus| matches!(s.rendezvous, RendezvousStatus::Registered { .. });
+        tokio::time::timeout(Duration::from_secs(10), status.wait_for(registered))
+            .await
+            .expect("the host registers")
+            .unwrap();
+        assert!(matches!(
+            host.rendezvous(),
+            RendezvousStatus::Registered { public, nat: NatKind::EndpointIndependent } if public == host_addr
+        ));
+
+        // A viewer, by hand: Hello, Lookup, then one punch in the session.
+        let viewer = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let mut buf = [0u8; 1500];
+        let mut receive = async || -> (SocketAddr, Vec<u8>) {
+            let (len, from) =
+                tokio::time::timeout(Duration::from_secs(5), viewer.recv_from(&mut buf))
+                    .await
+                    .expect("an answer")
+                    .unwrap();
+            (from, buf[..len].to_vec())
+        };
+        viewer
+            .send_to(&encode(&ToServer::hello([1; 8])), service)
+            .await
+            .unwrap();
+        let Some(FromServer::Challenge { challenge, .. }) = decode(&receive().await.1) else {
+            panic!("expected a challenge");
+        };
+        let lookup = ToServer::Lookup {
+            device_id: identity.device_id(),
+            nonce: [2; 8],
+            challenge,
+        };
+        viewer.send_to(&encode(&lookup), service).await.unwrap();
+        let Some(FromServer::Introduced { session, peer, .. }) = decode(&receive().await.1) else {
+            panic!("expected an introduction");
+        };
+        assert_eq!(peer, host_addr);
+
+        let punch = Packet {
+            kind: Kind::Punch,
+            session,
+            token: [5; 8],
+            observed: None,
+        };
+        // Punch until the host acks, as a real viewer does: the first punch
+        // may arrive before the host has started its exchange.
+        loop {
+            viewer.send_to(&punch.encode(), peer).await.unwrap();
+            let (from, data) = receive().await;
+            if from == host_addr
+                && let Some(packet) = Packet::decode(&data)
+                && packet.kind == Kind::Ack
+            {
+                assert_eq!((packet.session, packet.token), (session, [5; 8]));
+                break;
+            }
+        }
+
+        host.stop_rendezvous();
+        assert_eq!(host.rendezvous(), RendezvousStatus::Off);
+    }
+
+    #[test]
+    fn introductions_are_limited_per_minute() {
+        let t0 = Instant::now();
+        let mut limit = IntroductionLimit::default();
+        let allowed = (0..15).filter(|_| limit.allow(t0)).count();
+        assert_eq!(allowed, MAX_INCOMING_PER_MINUTE);
+        assert!(!limit.allow(t0 + Duration::from_secs(59)));
+        assert!(
+            limit.allow(t0 + Duration::from_secs(60)),
+            "a minute later there is room again"
+        );
     }
 
     #[test]

@@ -25,6 +25,7 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use clap::Parser;
 use tidedesk_core::identity::HostIdentity;
+use tidedesk_core::nat::signal::RendezvousStatus;
 use tidedesk_core::nat::stun::STUN_REFRESH;
 use tidedesk_core::nat::{Agent, PublicStatus, SharedSocket};
 use tidedesk_core::{auth, net, paths, stats};
@@ -63,6 +64,11 @@ struct Args {
     /// Do not share system audio.
     #[arg(long)]
     no_audio: bool,
+
+    /// Rendezvous service to register this host's device ID with, so viewers
+    /// on other networks can connect by ID [default: the one in Settings].
+    #[arg(long, value_name = "HOST:PORT")]
+    rendezvous: Option<String>,
 
     /// Log frame rate, bitrate and encode time every two seconds.
     #[arg(long)]
@@ -181,6 +187,13 @@ fn run(args: Args) -> Result<()> {
     if config.discover_public_address {
         agent.start_refresh(config.effective_stun_servers(), STUN_REFRESH);
     }
+    let rendezvous = match args.rendezvous.as_deref().map(str::trim) {
+        Some(service) => Some(service).filter(|s| !s.is_empty()),
+        None => config.rendezvous_service(),
+    };
+    if let Some(service) = rendezvous {
+        agent.start_rendezvous(service.to_string(), identity.rendezvous_credentials());
+    }
     let mut agent_status = agent.status();
     let repaint = state.clone();
     runtime.spawn(async move {
@@ -194,6 +207,7 @@ fn run(args: Args) -> Result<()> {
         return gui::run(gui::HostInfo {
             state,
             agent,
+            identity: identity.rendezvous_credentials(),
             runtime: runtime.handle().clone(),
             start_hidden: args.tray || config.start_in_tray,
             config,
@@ -203,11 +217,13 @@ fn run(args: Args) -> Result<()> {
     }
 
     // A first answer usually takes a fraction of a second.
-    let internet = runtime.block_on(async {
+    let (internet, rendezvous) = runtime.block_on(async {
         let mut status = agent.status();
-        let looked_up = status.wait_for(|s| s.public != PublicStatus::Discovering);
-        let _ = tokio::time::timeout(Duration::from_secs(5), looked_up).await;
-        agent.public()
+        let settled = status.wait_for(|s| {
+            s.public != PublicStatus::Discovering && s.rendezvous != RendezvousStatus::Connecting
+        });
+        let _ = tokio::time::timeout(Duration::from_secs(5), settled).await;
+        (agent.public(), agent.rendezvous())
     });
     let code = state.code.lock().unwrap().clone();
     println!();
@@ -218,6 +234,8 @@ fn run(args: Args) -> Result<()> {
     println!("  Access code:  {code}");
     println!("  Fingerprint:  {}", identity.fingerprint());
     println!("  Internet address: {internet}");
+    println!("  Device ID:    {}", identity.device_id());
+    println!("  Rendezvous:   {rendezvous}");
     println!();
     println!("  Connect with: tidedesk-view <this-pc-address> --code {code}");
     println!();

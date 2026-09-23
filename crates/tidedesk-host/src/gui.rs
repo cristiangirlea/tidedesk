@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Result, anyhow};
 use egui::{Color32, RichText};
 use egui_software_backend::{SoftwareBackend, SoftwareBackendAppConfiguration};
+use tidedesk_core::nat::signal::Credentials;
 use tidedesk_core::nat::stun::{DEFAULT_STUN_SERVERS, STUN_REFRESH};
 use tidedesk_core::nat::{Agent, NatKind, PublicStatus};
 
@@ -30,6 +31,8 @@ const ERROR_RED: Color32 = Color32::from_rgb(220, 60, 50);
 pub struct HostInfo {
     pub state: Arc<HostState>,
     pub agent: Arc<Agent>,
+    /// For registering with a rendezvous service set in Settings.
+    pub identity: Arc<Credentials>,
     /// Runs the agent's work started from the window.
     pub runtime: tokio::runtime::Handle,
     pub config: HostConfig,
@@ -52,6 +55,8 @@ struct HostApp {
     show_all_addresses: bool,
     /// The STUN server list as typed; applied when the field loses focus.
     stun_text: String,
+    /// The rendezvous service as typed; applied when the field loses focus.
+    rendezvous_text: String,
     /// A viewer's internet address as typed, and why it was not accepted.
     viewer_text: String,
     viewer_error: Option<String>,
@@ -128,6 +133,7 @@ pub fn run(info: HostInfo) -> Result<()> {
     let displays = capture::list_displays().unwrap_or_default();
     let addresses = local_addresses(info.port);
     let stun_text = info.config.stun_servers.join(", ");
+    let rendezvous_text = info.config.rendezvous_server.clone();
     let mut app = Some(HostApp {
         info,
         tab: Tab::Status,
@@ -135,6 +141,7 @@ pub fn run(info: HostInfo) -> Result<()> {
         addresses,
         show_all_addresses: false,
         stun_text,
+        rendezvous_text,
         viewer_text: String::new(),
         viewer_error: None,
         notice: None,
@@ -248,6 +255,15 @@ impl HostApp {
 
         ui.label("Viewer on another network");
         self.expected_viewer(ui);
+        ui.add_space(6.0);
+
+        ui.label("Device ID");
+        let device_id = self.info.identity.device_id.to_string();
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(&device_id).monospace());
+            copy_button(ui, &device_id);
+        });
+        ui.small(internet::describe_rendezvous(&self.info.agent.rendezvous()));
         ui.add_space(6.0);
 
         ui.label("Fingerprint");
@@ -434,6 +450,21 @@ impl HostApp {
             }
         });
         ui.small("host:port, separated by commas. Leave empty for the defaults.");
+        ui.horizontal(|ui| {
+            ui.label("Rendezvous service");
+            let field = egui::TextEdit::singleline(&mut self.rendezvous_text)
+                .hint_text("host:port (empty: off)");
+            if ui.add(field).lost_focus() {
+                cfg.rendezvous_server = self.rendezvous_text.trim().to_string();
+                self.rendezvous_text = cfg.rendezvous_server.clone();
+            }
+        })
+        .response
+        .on_hover_text(
+            "Lets viewers on other networks connect with this computer's device ID. The \
+             service learns the ID and this computer's public address, introduces viewers \
+             and never carries a session.",
+        );
 
         if *cfg != before {
             {
@@ -447,6 +478,17 @@ impl HostApp {
             state.mouse.store(cfg.allow_mouse, Ordering::SeqCst);
             if cfg.show_in_taskbar != before.show_in_taskbar {
                 platform::set_taskbar_button(WINDOW_TITLE, cfg.show_in_taskbar);
+            }
+            if cfg.rendezvous_server != before.rendezvous_server {
+                match cfg.rendezvous_service() {
+                    Some(service) => {
+                        let credentials = self.info.identity.clone();
+                        self.info
+                            .agent
+                            .start_rendezvous(service.to_string(), credentials);
+                    }
+                    None => self.info.agent.stop_rendezvous(),
+                }
             }
             if cfg.discover_public_address != before.discover_public_address
                 || cfg.stun_servers != before.stun_servers
