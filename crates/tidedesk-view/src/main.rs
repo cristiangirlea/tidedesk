@@ -109,16 +109,25 @@ fn report_to_launcher(step: connect::Progress) {
     eprintln!("{line}");
 }
 
-/// Reads the launcher's answers from stdin. `cancel` ends the session at
-/// once, whatever it is doing; other answers are passed on.
+/// Whether the session is up. Guarded by a lock, so a `cancel` either ends the
+/// process before the session counts as up, or is ignored after: a live
+/// session is only ended through its window, which closes it cleanly.
+static CONNECTED: Mutex<bool> = Mutex::new(false);
+
+/// Reads the launcher's answers from stdin. `cancel` ends a session that is
+/// still connecting, whatever it is doing; other answers are passed on.
 fn launcher_answers() -> Receiver<String> {
     let (answers, received) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         for line in std::io::stdin().lines() {
             let Ok(line) = line else { break };
             if line.trim() == child::CANCEL {
+                let connected = CONNECTED.lock().unwrap();
+                if *connected {
+                    break;
+                }
                 eprintln!("{}", ChildLine::Disconnected(child::CANCELLED.into()));
-                std::process::exit(0);
+                std::process::exit(0); // with the lock held: never half connected
             }
             if answers.send(line).is_err() {
                 break;
@@ -252,6 +261,7 @@ fn run() -> Result<()> {
         return Ok(());
     };
     if launcher {
+        *CONNECTED.lock().unwrap() = true;
         eprintln!("{}", ChildLine::Connected(session.host_name.clone()));
     }
     tracing::info!(

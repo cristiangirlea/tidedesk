@@ -438,8 +438,8 @@ impl Launcher {
             if ui.button("Save").clicked() {
                 let name = ed.name.trim();
                 let address = ed.address.trim();
-                if address.is_empty() {
-                    ed.error = Some("Enter the computer's address.".into());
+                if let Some(problem) = address_problem(address, ed.internet) {
+                    ed.error = Some(problem);
                     return;
                 }
                 let mut pc = ed
@@ -781,6 +781,17 @@ impl Launcher {
     }
 }
 
+/// Why a computer's address cannot be saved, if it cannot.
+fn address_problem(address: &str, internet: bool) -> Option<String> {
+    if address.trim().is_empty() {
+        return Some("Enter the computer's address.".into());
+    }
+    if internet && let Err(e) = connect::parse_internet_host(address) {
+        return Some(format!("{e:#}"));
+    }
+    None
+}
+
 fn address_hint(internet: bool) -> &'static str {
     if internet {
         "its internet address, like 203.0.113.5:40000"
@@ -850,5 +861,95 @@ impl egui_software_backend::App for Launcher {
                 self.main_view(ui);
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn launcher() -> Launcher {
+        Launcher {
+            address: String::new(),
+            code: String::new(),
+            sound: true,
+            internet: false,
+            focus_code: false,
+            book: AddressBook::default(),
+            recent: Vec::new(),
+            editor: None,
+            pending_delete: None,
+            filter: String::new(),
+            phase: Phase::Idle,
+            message: None,
+            inbox: Arc::default(),
+            show_settings: false,
+            settings_editor: crate::settings::Editor::default(),
+        }
+    }
+
+    #[test]
+    fn internet_session_lines_move_the_launcher_through_its_phases() {
+        let ctx = egui::Context::default();
+        let host = "203.0.113.5:40000".to_string();
+        let mut l = launcher();
+        l.on_child_line(&ctx, ChildLine::Status("stray".into()));
+        assert!(
+            matches!(l.phase, Phase::Idle),
+            "only a connecting session is followed"
+        );
+
+        l.phase = Phase::Opening {
+            host: host.clone(),
+            status: "Starting…".into(),
+            viewer_address: None,
+            control: SessionControl(Arc::default()),
+        };
+        let me: SocketAddr = "198.51.100.7:51234".parse().unwrap();
+        l.on_child_line(&ctx, ChildLine::Status("Waiting for the host…".into()));
+        l.on_child_line(&ctx, ChildLine::ViewerAddress(me));
+        assert!(matches!(
+            &l.phase,
+            Phase::Opening { status, viewer_address: Some(shown), .. }
+                if status == "Waiting for the host…" && *shown == me
+        ));
+
+        l.on_child_line(
+            &ctx,
+            ChildLine::Fingerprint {
+                address: host.clone(),
+                fingerprint: "AAAA 1111".into(),
+                status: PinStatus::Unknown,
+            },
+        );
+        assert!(matches!(&l.phase, Phase::ConfirmSession { probe, .. } if probe.address == host));
+
+        l.on_child_line(&ctx, ChildLine::Connected("Office".into()));
+        assert!(matches!(&l.phase, Phase::InSession(h) if *h == host));
+
+        let ended = Update::SessionEnded {
+            host,
+            outcome: Err(child::CANCELLED.into()),
+        };
+        Launcher::post(&l.inbox, &ctx, ended);
+        l.handle_updates(&ctx);
+        assert!(matches!(l.phase, Phase::Idle));
+        assert_eq!(
+            l.message,
+            Some((false, "Cancelled.".into())),
+            "not shown as an error"
+        );
+    }
+
+    #[test]
+    fn saved_internet_computers_need_an_internet_address() {
+        assert_eq!(
+            address_problem(" ", false).as_deref(),
+            Some("Enter the computer's address.")
+        );
+        assert_eq!(address_problem("my-pc", false), None);
+        assert!(address_problem("my-pc", true).is_some());
+        assert!(address_problem("192.168.1.5:47800", true).is_some());
+        assert_eq!(address_problem("203.0.113.5:40000", true), None);
     }
 }
