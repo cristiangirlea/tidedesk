@@ -12,11 +12,6 @@ rust-version.workspace = true
 postcard.workspace = true
 ring.workspace = true
 serde.workspace = true
-tokio = { workspace = true, optional = true }
-
-[features]
-# A minimal in-memory service, for tests of hosts and viewers.
-test-service = ["dep:tokio"]
 
 [dev-dependencies]
 rcgen.workspace = true

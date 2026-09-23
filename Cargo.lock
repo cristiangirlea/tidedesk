@@ -3580,7 +3580,6 @@ dependencies = [
  "rcgen",
  "ring",
  "serde",
- "tokio",
 ]
 
 [[package]]
@@ -3600,7 +3599,6 @@ dependencies = [
  "serde",
  "softbuffer",
  "tidedesk-core",
- "tidedesk-rendezvous-proto",
  "tokio",
  "toml 1.1.6+spec-1.1.0",
  "tracing",
