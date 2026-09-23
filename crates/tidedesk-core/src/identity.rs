@@ -51,12 +51,13 @@ impl HostIdentity {
     }
 
     /// What registering with a rendezvous service needs.
-    pub fn rendezvous_credentials(&self) -> crate::nat::signal::Credentials {
-        crate::nat::signal::Credentials {
+    /// Shared, so the private key is copied once however many users it has.
+    pub fn rendezvous_credentials(&self) -> std::sync::Arc<crate::nat::signal::Credentials> {
+        std::sync::Arc::new(crate::nat::signal::Credentials {
             device_id: self.device_id(),
             cert_der: self.cert.to_vec(),
             pkcs8: self.pkcs8().to_vec(),
-        }
+        })
     }
 
     /// The private key as PKCS#8, for signing rendezvous registrations.

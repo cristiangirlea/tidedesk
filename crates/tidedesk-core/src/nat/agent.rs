@@ -213,7 +213,7 @@ impl Agent {
     /// Registers this host with a rendezvous service (`host[:port]`) and
     /// keeps the registration alive; viewers the service introduces are
     /// punched towards automatically. Replaces an earlier registration.
-    pub fn start_rendezvous(&self, service: String, credentials: Credentials) {
+    pub fn start_rendezvous(&self, service: String, credentials: Arc<Credentials>) {
         self.link.status.send_if_modified(|s| {
             let changed = s.rendezvous != RendezvousStatus::Connecting;
             s.rendezvous = RendezvousStatus::Connecting;
@@ -397,8 +397,8 @@ impl Link {
 
     /// Keeps a registration with a rendezvous service and punches towards
     /// the viewers it introduces.
-    async fn run_rendezvous(&self, service: String, credentials: Credentials) {
-        let main = loop {
+    async fn run_rendezvous(&self, service: String, credentials: Arc<Credentials>) {
+        let mut main = loop {
             if let Some(main) = resolve_service(&service).await {
                 break main;
             }
@@ -406,10 +406,26 @@ impl Link {
             self.set_rendezvous(RendezvousStatus::Unreachable(reason));
             tokio::time::sleep(RESOLVE_RETRY).await;
         };
+        let mut resolved_at = Instant::now();
         let mut datagrams = self.datagrams.subscribe();
-        let mut registration = Registration::new(service, main, credentials, Instant::now());
-        let mut introduced: VecDeque<Instant> = VecDeque::new();
+        let mut registration =
+            Registration::new(service.clone(), main, credentials.clone(), Instant::now());
+        let mut introductions = IntroductionLimit::default();
         loop {
+            // A service that stopped answering may have moved: look it up again.
+            let now = Instant::now();
+            if matches!(registration.status(), RendezvousStatus::Unreachable(_))
+                && now.saturating_duration_since(resolved_at) >= RESOLVE_RETRY
+            {
+                resolved_at = now;
+                if let Some(moved) = resolve_service(&service).await
+                    && moved != main
+                {
+                    main = moved;
+                    registration =
+                        Registration::new(service.clone(), main, credentials.clone(), now);
+                }
+            }
             for (to, datagram) in registration.poll(Instant::now()) {
                 self.send(to, &datagram).await;
             }
@@ -422,9 +438,7 @@ impl Link {
                     let now = Instant::now();
                     let event = registration.on_datagram(datagram.from, &datagram.data, now);
                     if let Some(Event::Incoming { session, peer }) = event {
-                        introduced.retain(|at| now.saturating_duration_since(*at) < Duration::from_secs(60));
-                        if introduced.len() < MAX_INCOMING_PER_MINUTE {
-                            introduced.push_back(now);
+                        if introductions.allow(now) {
                             self.start_exchange(peer, Some(session), INCOMING_WINDOW, None);
                         } else {
                             tracing::debug!("too many introductions; ignoring one");
@@ -483,6 +497,30 @@ impl Link {
         if let Some(shown) = shown {
             tracing::info!("internet address: {shown}");
         }
+    }
+}
+
+/// How many introduced viewers a host punches towards: whatever a service
+/// sends, at most [`MAX_INCOMING_PER_MINUTE`] a minute.
+#[derive(Default)]
+struct IntroductionLimit {
+    recent: VecDeque<Instant>,
+}
+
+impl IntroductionLimit {
+    fn allow(&mut self, now: Instant) -> bool {
+        while self
+            .recent
+            .front()
+            .is_some_and(|at| now.saturating_duration_since(*at) >= Duration::from_secs(60))
+        {
+            self.recent.pop_front();
+        }
+        if self.recent.len() >= MAX_INCOMING_PER_MINUTE {
+            return false;
+        }
+        self.recent.push_back(now);
+        true
     }
 }
 
@@ -839,6 +877,19 @@ mod tests {
 
         host.stop_rendezvous();
         assert_eq!(host.rendezvous(), RendezvousStatus::Off);
+    }
+
+    #[test]
+    fn introductions_are_limited_per_minute() {
+        let t0 = Instant::now();
+        let mut limit = IntroductionLimit::default();
+        let allowed = (0..15).filter(|_| limit.allow(t0)).count();
+        assert_eq!(allowed, MAX_INCOMING_PER_MINUTE);
+        assert!(!limit.allow(t0 + Duration::from_secs(59)));
+        assert!(
+            limit.allow(t0 + Duration::from_secs(60)),
+            "a minute later there is room again"
+        );
     }
 
     #[test]

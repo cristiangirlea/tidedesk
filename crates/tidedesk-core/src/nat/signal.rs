@@ -5,6 +5,7 @@
 
 use std::fmt;
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use tidedesk_rendezvous_proto::{
@@ -90,7 +91,7 @@ pub struct Registration {
     name: String,
     main: SocketAddr,
     alt: SocketAddr,
-    credentials: Credentials,
+    credentials: Arc<Credentials>,
     phase: Phase,
     /// The current round's Hello, sent to both ports.
     nonce: Nonce,
@@ -120,7 +121,12 @@ enum Phase {
 impl Registration {
     /// `main` is the service's address; its second port, one higher, answers
     /// only Hello and tells whether this network's NAT is symmetric.
-    pub fn new(name: String, main: SocketAddr, credentials: Credentials, now: Instant) -> Self {
+    pub fn new(
+        name: String,
+        main: SocketAddr,
+        credentials: Arc<Credentials>,
+        now: Instant,
+    ) -> Self {
         let alt = SocketAddr::new(main.ip(), main.port().wrapping_add(1));
         Self {
             name,
@@ -307,7 +313,7 @@ impl Registration {
             device_id,
             cert_der,
             pkcs8,
-        } = &self.credentials;
+        } = &*self.credentials;
         let signature = sign_registration(pkcs8, device_id, challenge).ok()?;
         Some(encode(&ToServer::Register {
             device_id: *device_id,
@@ -345,14 +351,14 @@ mod tests {
         s.parse().unwrap()
     }
 
-    fn credentials() -> Credentials {
+    fn credentials() -> Arc<Credentials> {
         let generated = rcgen::generate_simple_self_signed(vec!["tidedesk-host".into()]).unwrap();
         let cert_der = generated.cert.der().to_vec();
-        Credentials {
+        Arc::new(Credentials {
             device_id: DeviceId::from_cert(&cert_der),
             cert_der,
             pkcs8: generated.signing_key.serialize_der(),
-        }
+        })
     }
 
     fn sent(datagrams: &[(SocketAddr, Vec<u8>)]) -> Vec<(SocketAddr, ToServer)> {

@@ -32,7 +32,7 @@ pub struct HostInfo {
     pub state: Arc<HostState>,
     pub agent: Arc<Agent>,
     /// For registering with a rendezvous service set in Settings.
-    pub identity: Credentials,
+    pub identity: Arc<Credentials>,
     /// Runs the agent's work started from the window.
     pub runtime: tokio::runtime::Handle,
     pub config: HostConfig,
