@@ -38,6 +38,8 @@ pub struct HostState {
     pub throttle: Mutex<Throttle>,
     pub busy: AtomicBool,
     pub viewer: Mutex<Option<ViewerInfo>>,
+    /// A viewer on another network this host opens a path to.
+    pub expected_viewer: Mutex<Option<crate::internet::ExpectedViewer>>,
     /// Called whenever something the UI shows has changed.
     pub on_change: Mutex<Option<Box<dyn Fn() + Send + Sync>>>,
 }

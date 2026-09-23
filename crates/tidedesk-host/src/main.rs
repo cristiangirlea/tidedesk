@@ -10,6 +10,7 @@ mod config;
 mod gui;
 mod icon;
 mod input;
+mod internet;
 mod platform;
 mod session;
 mod tray;
@@ -26,7 +27,7 @@ use clap::Parser;
 use tidedesk_core::identity::HostIdentity;
 use tidedesk_core::nat::stun::STUN_REFRESH;
 use tidedesk_core::nat::{Agent, PublicStatus, SharedSocket};
-use tidedesk_core::{auth, net, paths};
+use tidedesk_core::{auth, net, paths, stats};
 
 #[derive(Parser, Debug)]
 #[command(
@@ -161,6 +162,7 @@ fn run(args: Args) -> Result<()> {
         throttle: Mutex::new(auth::Throttle::default()),
         busy: AtomicBool::new(false),
         viewer: Mutex::new(None),
+        expected_viewer: Mutex::new(None),
         on_change: Mutex::new(None),
     });
 
@@ -191,6 +193,7 @@ fn run(args: Args) -> Result<()> {
         return gui::run(gui::HostInfo {
             state,
             agent,
+            runtime: runtime.handle().clone(),
             start_hidden: args.tray || config.start_in_tray,
             config,
             fingerprint: identity.fingerprint(),
@@ -222,12 +225,15 @@ fn run(args: Args) -> Result<()> {
 }
 
 async fn accept_loop(endpoint: quinn::Endpoint, state: Arc<session::HostState>) {
-    while let Some(incoming) = endpoint.accept().await {
+    while let Some(incoming) = net::accept_validated(&endpoint).await {
         let state = state.clone();
         tokio::spawn(async move {
             let remote = incoming.remote_address();
             let result = async {
                 let conn = incoming.await?;
+                if state.video.lock().unwrap().stats {
+                    tokio::spawn(stats::log_path(conn.clone(), "viewer path (direct)"));
+                }
                 session::run(conn, state).await
             }
             .await;

@@ -569,6 +569,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn expect_then_punch_from_another_port_of_same_ip_still_opens() {
+        let (host, _host_endpoint, host_addr) = agent_on_loopback();
+        let (viewer, _viewer_endpoint, viewer_addr) = agent_on_loopback();
+        // The host was given a port the viewer's router does not use towards
+        // it. A bound, silent socket, so no other test's exchange sees the
+        // host's punches on loopback.
+        let decoy = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let typed = decoy.local_addr().unwrap();
+
+        let window = Duration::from_secs(10);
+        let (host_side, viewer_side) = tokio::join!(
+            host.punch(typed, None, window),
+            viewer.punch(host_addr, Some(new_session()), window),
+        );
+        assert_eq!(viewer_side.unwrap().peer, host_addr);
+        let host_side = host_side.unwrap();
+        assert_eq!(
+            host_side.peer, viewer_addr,
+            "the host follows the port that answered"
+        );
+    }
+
+    #[tokio::test]
     async fn a_path_nobody_answers_reports_no_reply() {
         let (agent, _endpoint, _) = agent_on_loopback();
         let silent = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
