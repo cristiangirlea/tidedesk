@@ -25,6 +25,8 @@ use crate::{icon, platform};
 /// Also used to find the native window for tray and taskbar handling.
 pub const WINDOW_TITLE: &str = "TideDesk Host";
 
+const ERROR_RED: Color32 = Color32::from_rgb(220, 60, 50);
+
 pub struct HostInfo {
     pub state: Arc<HostState>,
     pub agent: Arc<Agent>,
@@ -296,9 +298,16 @@ impl HostApp {
                     .hint_text("its internet address")
                     .desired_width(180.0),
             );
+            if field.changed() {
+                self.viewer_error = None;
+            }
             let entered = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
             if ui.button("Open").clicked() || entered {
-                match internet::parse_expected_viewer(&self.viewer_text) {
+                let own = match self.info.agent.public() {
+                    PublicStatus::Ready(public) => Some(public.addr.ip()),
+                    _ => None,
+                };
+                match internet::parse_expected_viewer(&self.viewer_text, own) {
                     Ok(typed) => {
                         self.viewer_error = None;
                         internet::open_path(&state, &self.info.agent, &self.info.runtime, typed);
@@ -309,11 +318,17 @@ impl HostApp {
         });
         let expected = state.expected_viewer.lock().unwrap().clone();
         if let Some(error) = &self.viewer_error {
-            ui.colored_label(Color32::from_rgb(220, 60, 50), error);
+            ui.colored_label(ERROR_RED, error);
         } else if let Some(expected) = expected {
-            ui.small(expected.describe(Instant::now()));
-            if matches!(expected.state, PathState::Opening { .. }) {
-                ui.ctx().request_repaint_after(Duration::from_secs(1));
+            let now = Instant::now();
+            ui.small(expected.describe(now));
+            match expected.state {
+                PathState::Opening { .. } => ui.ctx().request_repaint_after(Duration::from_secs(1)),
+                // Show when the keepalives stop.
+                PathState::Open { until, .. } if until > now => {
+                    ui.ctx().request_repaint_after(until - now)
+                }
+                _ => {}
             }
         } else {
             ui.small(
@@ -446,7 +461,7 @@ impl HostApp {
             self.save();
         }
         if let Some(e) = &self.settings_error {
-            ui.colored_label(Color32::from_rgb(220, 60, 50), e);
+            ui.colored_label(ERROR_RED, e);
         }
     }
 }

@@ -6,6 +6,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use tidedesk_core::nat::punch::KEEPALIVE_MAX;
 use tidedesk_core::nat::{Agent, PunchError};
 use tokio::runtime::Handle;
 
@@ -27,9 +28,11 @@ pub enum PathState {
     Opening {
         until: Instant,
     },
-    /// The viewer answered, from `peer`.
+    /// The viewer answered, from `peer`; keepalives hold the path open
+    /// until `until`.
     Open {
         peer: SocketAddr,
+        until: Instant,
     },
     NoReply,
 }
@@ -42,9 +45,13 @@ impl ExpectedViewer {
                 let left = until.saturating_duration_since(now).as_secs();
                 format!("Opening a path to {}… ({left} s left)", self.typed)
             }
-            PathState::Open { peer } => {
+            PathState::Open { peer, until } if now < *until => {
                 format!("Path open to {peer}: the viewer can connect now.")
             }
+            PathState::Open { peer, .. } => format!(
+                "The path to {peer} is no longer kept open. If the viewer has not connected \
+                 yet, press Open again."
+            ),
             PathState::NoReply => format!(
                 "No reply from {}. Check the address, and connect from the viewer within two \
                  minutes of pressing Open. If either network uses a symmetric NAT, a direct \
@@ -55,8 +62,9 @@ impl ExpectedViewer {
     }
 }
 
-/// Reads the viewer's internet address as its window shows it.
-pub fn parse_expected_viewer(text: &str) -> Result<SocketAddr, String> {
+/// Reads the viewer's internet address as its window shows it. `own` is this
+/// network's internet address, if known.
+pub fn parse_expected_viewer(text: &str, own: Option<IpAddr>) -> Result<SocketAddr, String> {
     let text = text.trim();
     let addr: SocketAddr = text.parse().map_err(|_| {
         if text.parse::<IpAddr>().is_ok() {
@@ -83,6 +91,15 @@ pub fn parse_expected_viewer(text: &str) -> Result<SocketAddr, String> {
     if ip.is_unspecified() || ip.is_broadcast() || ip.is_multicast() || v4.port() == 0 {
         return Err("That is not an address a viewer can have.".into());
     }
+    if own == Some(addr.ip()) {
+        // Punching through one's own router needs hairpinning, which many
+        // routers lack; the local address works anyway.
+        return Err(
+            "That viewer is on the same network as this computer (same internet address). \
+             It can connect to one of this computer's addresses above directly."
+                .into(),
+        );
+    }
     Ok(addr)
 }
 
@@ -104,7 +121,10 @@ pub fn open_path(state: &Arc<HostState>, agent: &Arc<Agent>, runtime: &Handle, t
     let (state, agent) = (state.clone(), agent.clone());
     runtime.spawn(async move {
         let outcome = match agent.punch(typed, None, OPEN_WINDOW).await {
-            Ok(path) => PathState::Open { peer: path.peer },
+            Ok(path) => PathState::Open {
+                peer: path.peer,
+                until: Instant::now() + KEEPALIVE_MAX,
+            },
             Err(PunchError::NoReply) => PathState::NoReply,
             // Replaced by a newer Open, whose own task reports.
             Err(PunchError::Stopped) => return,
@@ -133,7 +153,7 @@ mod tests {
     #[test]
     fn expected_viewer_rejects_private_and_ipv6_addresses() {
         assert_eq!(
-            parse_expected_viewer(" 203.0.113.5:40000 "),
+            parse_expected_viewer(" 203.0.113.5:40000 ", None),
             Ok(addr("203.0.113.5:40000"))
         );
         for local in [
@@ -144,16 +164,21 @@ mod tests {
             "169.254.1.1:40000",
             "100.101.102.103:41641", // carrier-grade NAT, and Tailscale
         ] {
-            let err = parse_expected_viewer(local).unwrap_err();
+            let err = parse_expected_viewer(local, None).unwrap_err();
             assert!(err.contains("local"), "{local}: {err}");
         }
-        let err = parse_expected_viewer("[2001:db8::1]:40000").unwrap_err();
+        let err = parse_expected_viewer("[2001:db8::1]:40000", None).unwrap_err();
         assert!(err.contains("IPv4"), "{err}");
-        let err = parse_expected_viewer("203.0.113.5").unwrap_err();
+        let err = parse_expected_viewer("203.0.113.5", None).unwrap_err();
         assert!(err.contains("port"), "{err}");
-        assert!(parse_expected_viewer("my-pc").is_err());
-        assert!(parse_expected_viewer("").is_err());
-        assert!(parse_expected_viewer("203.0.113.5:0").is_err());
+        assert!(parse_expected_viewer("my-pc", None).is_err());
+        assert!(parse_expected_viewer("", None).is_err());
+        assert!(parse_expected_viewer("203.0.113.5:0", None).is_err());
+
+        // The viewer is behind this computer's own router.
+        let own = Some("203.0.113.5".parse().unwrap());
+        let err = parse_expected_viewer("203.0.113.5:40000", own).unwrap_err();
+        assert!(err.contains("same network"), "{err}");
     }
 
     #[test]
@@ -171,12 +196,14 @@ mod tests {
         );
         let open = at(PathState::Open {
             peer: addr("203.0.113.5:40123"),
+            until: now + Duration::from_secs(180),
         });
-        assert!(
-            open.describe(now).contains("203.0.113.5:40123"),
-            "{}",
-            open.describe(now)
+        assert_eq!(
+            open.describe(now),
+            "Path open to 203.0.113.5:40123: the viewer can connect now."
         );
+        let lapsed = open.describe(now + Duration::from_secs(180));
+        assert!(lapsed.contains("press Open again"), "{lapsed}");
         let silent = at(PathState::NoReply).describe(now);
         assert!(
             silent.starts_with("No reply from 203.0.113.5:40000."),
