@@ -820,11 +820,18 @@ mod tests {
     /// `TIDEDESK_TEST_SERVICE=ip:port`; its second port must be the next one
     /// up. The tests that need one are ignored until it is set:
     /// `cargo test -p tidedesk-core -- --ignored host_registers viewer_looks_up`.
+    /// The service is not part of this repository; its own CI runs them.
     fn external_service() -> SocketAddr {
-        std::env::var("TIDEDESK_TEST_SERVICE")
+        let service: SocketAddr = std::env::var("TIDEDESK_TEST_SERVICE")
             .expect("TIDEDESK_TEST_SERVICE=ip:port names a rendezvous service on this machine")
             .parse()
-            .expect("TIDEDESK_TEST_SERVICE is an ip:port")
+            .expect("TIDEDESK_TEST_SERVICE is an ip:port");
+        // The tests compare addresses the service reports with loopback ones.
+        assert!(
+            service.ip().is_loopback(),
+            "TIDEDESK_TEST_SERVICE must be on this machine (127.0.0.1:port), not {service}"
+        );
+        service
     }
 
     #[tokio::test]
