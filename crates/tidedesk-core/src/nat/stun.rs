@@ -219,7 +219,15 @@ impl Query {
 }
 
 impl Discovery {
-    pub fn new(servers: Vec<(String, SocketAddr)>, now: Instant) -> Self {
+    /// Servers with the same address are asked once: answers from one
+    /// destination always agree, so they could not reveal a symmetric NAT.
+    pub fn new(mut servers: Vec<(String, SocketAddr)>, now: Instant) -> Self {
+        let mut seen = Vec::new();
+        servers.retain(|(_, addr)| {
+            let new = !seen.contains(addr);
+            seen.push(*addr);
+            new
+        });
         let rng = SystemRandom::new();
         let servers = servers
             .into_iter()
@@ -350,26 +358,45 @@ impl Discovery {
 /// Resolves configured `host[:port]` names to IPv4 addresses (TideDesk's
 /// internet paths are IPv4). Unresolvable entries are logged and skipped.
 pub async fn resolve_servers(servers: &[String]) -> Vec<(String, SocketAddr)> {
+    // Look all names up at once, so a slow resolver costs one delay, not one per server.
+    let lookups: Vec<_> = servers
+        .iter()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .map(|name| tokio::spawn(resolve_one(name)))
+        .collect();
     let mut resolved = Vec::new();
-    for name in servers.iter().map(|s| s.trim()).filter(|s| !s.is_empty()) {
-        let has_port = name.parse::<SocketAddr>().is_ok()
-            || name
-                .rsplit_once(':')
-                .is_some_and(|(host, port)| !host.contains(':') && port.parse::<u16>().is_ok());
-        let target = if has_port {
-            name.to_string()
-        } else {
-            format!("{name}:{DEFAULT_STUN_PORT}")
-        };
-        match tokio::net::lookup_host(&target).await {
-            Ok(addrs) => match addrs.into_iter().find(SocketAddr::is_ipv4) {
-                Some(addr) => resolved.push((name.to_string(), addr)),
-                None => tracing::warn!("STUN server {name} has no IPv4 address"),
-            },
-            Err(e) => tracing::warn!("cannot resolve STUN server {name}: {e}"),
+    for lookup in lookups {
+        if let Ok(Some(server)) = lookup.await {
+            resolved.push(server);
         }
     }
     resolved
+}
+
+async fn resolve_one(name: String) -> Option<(String, SocketAddr)> {
+    let has_port = name.parse::<SocketAddr>().is_ok()
+        || name
+            .rsplit_once(':')
+            .is_some_and(|(host, port)| !host.contains(':') && port.parse::<u16>().is_ok());
+    let target = if has_port {
+        name.clone()
+    } else {
+        format!("{name}:{DEFAULT_STUN_PORT}")
+    };
+    match tokio::net::lookup_host(&target).await {
+        Ok(addrs) => match addrs.into_iter().find(SocketAddr::is_ipv4) {
+            Some(addr) => Some((name, addr)),
+            None => {
+                tracing::warn!("STUN server {name} has no IPv4 address");
+                None
+            }
+        },
+        Err(e) => {
+            tracing::warn!("cannot resolve STUN server {name}: {e}");
+            None
+        }
+    }
 }
 
 /// Builds the reply a STUN server would send; for tests of code that talks
@@ -624,6 +651,53 @@ mod tests {
         // Unrelated or replayed datagrams change nothing.
         assert_eq!(d.on_datagram(&reply, t0), None);
         assert_eq!(d.on_datagram(b"not stun", t0), None);
+    }
+
+    #[test]
+    fn a_server_error_ends_its_query_and_is_reported() {
+        let t0 = Instant::now();
+        let mut d = Discovery::new(vec![server("strict", "192.0.2.10:3478")], t0);
+        let requests = d.poll(t0);
+        let mut value = vec![0, 0, 4, 1];
+        value.extend_from_slice(b"Unauthorized");
+        let reply = message(
+            BINDING_ERROR,
+            &id_of(&requests[0].1),
+            &[(ATTR_ERROR_CODE, value)],
+        );
+        assert_eq!(d.on_datagram(&reply, t0), None);
+
+        assert!(
+            d.poll(t0 + Duration::from_millis(600)).is_empty(),
+            "no resend after an error"
+        );
+        let err = d
+            .outcome(t0)
+            .expect("no server left to wait for")
+            .unwrap_err();
+        assert!(
+            err.contains("strict (STUN error 401 Unauthorized)"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn duplicate_servers_are_asked_once() {
+        // Two names for one address cannot tell a symmetric NAT apart.
+        let t0 = Instant::now();
+        let mut d = Discovery::new(
+            vec![
+                server("a", "192.0.2.10:3478"),
+                server("alias-of-a", "192.0.2.10:3478"),
+            ],
+            t0,
+        );
+        let requests = d.poll(t0);
+        assert_eq!(requests.len(), 1);
+        let reply =
+            encode_binding_response(&id_of(&requests[0].1), "203.0.113.5:40000".parse().unwrap());
+        let public = d.on_datagram(&reply, t0).unwrap();
+        assert_eq!((public.nat, public.via.as_str()), (NatKind::Unknown, "a"));
     }
 
     /// Asks the real default servers. Needs internet access, so it only runs
