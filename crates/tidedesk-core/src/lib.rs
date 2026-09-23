@@ -8,6 +8,7 @@ pub mod audio;
 pub mod auth;
 pub mod clipboard;
 pub mod identity;
+pub mod nat;
 pub mod net;
 pub mod paths;
 pub mod protocol;
