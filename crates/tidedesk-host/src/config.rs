@@ -27,6 +27,9 @@ pub struct HostConfig {
     pub discover_public_address: bool,
     /// `host[:port]` of the STUN servers to ask; empty means the defaults.
     pub stun_servers: Vec<String>,
+    /// `host[:port]` of a rendezvous service to register this host's device
+    /// ID with; empty means none.
+    pub rendezvous_server: String,
 }
 
 impl Default for HostConfig {
@@ -43,6 +46,7 @@ impl Default for HostConfig {
             start_in_tray: false,
             discover_public_address: true,
             stun_servers: Vec::new(),
+            rendezvous_server: String::new(),
         }
     }
 }
@@ -83,6 +87,11 @@ impl HostConfig {
             .bitrate_kbps
             .clamp(*Self::BITRATE_RANGE.start(), *Self::BITRATE_RANGE.end());
         self
+    }
+
+    /// The rendezvous service to register with, if one is set.
+    pub fn rendezvous_service(&self) -> Option<&str> {
+        Some(self.rendezvous_server.trim()).filter(|s| !s.is_empty())
     }
 
     /// The STUN servers to ask: the configured ones, else the defaults. The
@@ -143,6 +152,19 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(cfg.effective_stun_servers(), chosen);
+    }
+
+    #[test]
+    fn rendezvous_is_off_until_a_service_is_named() {
+        let cfg = HostConfig::default();
+        assert_eq!(cfg.rendezvous_service(), None);
+        let blank = HostConfig {
+            rendezvous_server: "   ".into(),
+            ..Default::default()
+        };
+        assert_eq!(blank.rendezvous_service(), None);
+        let set: HostConfig = toml::from_str("rendezvous_server = \" rv.example.org \"").unwrap();
+        assert_eq!(set.rendezvous_service(), Some("rv.example.org"));
     }
 
     #[test]

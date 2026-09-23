@@ -44,6 +44,29 @@ impl HostIdentity {
     pub fn fingerprint(&self) -> String {
         fingerprint(&self.cert)
     }
+
+    /// The host's rendezvous name, derived from its certificate.
+    pub fn device_id(&self) -> tidedesk_rendezvous_proto::DeviceId {
+        tidedesk_rendezvous_proto::DeviceId::from_cert(&self.cert)
+    }
+
+    /// What registering with a rendezvous service needs.
+    pub fn rendezvous_credentials(&self) -> crate::nat::signal::Credentials {
+        crate::nat::signal::Credentials {
+            device_id: self.device_id(),
+            cert_der: self.cert.to_vec(),
+            pkcs8: self.pkcs8().to_vec(),
+        }
+    }
+
+    /// The private key as PKCS#8, for signing rendezvous registrations.
+    pub fn pkcs8(&self) -> &[u8] {
+        match &self.key {
+            PrivateKeyDer::Pkcs8(key) => key.secret_pkcs8_der(),
+            // Identities are always created and saved as PKCS#8.
+            _ => &[],
+        }
+    }
 }
 
 /// SHA-256 of the DER certificate, as colon-free uppercase hex in groups of 4
@@ -213,6 +236,32 @@ mod tests {
             reloaded.check("203.0.113.5:40999", "AAAA1111"),
             PinStatus::Trusted
         );
+    }
+
+    #[test]
+    fn device_id_derives_from_fingerprint() {
+        let identity = HostIdentity::load_or_create(&temp_dir("device-id")).unwrap();
+        let id = identity.device_id();
+        assert_eq!(
+            tidedesk_rendezvous_proto::DeviceId::from_fingerprint_hex(&identity.fingerprint()),
+            Some(id)
+        );
+        assert!(id.to_string().starts_with("TD-"));
+    }
+
+    #[test]
+    fn sign_registration_verifies_with_proto() {
+        use tidedesk_rendezvous_proto::{sign_registration, verify_registration};
+        let identity = HostIdentity::load_or_create(&temp_dir("registration")).unwrap();
+        let challenge = [5u8; 16];
+        let signature =
+            sign_registration(identity.pkcs8(), &identity.device_id(), &challenge).unwrap();
+        assert!(verify_registration(
+            &identity.cert,
+            &identity.device_id(),
+            &challenge,
+            &signature
+        ));
     }
 
     #[test]

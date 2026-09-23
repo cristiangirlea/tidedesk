@@ -3541,6 +3541,8 @@ dependencies = [
  "ring",
  "rustls",
  "serde",
+ "tidedesk-rendezvous",
+ "tidedesk-rendezvous-proto",
  "tokio",
  "tracing",
 ]

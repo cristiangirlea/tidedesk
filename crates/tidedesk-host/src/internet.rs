@@ -7,7 +7,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use tidedesk_core::nat::punch::KEEPALIVE_MAX;
-use tidedesk_core::nat::{Agent, NotPublic, PunchError, check_public};
+use tidedesk_core::nat::signal::RendezvousStatus;
+use tidedesk_core::nat::{Agent, NatKind, NotPublic, PunchError, check_public};
 use tokio::runtime::Handle;
 
 use crate::session::HostState;
@@ -59,6 +60,28 @@ impl ExpectedViewer {
                 self.typed
             ),
         }
+    }
+}
+
+/// The line under the device ID in the host window.
+pub fn describe_rendezvous(status: &RendezvousStatus) -> String {
+    match status {
+        RendezvousStatus::Off => {
+            "To let viewers connect with this ID, set a rendezvous service under Settings, \
+             Internet."
+                .into()
+        }
+        RendezvousStatus::Connecting => "Connecting to the rendezvous service…".into(),
+        RendezvousStatus::Registered {
+            nat: NatKind::Symmetric,
+            ..
+        } => "Registered, but this network uses a symmetric NAT: viewers on other networks \
+              cannot reach it directly. A VPN or port forwarding still works."
+            .into(),
+        RendezvousStatus::Registered { .. } => {
+            "Viewers on other networks can connect with this ID.".into()
+        }
+        RendezvousStatus::Unreachable(reason) => format!("Rendezvous unavailable: {reason}"),
     }
 }
 
@@ -179,6 +202,25 @@ mod tests {
         let own = Some("203.0.113.5".parse().unwrap());
         let err = parse_expected_viewer("203.0.113.5:40000", own).unwrap_err();
         assert!(err.contains("same network"), "{err}");
+    }
+
+    #[test]
+    fn rendezvous_status_lines() {
+        let public = addr("203.0.113.5:40000");
+        let off = describe_rendezvous(&RendezvousStatus::Off);
+        assert!(off.contains("Settings"), "{off}");
+        let ready = describe_rendezvous(&RendezvousStatus::Registered {
+            public,
+            nat: NatKind::EndpointIndependent,
+        });
+        assert!(ready.contains("can connect with this ID"), "{ready}");
+        let symmetric = describe_rendezvous(&RendezvousStatus::Registered {
+            public,
+            nat: NatKind::Symmetric,
+        });
+        assert!(symmetric.contains("symmetric NAT"), "{symmetric}");
+        let down = describe_rendezvous(&RendezvousStatus::Unreachable("no answer".into()));
+        assert!(down.contains("no answer"), "{down}");
     }
 
     #[test]

@@ -53,6 +53,12 @@ its own address (`--stun` chooses others). The small punch packets that open the
 (42 bytes, no content) go only to the address the user typed, and the session then runs
 directly between the two computers: TideDesk never relays it through a server.
 
+If a rendezvous service is set under Settings, Internet (none is by default), TideDesk
+Host registers with it: the service learns the host's device ID, its certificate (which
+is public) and its public IP address and port, refreshed about every 25 seconds, so that
+it can introduce viewers who ask for that ID. It never carries sessions, access codes or
+anything else. Clear the setting to stop.
+
 Operators choose their network destinations. If they use a separate VPN or other
 third-party network service, that service's privacy policy also applies.
 
