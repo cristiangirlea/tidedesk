@@ -816,31 +816,13 @@ mod tests {
         assert_eq!(result, Err(PunchError::Stopped));
     }
 
-    /// The real rendezvous service on loopback. Its second port must be the
-    /// first plus one, so a free pair is searched for.
-    async fn rendezvous_service() -> SocketAddr {
-        for _ in 0..50 {
-            let main = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
-            let port = main.local_addr().unwrap().port();
-            let Some(next) = port.checked_add(1) else {
-                continue;
-            };
-            if let Ok(alt) = tokio::net::UdpSocket::bind(("127.0.0.1", next)).await {
-                let server = tidedesk_rendezvous::Server::new(Default::default());
-                tokio::spawn(tidedesk_rendezvous::serve(main, alt, server));
-                return SocketAddr::from(([127, 0, 0, 1], port));
-            }
-        }
-        panic!("no two neighbouring free UDP ports on loopback");
-    }
-
     #[tokio::test]
     async fn host_registers_with_a_service_and_punches_an_introduced_viewer() {
         use tidedesk_rendezvous_proto::{FromServer, ToServer, decode, encode};
 
         use crate::nat::punch::{Kind, Packet};
 
-        let service = rendezvous_service().await;
+        let service = tidedesk_rendezvous_proto::test_service::spawn().await;
         let identity = test_identity("nat-rendezvous");
         let (host, _endpoint, host_addr) = agent_on_loopback();
         assert_eq!(host.rendezvous(), RendezvousStatus::Off);
@@ -913,7 +895,7 @@ mod tests {
 
     #[tokio::test]
     async fn viewer_looks_up_a_registered_host_and_both_punch() {
-        let service = rendezvous_service().await;
+        let service = tidedesk_rendezvous_proto::test_service::spawn().await;
         let identity = test_identity("nat-lookup");
         let (host, _host_endpoint, host_addr) = agent_on_loopback();
         host.start_rendezvous(service.to_string(), identity.rendezvous_credentials());

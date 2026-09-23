@@ -3541,7 +3541,6 @@ dependencies = [
  "ring",
  "rustls",
  "serde",
- "tidedesk-rendezvous",
  "tidedesk-rendezvous-proto",
  "tokio",
  "tracing",
@@ -3574,20 +3573,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tidedesk-rendezvous"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "rcgen",
- "ring",
- "tidedesk-rendezvous-proto",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "tidedesk-rendezvous-proto"
 version = "0.1.0"
 dependencies = [
@@ -3595,6 +3580,7 @@ dependencies = [
  "rcgen",
  "ring",
  "serde",
+ "tokio",
 ]
 
 [[package]]
@@ -3614,7 +3600,7 @@ dependencies = [
  "serde",
  "softbuffer",
  "tidedesk-core",
- "tidedesk-rendezvous",
+ "tidedesk-rendezvous-proto",
  "tokio",
  "toml 1.1.6+spec-1.1.0",
  "tracing",

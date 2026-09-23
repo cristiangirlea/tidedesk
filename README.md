@@ -140,9 +140,9 @@ host shows its internet address. In the viewer, tick **Over the internet**, conn
 that address and give the viewer's address to the person at the host, who types it
 under **Viewer on another network** and presses **Open**. Where no direct path is
 possible (symmetric NAT, common on mobile data), a free VPN such as Tailscale still
-works. With a [rendezvous service](docs/rendezvous-server.md) (self-hosted; none is
-built in yet), viewers can also connect by the host's **device ID**, even to a
-headless host. See [internet access](docs/internet-access.md) and the
+works. With a rendezvous service, viewers can also connect by the host's **device
+ID**, even to a headless host; TideDesk's own service is being set up and will be
+built into a coming release. See [internet access](docs/internet-access.md) and the
 [design notes](docs/design/nat-traversal.md).
 
 ## Current limitations
