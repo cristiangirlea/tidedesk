@@ -15,8 +15,7 @@ document.
 - Security does not change: QUIC with TLS 1.3, the access-code proof bound to the TLS
   session, throttling of wrong codes and host fingerprint pinning work exactly as on a
   local network. `PROTOCOL_VERSION` stays 3.
-- Not goals: IPv6 internet paths (IPv4 only for now), traversing symmetric NATs,
-  hosts without anyone at them (until the rendezvous step).
+- Not goals: IPv6 internet paths (IPv4 only for now), traversing symmetric NATs.
 
 ## One socket for everything
 
@@ -166,14 +165,29 @@ inbound rule.
 - Someone must be at the host window to press Open (a `--headless` host cannot open
   a path yet), and both sides must act within two minutes of each other.
 
-## Planned: rendezvous by device ID
+## Phase B: rendezvous by device ID (experimental)
 
-A small self-hostable UDP service will remember each registered host's public
-address under a stable device ID derived from the host's certificate
-(`TD-XXXX-XXXX-XXXX-XXXX`, 64 bits), with registration signed by the certificate's
-key. A viewer that asks for an ID is introduced to the host and both punch as above;
-the service then drops out. It never sees the access code, never carries session
-data and cannot impersonate a host, because pinning still checks the certificate.
+A small self-hostable UDP service ([`tidedesk-rendezvous`](../rendezvous-server.md))
+remembers each registered host's public address under a stable **device ID**: the
+first 64 bits of the SHA-256 of the host's certificate, shown as
+`TD-XXXX-XXXX-XXXX-XXXX`. It is off until a service is configured on both sides.
+
+- **Registration.** The host says Hello to both service ports (the second port's
+  answer classifies its NAT), gets a challenge bound to its address, and registers by
+  signing the challenge with its certificate's key; the service checks that the ID is
+  the certificate's hash. The host refreshes every 25 seconds, which also keeps its
+  router mapping alive; the service forgets it 75 seconds after the last refresh.
+- **Lookup.** The viewer says Hello too, then asks for the ID with its own challenge,
+  so the service only introduces addresses that proved they are real. The service
+  answers the viewer with the host's address and a session, and tells the host the
+  viewer's address with the same session. Both punch as above; the host punches for
+  30 seconds, at most 10 introductions a minute.
+- **Identity.** The viewer refuses a host whose certificate does not hash to the ID
+  it asked for, so neither the service nor anyone else can impersonate a host. There
+  is no fingerprint question: the ID is the fingerprint's start. 64 bits keep forging
+  an ID out of reach (about 2^64 work).
+- The service never sees the access code or session data, keeps everything in memory,
+  answers no question with more bytes than it was asked, and rate-limits each address.
 
 ## Validation checklist
 

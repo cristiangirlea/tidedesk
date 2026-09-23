@@ -53,6 +53,28 @@ in use. The viewer needs no inbound rule.
 
 For how it works, see the [design notes](design/nat-traversal.md).
 
+### By device ID (experimental)
+
+With a rendezvous service, a viewer can reach a host by its **device ID**
+(`TD-1A2B-3C4D-5E6F-7A8B`, shown in the host window) without anyone typing internet
+addresses, and a host started with `--headless` can be reached too. The service only
+introduces the two computers; the path and the session are the same direct ones as
+above. TideDesk does not come with a service yet: run your own (see
+[running a rendezvous service](rendezvous-server.md)) or use one you trust.
+
+1. **Host:** set the service under Settings, Internet, "Rendezvous service" (or start
+   it with `--rendezvous host:port`). The Status tab then shows the device ID as
+   registered.
+2. **Viewer:** set the same service in Viewer Settings, type the device ID where an
+   address goes, and connect. There is no fingerprint question: the device ID is the
+   start of the host certificate's fingerprint, and a host that does not match it is
+   refused.
+
+From a terminal: `tidedesk-view TD-1A2B-3C4D-5E6F-7A8B --rendezvous host:port --code …`.
+The same limits apply: no symmetric NAT, IPv4 only. The service learns each registered
+host's device ID and public address; see the privacy notes in the
+[code signing policy](code-signing-policy.md).
+
 ## 2. Tailscale
 
 [Tailscale](https://tailscale.com) builds a private encrypted network between your devices and

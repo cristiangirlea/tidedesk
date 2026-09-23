@@ -6,8 +6,9 @@ registered host's internet address, introduces a viewer and a host to each other
 then drops out: the two computers punch a direct path and the session runs between
 them. **It never carries session data.** See the [design notes](design/nat-traversal.md).
 
-Status: the service is ready to run; hosts and viewers start using it in a later
-release.
+Status: experimental. Hosts use it when a service is set under Settings, Internet (or
+with `--rendezvous`); viewers when one is set in Viewer Settings (or with
+`--rendezvous`). None is built in.
 
 ## What it needs
 

@@ -22,7 +22,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex};
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::Parser;
 use tidedesk_core::identity::{KnownHosts, PinStatus};
 use tidedesk_core::paths;
@@ -66,6 +66,11 @@ struct Args {
     /// internet address (printed here) and presses Open. No relay is used.
     #[arg(long)]
     internet: bool,
+
+    /// Rendezvous service for connecting by device ID (HOST is then
+    /// TD-XXXX-XXXX-XXXX-XXXX) [default: the one in Viewer Settings].
+    #[arg(long, value_name = "HOST:PORT")]
+    rendezvous: Option<String>,
 
     /// STUN servers for --internet, comma-separated [default: the built-in ones].
     #[arg(long, value_delimiter = ',', requires = "internet")]
@@ -207,7 +212,27 @@ fn run() -> Result<()> {
     let Some(host) = args.host.clone() else {
         return launcher::run();
     };
-    let route = if args.internet {
+    let route = if connect::parse_device_id(&host).is_some() {
+        if args.internet {
+            bail!("a device ID is found through a rendezvous service; leave out --internet");
+        }
+        let saved = || {
+            settings::ViewerSettings::load()
+                .ok()
+                .map(|s| s.rendezvous_server)
+        };
+        let service = args
+            .rendezvous
+            .clone()
+            .or_else(saved)
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .context(
+                "connecting by device ID needs a rendezvous service: pass --rendezvous \
+                 host:port or set one in Viewer Settings",
+            )?;
+        connect::Route::Rendezvous { service }
+    } else if args.internet {
         connect::parse_internet_host(&host)?;
         if args.stun.is_empty() {
             connect::Route::internet()
