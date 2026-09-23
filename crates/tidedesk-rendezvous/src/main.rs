@@ -58,6 +58,10 @@ async fn main() -> Result<()> {
     serve(main, alt, Server::new(config)).await
 }
 
+/// After a receive error: short enough for transient ones, long enough that
+/// a socket stuck in an error state cannot spin a CPU.
+const ERROR_PAUSE: Duration = Duration::from_millis(10);
+
 /// Answers datagrams on both ports until an error stops the sockets.
 async fn serve(main: UdpSocket, alt: UdpSocket, mut server: Server) -> Result<()> {
     let mut main_buf = vec![0u8; 2048];
@@ -67,22 +71,24 @@ async fn serve(main: UdpSocket, alt: UdpSocket, mut server: Server) -> Result<()
     let mut report = every(Duration::from_secs(300));
     loop {
         tokio::select! {
-            received = main.recv_from(&mut main_buf) => {
-                if let Some((len, from)) = usable(received) {
+            received = main.recv_from(&mut main_buf) => match usable(received) {
+                Some((len, from)) => {
                     let now = Instant::now();
                     for (to, reply) in server.handle(from, Port::Main, &main_buf[..len], now) {
                         let _ = main.send_to(&reply, to).await;
                     }
                 }
-            }
-            received = alt.recv_from(&mut alt_buf) => {
-                if let Some((len, from)) = usable(received) {
+                None => tokio::time::sleep(ERROR_PAUSE).await,
+            },
+            received = alt.recv_from(&mut alt_buf) => match usable(received) {
+                Some((len, from)) => {
                     let now = Instant::now();
                     for (to, reply) in server.handle(from, Port::Alt, &alt_buf[..len], now) {
                         let _ = alt.send_to(&reply, to).await;
                     }
                 }
-            }
+                None => tokio::time::sleep(ERROR_PAUSE).await,
+            },
             _ = sweep.tick() => server.sweep(Instant::now()),
             _ = report.tick() => {
                 // Counts only: device IDs and addresses are never logged.
@@ -127,7 +133,7 @@ mod tests {
         let client = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let me = client.local_addr().unwrap();
         for server in [main_addr, alt_addr] {
-            let hello = encode(&ToServer::Hello { nonce: [7; 8] });
+            let hello = encode(&ToServer::hello([7; 8]));
             client.send_to(&hello, server).await.unwrap();
             let mut buf = [0u8; 1500];
             let (len, from) =

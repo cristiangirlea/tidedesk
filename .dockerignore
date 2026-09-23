@@ -1,0 +1,7 @@
+# Keep the Docker build context to what the build needs.
+target
+.git
+.private
+.claude
+*.zip
+*.msix

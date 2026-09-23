@@ -32,6 +32,10 @@ pub const MAX_DATAGRAM: usize = 1200;
 /// UDP port of the service; the second port is this one plus one.
 pub const DEFAULT_PORT: u16 = 47900;
 
+/// Padding every Hello carries, so that it is never smaller than its answer
+/// and a forged source address cannot use the service to amplify traffic.
+pub const HELLO_PADDING: usize = 48;
+
 pub type Nonce = [u8; 8];
 pub type Challenge = [u8; 16];
 pub type Token = [u8; 16];
@@ -58,7 +62,7 @@ impl DeviceId {
     /// From a certificate fingerprint as TideDesk shows it (SHA-256 in hex).
     pub fn from_fingerprint_hex(fingerprint: &str) -> Option<Self> {
         let hex: String = fingerprint.chars().filter(|c| !c.is_whitespace()).collect();
-        if hex.len() != 64 {
+        if hex.len() != 64 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
             return None;
         }
         hex[..16].parse().ok()
@@ -121,9 +125,11 @@ impl FromStr for DeviceId {
 /// What hosts and viewers send to the service.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ToServer {
-    /// Asks for a registration challenge. Sent to the second port as well, it
-    /// learns the address seen there, to tell a symmetric NAT.
-    Hello { nonce: Nonce },
+    /// Asks for a challenge, which later messages from the same address
+    /// return to prove they come from it. Sent to the second port as well,
+    /// it learns the address seen there, to tell a symmetric NAT. Build it
+    /// with [`ToServer::hello`].
+    Hello { nonce: Nonce, padding: Vec<u8> },
     /// Proves the host holds the key of the certificate its ID comes from.
     Register {
         device_id: DeviceId,
@@ -133,8 +139,23 @@ pub enum ToServer {
     },
     /// Keeps a registration, and the router's mapping, alive.
     Refresh { device_id: DeviceId, token: Token },
-    /// A viewer asks to be introduced to a host.
-    Lookup { device_id: DeviceId, nonce: Nonce },
+    /// A viewer asks to be introduced to a host, returning a challenge from
+    /// Hello: only addresses that proved they are real are introduced.
+    Lookup {
+        device_id: DeviceId,
+        nonce: Nonce,
+        challenge: Challenge,
+    },
+}
+
+impl ToServer {
+    /// A Hello with its padding.
+    pub fn hello(nonce: Nonce) -> Self {
+        Self::Hello {
+            nonce,
+            padding: vec![0; HELLO_PADDING],
+        }
+    }
 }
 
 /// What the service answers.
@@ -362,6 +383,10 @@ mod tests {
             Some(DeviceId::from_cert(&cert))
         );
         assert_eq!(DeviceId::from_fingerprint_hex("ABCD"), None);
+        // 64 bytes, but not 64 hex digits: no panic, just no ID.
+        let odd = format!("{}é{}", "A".repeat(15), "B".repeat(47));
+        assert_eq!(odd.len(), 64);
+        assert_eq!(DeviceId::from_fingerprint_hex(&odd), None);
     }
 
     #[test]
@@ -398,8 +423,26 @@ mod tests {
     }
 
     #[test]
+    fn hello_is_never_smaller_than_its_answer() {
+        let hello = encode(&ToServer::hello([1; 8]));
+        for reflexive in ["203.0.113.5:40000", "[2001:db8::1234:5678:9abc:def0]:65535"] {
+            let answer = encode(&FromServer::Challenge {
+                nonce: [1; 8],
+                challenge: [0xFF; 16],
+                reflexive: reflexive.parse().unwrap(),
+            });
+            assert!(
+                hello.len() >= answer.len(),
+                "{} < {}",
+                hello.len(),
+                answer.len()
+            );
+        }
+    }
+
+    #[test]
     fn encode_adds_magic_and_version_and_rejects_other_versions() {
-        let hello = ToServer::Hello { nonce: [3; 8] };
+        let hello = ToServer::hello([3; 8]);
         let datagram = encode(&hello);
         assert!(datagram.starts_with(&MAGIC));
         assert_eq!(datagram[4], VERSION);
