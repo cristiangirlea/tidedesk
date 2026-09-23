@@ -7,10 +7,12 @@
 //! QUIC listens on, because a router's mapping belongs to that socket's port.
 
 pub mod agent;
+pub mod punch;
 pub mod socket;
 pub mod stun;
 
-pub use agent::{Agent, AgentStatus, PublicStatus};
+pub use agent::{Agent, AgentStatus, PublicStatus, PunchError};
+pub use punch::{Punched, SessionId};
 pub use socket::{RawDatagram, SharedSocket};
 pub use stun::{NatKind, PublicEndpoint};
 
@@ -21,6 +23,16 @@ pub const STUN_MAGIC_COOKIE: [u8; 4] = [0x21, 0x12, 0xA4, 0x42];
 /// apart from QUIC (whose fixed bit is always set towards TideDesk endpoints)
 /// and the rest keeps it apart from STUN.
 pub const PUNCH_MAGIC: [u8; 4] = [0x00, b'T', b'D', b'P'];
+
+/// Random bytes for IDs and tokens.
+pub(crate) fn random_bytes<const N: usize>() -> [u8; N] {
+    use ring::rand::{SecureRandom, SystemRandom};
+    let mut bytes = [0u8; N];
+    SystemRandom::new()
+        .fill(&mut bytes)
+        .expect("system RNG failed");
+    bytes
+}
 
 /// Whether a datagram belongs to the side channel rather than to QUIC.
 ///

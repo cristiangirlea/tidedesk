@@ -11,9 +11,7 @@ use std::fmt;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::time::{Duration, Instant};
 
-use ring::rand::{SecureRandom, SystemRandom};
-
-use super::STUN_MAGIC_COOKIE;
+use super::{STUN_MAGIC_COOKIE, random_bytes};
 
 /// Public servers asked by default. Each sees only this computer's public
 /// address and the tiny request.
@@ -232,20 +230,15 @@ impl Discovery {
             seen.push(*addr);
             new
         });
-        let rng = SystemRandom::new();
         let servers = servers
             .into_iter()
-            .map(|(name, addr)| {
-                let mut id = [0u8; 12];
-                rng.fill(&mut id).expect("system RNG failed");
-                Query {
-                    name,
-                    addr,
-                    id,
-                    sent: 0,
-                    answer: None,
-                    failed: None,
-                }
+            .map(|(name, addr)| Query {
+                name,
+                addr,
+                id: random_bytes(),
+                sent: 0,
+                answer: None,
+                failed: None,
             })
             .collect();
         Self {

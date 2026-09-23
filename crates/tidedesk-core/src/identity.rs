@@ -123,6 +123,14 @@ impl KnownHosts {
     }
 }
 
+/// A host identity in a temporary directory, for tests elsewhere in the crate.
+#[cfg(test)]
+pub(crate) fn test_identity(name: &str) -> HostIdentity {
+    let dir = std::env::temp_dir().join(format!("tidedesk-test-{name}-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    HostIdentity::load_or_create(&dir).unwrap()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
