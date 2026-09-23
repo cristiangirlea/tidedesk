@@ -7,8 +7,10 @@
 //! QUIC listens on, because a router's mapping belongs to that socket's port.
 
 pub mod socket;
+pub mod stun;
 
 pub use socket::{RawDatagram, SharedSocket};
+pub use stun::{NatKind, PublicEndpoint};
 
 /// RFC 5389 magic cookie, found at bytes 4..8 of every STUN message.
 pub const STUN_MAGIC_COOKIE: [u8; 4] = [0x21, 0x12, 0xA4, 0x42];
@@ -24,11 +26,7 @@ pub const PUNCH_MAGIC: [u8; 4] = [0x00, b'T', b'D', b'P'];
 /// quinn clears it at random on packets to peers that allow "greasing", which
 /// is why endpoints on a [`SharedSocket`] disable greasing (see `net.rs`).
 pub(crate) fn is_side_channel(datagram: &[u8]) -> bool {
-    is_stun_message(datagram) || datagram.starts_with(&PUNCH_MAGIC)
-}
-
-fn is_stun_message(datagram: &[u8]) -> bool {
-    datagram.len() >= 20 && datagram[0] & 0xC0 == 0 && datagram[4..8] == STUN_MAGIC_COOKIE
+    stun::is_stun(datagram) || datagram.starts_with(&PUNCH_MAGIC)
 }
 
 #[cfg(test)]
