@@ -1,5 +1,7 @@
-//! Lightweight throughput meter for the `--stats` output.
+//! Lightweight throughput meter and network path lines for the `--stats`
+//! output.
 
+use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
 pub struct Meter {
@@ -43,5 +45,46 @@ impl Meter {
         );
         *self = Self::new(self.label);
         Some(line)
+    }
+}
+
+/// One `--stats` line about a connection's network path.
+pub fn path_line(label: &str, remote: SocketAddr, rtt: Duration, lost_packets: u64) -> String {
+    let rtt_ms = rtt.as_secs_f64() * 1000.0;
+    format!("{label}: {remote}, rtt {rtt_ms:.1} ms, {lost_packets} packets lost")
+}
+
+/// Logs [`path_line`] every two seconds until the connection closes.
+pub async fn log_path(conn: quinn::Connection, label: &'static str) {
+    let first = tokio::time::Instant::now() + Meter::WINDOW;
+    let mut every = tokio::time::interval_at(first, Meter::WINDOW);
+    loop {
+        tokio::select! {
+            _ = conn.closed() => return,
+            _ = every.tick() => {
+                let path = conn.stats().path;
+                let line = path_line(label, conn.remote_address(), path.rtt, path.lost_packets);
+                tracing::info!("{line}");
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn path_line_names_the_peer_rtt_and_losses() {
+        let line = path_line(
+            "viewer path (direct)",
+            "203.0.113.5:40000".parse().unwrap(),
+            Duration::from_micros(23_400),
+            3,
+        );
+        assert_eq!(
+            line,
+            "viewer path (direct): 203.0.113.5:40000, rtt 23.4 ms, 3 packets lost"
+        );
     }
 }

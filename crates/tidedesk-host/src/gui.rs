@@ -7,6 +7,7 @@
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::time::{Duration, Instant};
 
 use anyhow::{Result, anyhow};
 use egui::{Color32, RichText};
@@ -16,6 +17,7 @@ use tidedesk_core::nat::{Agent, NatKind, PublicStatus};
 
 use crate::capture::{self, DisplayInfo};
 use crate::config::{HostConfig, parse_stun_servers};
+use crate::internet::{self, PathState};
 use crate::session::HostState;
 use crate::tray::Tray;
 use crate::{icon, platform};
@@ -23,9 +25,13 @@ use crate::{icon, platform};
 /// Also used to find the native window for tray and taskbar handling.
 pub const WINDOW_TITLE: &str = "TideDesk Host";
 
+const ERROR_RED: Color32 = Color32::from_rgb(220, 60, 50);
+
 pub struct HostInfo {
     pub state: Arc<HostState>,
     pub agent: Arc<Agent>,
+    /// Runs the agent's work started from the window.
+    pub runtime: tokio::runtime::Handle,
     pub config: HostConfig,
     pub fingerprint: String,
     pub port: u16,
@@ -46,6 +52,9 @@ struct HostApp {
     show_all_addresses: bool,
     /// The STUN server list as typed; applied when the field loses focus.
     stun_text: String,
+    /// A viewer's internet address as typed, and why it was not accepted.
+    viewer_text: String,
+    viewer_error: Option<String>,
     notice: Option<String>,
     settings_error: Option<String>,
     autostart: bool,
@@ -126,6 +135,8 @@ pub fn run(info: HostInfo) -> Result<()> {
         addresses,
         show_all_addresses: false,
         stun_text,
+        viewer_text: String::new(),
+        viewer_error: None,
         notice: None,
         settings_error: None,
         autostart: platform::autostart_enabled(),
@@ -235,6 +246,10 @@ impl HostApp {
         self.internet_address(ui);
         ui.add_space(6.0);
 
+        ui.label("Viewer on another network");
+        self.expected_viewer(ui);
+        ui.add_space(6.0);
+
         ui.label("Fingerprint");
         ui.horizontal_wrapped(|ui| {
             ui.label(RichText::new(&self.info.fingerprint).monospace().small());
@@ -272,6 +287,54 @@ impl HostApp {
                      come in a later version.",
                 );
             }
+        }
+    }
+
+    fn expected_viewer(&mut self, ui: &mut egui::Ui) {
+        let state = self.info.state.clone();
+        ui.horizontal(|ui| {
+            let field = ui.add(
+                egui::TextEdit::singleline(&mut self.viewer_text)
+                    .hint_text("its internet address")
+                    .desired_width(180.0),
+            );
+            if field.changed() {
+                self.viewer_error = None;
+            }
+            let entered = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            if ui.button("Open").clicked() || entered {
+                let own = match self.info.agent.public() {
+                    PublicStatus::Ready(public) => Some(public.addr.ip()),
+                    _ => None,
+                };
+                match internet::parse_expected_viewer(&self.viewer_text, own) {
+                    Ok(typed) => {
+                        self.viewer_error = None;
+                        internet::open_path(&state, &self.info.agent, &self.info.runtime, typed);
+                    }
+                    Err(e) => self.viewer_error = Some(e),
+                }
+            }
+        });
+        let expected = state.expected_viewer.lock().unwrap().clone();
+        if let Some(error) = &self.viewer_error {
+            ui.colored_label(ERROR_RED, error);
+        } else if let Some(expected) = expected {
+            let now = Instant::now();
+            ui.small(expected.describe(now));
+            match expected.state {
+                PathState::Opening { .. } => ui.ctx().request_repaint_after(Duration::from_secs(1)),
+                // Show when the keepalives stop.
+                PathState::Open { until, .. } if until > now => {
+                    ui.ctx().request_repaint_after(until - now)
+                }
+                _ => {}
+            }
+        } else {
+            ui.small(
+                "Type the internet address the viewer shows and press Open, then connect \
+                 from the viewer within two minutes.",
+            );
         }
     }
 
@@ -398,7 +461,7 @@ impl HostApp {
             self.save();
         }
         if let Some(e) = &self.settings_error {
-            ui.colored_label(Color32::from_rgb(220, 60, 50), e);
+            ui.colored_label(ERROR_RED, e);
         }
     }
 }

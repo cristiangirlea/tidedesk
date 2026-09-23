@@ -89,6 +89,22 @@ pub fn client_endpoint_on(socket: Arc<SharedSocket>) -> Result<quinn::Endpoint> 
     Ok(ep)
 }
 
+/// The next connection attempt whose source address is proven: an
+/// unproven one is answered with a QUIC Retry (one extra round trip) and
+/// comes back proven, while a spoofed source never does. Keeps a host that
+/// is reachable from the internet from doing handshake work for, or sending
+/// handshake data to, addresses that did not ask.
+pub async fn accept_validated(endpoint: &quinn::Endpoint) -> Option<quinn::Incoming> {
+    loop {
+        let incoming = endpoint.accept().await?;
+        if incoming.remote_address_validated() {
+            return Some(incoming);
+        }
+        // quinn guarantees a retry is allowed for an unvalidated address.
+        let _ = incoming.retry();
+    }
+}
+
 fn endpoint_on(
     socket: Arc<SharedSocket>,
     server: Option<quinn::ServerConfig>,
@@ -157,5 +173,39 @@ impl ServerCertVerifier for FingerprintVerifier {
 
     fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
         self.0.signature_verification_algorithms.supported_schemes()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::identity::test_identity;
+
+    #[tokio::test]
+    async fn unvalidated_addresses_are_retried_before_the_handshake() {
+        let identity = test_identity("net-retry");
+        let loopback: SocketAddr = "127.0.0.1:0".parse().unwrap();
+        let (host_socket, _) = SharedSocket::bind(loopback).unwrap();
+        let (viewer_socket, _) = SharedSocket::bind(loopback).unwrap();
+        let host_addr = host_socket.local_addr().unwrap();
+        let host = server_endpoint_on(host_socket, &identity).unwrap();
+        let viewer = client_endpoint_on(viewer_socket).unwrap();
+
+        let server = tokio::spawn(async move {
+            let incoming = accept_validated(&host).await.unwrap();
+            assert!(incoming.remote_address_validated());
+            let conn = incoming.await.unwrap();
+            conn.closed().await;
+        });
+        let conn = tokio::time::timeout(
+            Duration::from_secs(10),
+            viewer.connect(host_addr, "tidedesk-host").unwrap(),
+        )
+        .await
+        .expect("the handshake completes after the retry")
+        .unwrap();
+        assert_eq!(peer_fingerprint(&conn), Some(identity.fingerprint()));
+        conn.close(0u32.into(), b"done");
+        server.await.unwrap();
     }
 }
