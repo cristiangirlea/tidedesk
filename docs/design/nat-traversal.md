@@ -149,9 +149,10 @@ and the path. It reports each step to the window as text lines (`status:`,
 
 ## Firewalls
 
-The host sends the first packets to the viewer, so Windows Firewall treats the
-viewer's packets as answers and normally lets them in. If a host's firewall blocks
-them anyway, allow TideDesk Host on the network in use. The viewer never needs an
+The host sends the first packets to the viewer, so Windows Firewall should treat the
+viewer's packets as answers and let them in; checklist item 5 below confirms this per
+release. If a host's firewall blocks them anyway, allow TideDesk Host on the network
+in use. The viewer never needs an
 inbound rule.
 
 ## Limits
@@ -162,8 +163,8 @@ inbound rule.
 - Two computers behind the **same router** should use the local address: many routers
   cannot loop traffic back to their own public address.
 - IPv4 only.
-- Someone must be at the host to press Open, and both sides must act within two
-  minutes of each other.
+- Someone must be at the host window to press Open (a `--headless` host cannot open
+  a path yet), and both sides must act within two minutes of each other.
 
 ## Planned: rendezvous by device ID
 

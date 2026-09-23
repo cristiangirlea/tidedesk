@@ -31,7 +31,7 @@ path and its round-trip time, so you can see it goes straight to the host.
 
 **What other servers see.** To learn a computer's internet address, TideDesk asks
 public STUN servers (by default Google's and Cloudflare's). They see that computer's
-public IP address and a 20-byte request, nothing else. The session itself never
+public IP address and port and a 20-byte request, nothing else. The session itself never
 passes through them. The host can turn this off or choose other servers under
 Settings, Internet.
 
@@ -42,12 +42,14 @@ Settings, Internet.
   path can be opened. TideDesk detects this and says so. Use option 2 or 4 instead.
 - **Same network:** if both computers have the same internet address, connect to one
   of the host's local addresses (shown in its window) without ticking the box.
-- IPv4 only. Someone must be at the host to press Open; a way to connect by a
-  device ID without that step is planned.
+- IPv4 only. Someone must be at the host window to press Open: a host started with
+  `--headless` cannot open a path yet. A way to connect by a device ID without that
+  step is planned.
 
 **Firewall.** The host sends the first packets towards the viewer, so Windows Firewall
-normally lets the viewer's packets in as answers. If it does not, allow TideDesk
-Host on the network in use. The viewer needs no inbound rule.
+should let the viewer's packets in as answers (not yet confirmed on every network
+type). If the connection does not come through, allow TideDesk Host on the network
+in use. The viewer needs no inbound rule.
 
 For how it works, see the [design notes](design/nat-traversal.md).
 
