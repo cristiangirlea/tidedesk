@@ -119,7 +119,9 @@ pub fn parse_internet_host(text: &str) -> Result<SocketAddr> {
         Ok(()) => Ok(addr),
         Err(NotPublic::Ipv6) => bail!("internet connections use IPv4 addresses for now"),
         Err(NotPublic::Local) => {
-            bail!("{addr} is a local network address: connect to it without --internet")
+            bail!(
+                "{addr} is a local network address: connect to it directly, not over the internet"
+            )
         }
         Err(NotPublic::Unusable) => bail!("{addr} is not an address a host can have"),
     }
@@ -130,7 +132,7 @@ fn symmetric_nat() -> String {
         "this network uses a symmetric NAT (common on mobile data and carrier-grade NAT), so no \
          direct path to the host can be opened from here. TideDesk never relays sessions: use a \
          VPN such as Tailscale, or forward UDP port {DEFAULT_PORT} on the host's router and \
-         connect without --internet. See docs/internet-access.md."
+         connect to it directly. See docs/internet-access.md."
     )
 }
 
@@ -249,8 +251,8 @@ impl Dialer {
         if public.addr.ip() == host_addr.ip() {
             bail!(
                 "the host has the same internet address as this computer ({}), so both are on \
-                 the same network: connect to one of the host's local addresses instead, \
-                 without --internet (the host's window lists them)",
+                 the same network: connect directly to one of the host's local addresses \
+                 instead (the host's window lists them)",
                 public.addr.ip()
             );
         }
@@ -421,13 +423,6 @@ pub async fn probe(host: &str) -> Result<Probe> {
     Ok(probe)
 }
 
-pub async fn connect(opts: &ConnectOptions, progress: impl Fn(Progress)) -> Result<Session> {
-    Dialer::new(&opts.host, &opts.route, progress)
-        .await?
-        .connect(opts)
-        .await
-}
-
 #[cfg(test)]
 mod tests {
     use std::net::{IpAddr, Ipv4Addr};
@@ -462,7 +457,7 @@ mod tests {
             assert!(parse_internet_host(bad).is_err(), "{bad}");
         }
         let local = parse_internet_host("192.168.1.5:47800").unwrap_err();
-        assert!(local.to_string().contains("without --internet"), "{local}");
+        assert!(local.to_string().contains("directly"), "{local}");
     }
 
     #[tokio::test]

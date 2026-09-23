@@ -5,6 +5,7 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod app;
+mod child;
 mod computers;
 mod connect;
 mod icon;
@@ -18,12 +19,16 @@ mod window_placement;
 
 use std::io::Write;
 use std::sync::atomic::AtomicBool;
+use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
 use clap::Parser;
+use tidedesk_core::identity::{KnownHosts, PinStatus};
+use tidedesk_core::paths;
 use winit::event_loop::{EventLoop, EventLoopProxy};
 
+use child::ChildLine;
 use stream::{Notify, Picture, UiEvent};
 
 #[derive(Parser, Debug)]
@@ -92,6 +97,63 @@ fn print_progress(step: connect::Progress) {
     }
 }
 
+/// The same steps as lines for the launcher that started this session.
+fn report_to_launcher(step: connect::Progress) {
+    let line = match step {
+        connect::Progress::Status(text) => ChildLine::Status(text),
+        connect::Progress::ViewerAddress(me) => ChildLine::ViewerAddress(me),
+        connect::Progress::PathOpen(path) => {
+            ChildLine::Status(format!("Path open to {}. Connecting…", path.peer))
+        }
+    };
+    eprintln!("{line}");
+}
+
+/// Reads the launcher's answers from stdin. `cancel` ends the session at
+/// once, whatever it is doing; other answers are passed on.
+fn launcher_answers() -> Receiver<String> {
+    let (answers, received) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        for line in std::io::stdin().lines() {
+            let Ok(line) = line else { break };
+            if line.trim() == child::CANCEL {
+                eprintln!("{}", ChildLine::Disconnected(child::CANCELLED.into()));
+                std::process::exit(0);
+            }
+            if answers.send(line).is_err() {
+                break;
+            }
+        }
+    });
+    received
+}
+
+/// For an internet path the probe runs here, in the process that owns the
+/// path: asks the launcher when the host's identity is new or has changed,
+/// and pins it once trusted. `false` when the launcher did not say trust.
+async fn confirm_with_launcher(
+    dialer: &connect::Dialer,
+    answers: Receiver<String>,
+) -> Result<bool> {
+    let probe = dialer.probe().await?;
+    if probe.status == PinStatus::Trusted {
+        return Ok(true);
+    }
+    let question = ChildLine::Fingerprint {
+        address: probe.address.clone(),
+        fingerprint: probe.fingerprint.clone(),
+        status: probe.status.clone(),
+    };
+    eprintln!("{question}");
+    // The punched path's keepalives hold it open while the user decides.
+    let answer = tokio::task::spawn_blocking(move || answers.recv()).await?;
+    if answer.is_ok_and(|a| a.trim() == child::TRUST) {
+        KnownHosts::load(&paths::config_dir()?)?.pin(&probe.address, &probe.fingerprint)?;
+        return Ok(true);
+    }
+    Ok(false)
+}
+
 fn prompt_code() -> Result<String> {
     print!("Access code: ");
     std::io::stdout().flush()?;
@@ -114,7 +176,7 @@ fn main() {
     attach_console();
     tracing_subscriber::fmt().with_target(false).init();
     if let Err(e) = run() {
-        eprintln!("error: {e:#}");
+        eprintln!("{}", ChildLine::Error(format!("{e:#}")));
         std::process::exit(1);
     }
 }
@@ -165,7 +227,33 @@ fn run() -> Result<()> {
         accept_new_fingerprint: args.accept_new_fingerprint,
         route,
     };
-    let session = runtime.block_on(connect::connect(&opts, print_progress))?;
+    let launcher = std::env::var_os(child::LAUNCHER_ENV).is_some();
+    let answers = launcher.then(launcher_answers);
+    let session = runtime.block_on(async {
+        let report = move |step| {
+            if launcher {
+                report_to_launcher(step)
+            } else {
+                print_progress(step)
+            }
+        };
+        let dialer = connect::Dialer::new(&opts.host, &opts.route, report).await?;
+        // The launcher probes directly reachable hosts itself.
+        if let Some(answers) = answers
+            && opts.route != connect::Route::Direct
+            && !confirm_with_launcher(&dialer, answers).await?
+        {
+            return Ok(None);
+        }
+        dialer.connect(&opts).await.map(Some)
+    })?;
+    let Some(session) = session else {
+        eprintln!("{}", ChildLine::Disconnected(child::CANCELLED.into()));
+        return Ok(());
+    };
+    if launcher {
+        eprintln!("{}", ChildLine::Connected(session.host_name.clone()));
+    }
     tracing::info!(
         "connected to \"{}\" ({}x{}, audio {})",
         session.host_name,

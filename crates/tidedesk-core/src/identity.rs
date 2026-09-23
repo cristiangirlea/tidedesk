@@ -51,9 +51,15 @@ impl HostIdentity {
 pub fn fingerprint(cert: &[u8]) -> String {
     let digest = ring::digest::digest(&ring::digest::SHA256, cert);
     let hex: String = digest.as_ref().iter().map(|b| format!("{b:02X}")).collect();
+    format_fingerprint(&hex)
+}
+
+/// A fingerprint in any spelling, as uppercase hex in groups of four.
+pub fn format_fingerprint(fp: &str) -> String {
+    let hex = normalize_fingerprint(fp);
     hex.as_bytes()
         .chunks(4)
-        .map(|c| std::str::from_utf8(c).unwrap())
+        .map(|c| std::str::from_utf8(c).expect("hex digits are ASCII"))
         .collect::<Vec<_>>()
         .join(" ")
 }

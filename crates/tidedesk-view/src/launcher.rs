@@ -3,9 +3,15 @@
 //! The remote-screen window runs in a child process: winit allows one event
 //! loop per process, and a separate process also keeps this window responsive
 //! and able to report why a session ended.
+//!
+//! A computer on the local network (or a VPN) is probed here before the
+//! session starts. For one reached over the internet everything happens in
+//! the session process, which owns the punched path; it reports its steps
+//! and asks about the host's identity through the lines in [`crate::child`].
 
-use std::io::Read;
-use std::process::{Command, Stdio};
+use std::io::{BufRead, BufReader, Write};
+use std::net::SocketAddr;
+use std::process::{ChildStdin, Command, Stdio};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Result, anyhow};
@@ -14,11 +20,14 @@ use egui_software_backend::{SoftwareBackend, SoftwareBackendAppConfiguration};
 use tidedesk_core::identity::{KnownHosts, PinStatus};
 use tidedesk_core::paths;
 
+use crate::child::{self, ChildLine};
 use crate::computers::{AddressBook, Computer};
 use crate::connect::{self, Probe};
 use crate::icon;
 
 const ERROR: Color32 = Color32::from_rgb(220, 60, 50);
+
+const INTERNET_OPTION: &str = "Over the internet (the host shows its internet address)";
 
 /// A connection about to be made.
 #[derive(Clone)]
@@ -26,6 +35,19 @@ struct Target {
     address: String,
     code: String,
     sound: bool,
+    internet: bool,
+}
+
+/// Writes answers to a session process that is still connecting.
+#[derive(Clone)]
+struct SessionControl(Arc<Mutex<Option<ChildStdin>>>);
+
+impl SessionControl {
+    fn send(&self, answer: &str) {
+        if let Some(stdin) = self.0.lock().unwrap().as_mut() {
+            let _ = writeln!(stdin, "{answer}").and_then(|()| stdin.flush());
+        }
+    }
 }
 
 enum Phase {
@@ -33,12 +55,26 @@ enum Phase {
     Checking(Target),
     /// The host's identity needs the user's approval.
     Confirm(Probe, Target),
+    /// A session process is opening an internet path and connecting.
+    Opening {
+        host: String,
+        status: String,
+        viewer_address: Option<SocketAddr>,
+        control: SessionControl,
+    },
+    /// A connecting session process waits for the user to trust the host.
+    ConfirmSession {
+        host: String,
+        probe: Probe,
+        control: SessionControl,
+    },
     InSession(String),
 }
 
 /// Results handed back from worker threads.
 enum Update {
     Probed(Result<Probe>),
+    Child(ChildLine),
     SessionEnded {
         host: String,
         outcome: Result<(), String>,
@@ -54,6 +90,7 @@ struct Editor {
     remember_code: bool,
     had_code: bool,
     sound: bool,
+    internet: bool,
     error: Option<String>,
 }
 
@@ -62,6 +99,7 @@ struct Launcher {
     address: String,
     code: String,
     sound: bool,
+    internet: bool,
     focus_code: bool,
 
     book: AddressBook,
@@ -88,6 +126,7 @@ pub fn run() -> Result<()> {
         address: String::new(),
         code: String::new(),
         sound: true,
+        internet: false,
         focus_code: false,
         book: AddressBook::load(),
         recent: load_recent(),
@@ -121,6 +160,7 @@ impl Launcher {
             // No saved code: collect it in the quick-connect form.
             self.address = target.address;
             self.sound = target.sound;
+            self.internet = target.internet;
             self.code.clear();
             self.focus_code = true;
             self.message = Some((
@@ -131,6 +171,13 @@ impl Launcher {
         }
         self.message = None;
         let host = target.address.trim().to_string();
+        if target.internet {
+            // The session process opens the path and probes the host itself.
+            return match connect::parse_internet_host(&host) {
+                Ok(addr) => self.start_session(ctx, addr.to_string(), &target),
+                Err(e) => self.fail(format!("{e:#}")),
+            };
+        }
         self.phase = Phase::Checking(target);
         let (inbox, ctx) = (self.inbox.clone(), ctx.clone());
         std::thread::spawn(move || {
@@ -152,11 +199,15 @@ impl Launcher {
         cmd.arg(&host)
             // The code travels in the environment, not the (visible) command line.
             .env("TIDEDESK_CODE", target.code.trim())
-            .stdin(Stdio::null())
+            .env(child::LAUNCHER_ENV, "1")
+            .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::piped());
         if !target.sound {
             cmd.arg("--no-audio");
+        }
+        if target.internet {
+            cmd.arg("--internet");
         }
         #[cfg(windows)]
         {
@@ -169,36 +220,106 @@ impl Launcher {
             Err(e) => return self.fail(format!("cannot start session: {e}")),
         };
 
-        self.phase = Phase::InSession(host.clone());
+        let control = SessionControl(Arc::new(Mutex::new(child.stdin.take())));
         self.message = None;
+        if target.internet {
+            self.phase = Phase::Opening {
+                host: host.clone(),
+                status: "Starting…".into(),
+                viewer_address: None,
+                control,
+            };
+        } else {
+            // A direct session needs no answers: dropping `control` closes its stdin.
+            self.phase = Phase::InSession(host.clone());
+            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+        }
         let (inbox, ctx2) = (self.inbox.clone(), ctx.clone());
         std::thread::spawn(move || {
-            let mut stderr = String::new();
-            if let Some(mut s) = child.stderr.take() {
-                let _ = s.read_to_string(&mut stderr);
+            let mut lines = Vec::new();
+            if let Some(stderr) = child.stderr.take() {
+                // Bytes, not `lines()`: a line that is not UTF-8 must not stop
+                // the reading, or the session would block on a full pipe.
+                for raw in BufReader::new(stderr).split(b'\n') {
+                    let Ok(raw) = raw else { break };
+                    let line = child::parse(String::from_utf8_lossy(&raw).trim_end());
+                    if matches!(
+                        line,
+                        ChildLine::Status(_)
+                            | ChildLine::ViewerAddress(_)
+                            | ChildLine::Fingerprint { .. }
+                            | ChildLine::Connected(_)
+                    ) {
+                        Self::post(&inbox, &ctx2, Update::Child(line.clone()));
+                    }
+                    lines.push(line);
+                }
             }
             let status = child.wait();
             // The session prints `error: …` or `disconnected: …` as its last word.
-            let last = |prefix: &str| {
-                stderr
-                    .lines()
-                    .rev()
-                    .find_map(|l| l.strip_prefix(prefix).map(str::to_string))
-            };
+            let last_error = lines.iter().rev().find_map(|l| match l {
+                ChildLine::Error(e) => Some(e.clone()),
+                _ => None,
+            });
+            let last_disconnect = lines.iter().rev().find_map(|l| match l {
+                ChildLine::Disconnected(reason) => Some(reason.clone()),
+                _ => None,
+            });
             let outcome = match status {
                 Ok(s) if s.success() => Ok(()),
-                _ => {
-                    Err(last("error: ").unwrap_or_else(|| "the session ended unexpectedly".into()))
-                }
+                _ => Err(last_error.unwrap_or_else(|| "the session ended unexpectedly".into())),
             };
-            let outcome = match (outcome, last("disconnected: ")) {
+            let outcome = match (outcome, last_disconnect) {
                 (Ok(()), Some(reason)) if reason != "host ended the session" => Err(reason),
                 (o, _) => o,
             };
             ctx2.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
             Self::post(&inbox, &ctx2, Update::SessionEnded { host, outcome });
         });
-        ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+    }
+
+    /// Follows a session process that is opening an internet path.
+    fn on_child_line(&mut self, ctx: &egui::Context, line: ChildLine) {
+        let (host, control) = match &self.phase {
+            Phase::Opening { host, control, .. } | Phase::ConfirmSession { host, control, .. } => {
+                (host.clone(), control.clone())
+            }
+            _ => return,
+        };
+        match line {
+            ChildLine::Status(text) => {
+                if let Phase::Opening { status, .. } = &mut self.phase {
+                    *status = text;
+                }
+            }
+            ChildLine::ViewerAddress(me) => {
+                if let Phase::Opening { viewer_address, .. } = &mut self.phase {
+                    *viewer_address = Some(me);
+                }
+            }
+            ChildLine::Fingerprint {
+                address,
+                fingerprint,
+                status,
+            } => {
+                let probe = Probe {
+                    address,
+                    fingerprint,
+                    status,
+                };
+                self.phase = Phase::ConfirmSession {
+                    host,
+                    probe,
+                    control,
+                };
+            }
+            ChildLine::Connected(_) => {
+                // Dropping the control closes the session's stdin: no more questions.
+                self.phase = Phase::InSession(host);
+                ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
+            }
+            _ => {}
+        }
     }
 
     fn fail(&mut self, text: String) {
@@ -223,10 +344,12 @@ impl Launcher {
                         Ok(probe) => self.phase = Phase::Confirm(probe, target),
                     }
                 }
+                Update::Child(line) => self.on_child_line(ctx, line),
                 Update::SessionEnded { host, outcome } => {
                     self.phase = Phase::Idle;
                     self.message = Some(match outcome {
                         Ok(()) => (false, format!("Session with {host} ended.")),
+                        Err(e) if e == child::CANCELLED => (false, "Cancelled.".into()),
                         Err(e) => (true, e),
                     });
                     self.recent = load_recent();
@@ -257,42 +380,8 @@ impl Launcher {
             remember_code: existing.is_some_and(Computer::has_code),
             had_code: existing.is_some_and(Computer::has_code),
             sound: existing.is_none_or(|c| c.sound),
+            internet: existing.is_some_and(|c| c.internet),
             error: None,
-        });
-    }
-
-    fn confirm_view(&mut self, ui: &mut egui::Ui, probe: Probe, target: Target) {
-        let ctx = ui.ctx().clone();
-        let mismatch = matches!(probe.status, PinStatus::Mismatch { .. });
-        if mismatch {
-            ui.label(
-                RichText::new("⚠ This computer's identity has changed!")
-                    .color(ERROR)
-                    .strong(),
-            );
-            ui.label(
-                "Someone may be intercepting the connection, or TideDesk was \
-                 reinstalled on it. Only continue if you are sure.",
-            );
-        } else {
-            ui.label(format!("First connection to {}.", probe.address));
-            ui.label("Check that this fingerprint matches the one in the host window:");
-        }
-        ui.add_space(4.0);
-        ui.label(RichText::new(&probe.fingerprint).monospace());
-        ui.add_space(8.0);
-        ui.horizontal(|ui| {
-            let label = if mismatch {
-                "Trust new identity"
-            } else {
-                "It matches — connect"
-            };
-            if ui.button(label).clicked() {
-                self.trust(&ctx, &probe, &target);
-            }
-            if ui.button("Cancel").clicked() {
-                self.phase = Phase::Idle;
-            }
         });
     }
 
@@ -318,11 +407,12 @@ impl Launcher {
                 ui.label("Address");
                 ui.add(
                     egui::TextEdit::singleline(&mut ed.address)
-                        .hint_text("192.168.1.50 or my-pc")
+                        .hint_text(address_hint(ed.internet))
                         .desired_width(240.0),
                 );
                 ui.end_row();
             });
+        ui.checkbox(&mut ed.internet, INTERNET_OPTION);
         ui.checkbox(&mut ed.remember_code, "Remember the access code");
         if ed.remember_code {
             let hint = if ed.had_code {
@@ -359,6 +449,7 @@ impl Launcher {
                 pc.name = if name.is_empty() { address } else { name }.to_string();
                 pc.address = address.to_string();
                 pc.sound = ed.sound;
+                pc.internet = ed.internet;
                 let code_result = if !ed.remember_code {
                     pc.set_code(None)
                 } else if !ed.code.trim().is_empty() {
@@ -410,7 +501,7 @@ impl Launcher {
                     ui.label("Address");
                     ui.add(
                         egui::TextEdit::singleline(&mut self.address)
-                            .hint_text("192.168.1.50 or my-pc")
+                            .hint_text(address_hint(self.internet))
                             .desired_width(240.0),
                     );
                     ui.end_row();
@@ -431,6 +522,7 @@ impl Launcher {
                     }
                 });
             ui.checkbox(&mut self.sound, "Play sound from the remote computer");
+            ui.checkbox(&mut self.internet, INTERNET_OPTION);
             ui.horizontal(|ui| {
                 let ready = !self.address.trim().is_empty() && !self.code.trim().is_empty();
                 if ui
@@ -451,6 +543,7 @@ impl Launcher {
                         ed.code = self.code.clone();
                         ed.remember_code = !self.code.trim().is_empty();
                         ed.sound = self.sound;
+                        ed.internet = self.internet;
                     }
                 }
             });
@@ -462,6 +555,31 @@ impl Launcher {
                     ui.spinner();
                     ui.label("Contacting the computer…");
                 });
+            }
+            Phase::Opening {
+                status,
+                viewer_address,
+                control,
+                ..
+            } => {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label(status.as_str());
+                });
+                if let Some(me) = viewer_address {
+                    let me = me.to_string();
+                    ui.label("Give this address to the person at the host:");
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(&me).monospace().size(20.0).strong());
+                        if ui.small_button("Copy").clicked() {
+                            ui.ctx().copy_text(me.clone());
+                        }
+                    });
+                    ui.small("They type it under \"Viewer on another network\" and press Open.");
+                }
+                if ui.button("Cancel").clicked() {
+                    control.send(child::CANCEL);
+                }
             }
             Phase::InSession(host) => {
                 ui.label(format!(
@@ -522,7 +640,12 @@ impl Launcher {
                                         .sense(egui::Sense::click()),
                                 )
                                 .on_hover_text("Double-click to connect");
-                            ui.small(RichText::new(&pc.address).weak());
+                            let address = if pc.internet {
+                                format!("{} · internet", pc.address)
+                            } else {
+                                pc.address.clone()
+                            };
+                            ui.small(RichText::new(address).weak());
                             if label.double_clicked() && !busy {
                                 action = Some((i, "connect"));
                             }
@@ -567,6 +690,7 @@ impl Launcher {
                     address: pc.address.clone(),
                     code: pc.code().unwrap_or_default(),
                     sound: pc.sound,
+                    internet: pc.internet,
                 };
                 self.connect(&ctx, target);
             }
@@ -596,6 +720,8 @@ impl Launcher {
             for host in unsaved {
                 ui.horizontal(|ui| {
                     if ui.add_enabled(!busy, egui::Link::new(&host)).clicked() {
+                        // An internet address can only have been reached over the internet.
+                        self.internet = connect::parse_internet_host(&host).is_ok();
                         self.address = host.clone();
                         self.focus_code = true;
                     }
@@ -612,8 +738,93 @@ impl Launcher {
             address: self.address.trim().to_string(),
             code: self.code.trim().to_string(),
             sound: self.sound,
+            internet: self.internet,
         }
     }
+
+    /// The fingerprint question, for a host probed here or by a session.
+    fn confirm_view(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
+        match &self.phase {
+            Phase::Confirm(probe, target) => {
+                let (probe, target) = (probe.clone(), target.clone());
+                match identity_prompt(ui, &probe) {
+                    Some(true) => self.trust(&ctx, &probe, &target),
+                    Some(false) => self.phase = Phase::Idle,
+                    None => {}
+                }
+            }
+            Phase::ConfirmSession {
+                host,
+                probe,
+                control,
+            } => {
+                let (host, probe, control) = (host.clone(), probe.clone(), control.clone());
+                if let Some(trusted) = identity_prompt(ui, &probe) {
+                    // The session pins the host itself, or ends and says so.
+                    let (answer, status) = if trusted {
+                        (child::TRUST, "Connecting…")
+                    } else {
+                        (child::CANCEL, "Cancelling…")
+                    };
+                    control.send(answer);
+                    self.phase = Phase::Opening {
+                        host,
+                        status: status.into(),
+                        viewer_address: None,
+                        control,
+                    };
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn address_hint(internet: bool) -> &'static str {
+    if internet {
+        "its internet address, like 203.0.113.5:40000"
+    } else {
+        "192.168.1.50 or my-pc"
+    }
+}
+
+/// Shows a host's fingerprint for the user to check against the host's
+/// window: `Some(true)` to trust it, `Some(false)` to cancel.
+fn identity_prompt(ui: &mut egui::Ui, probe: &Probe) -> Option<bool> {
+    let mismatch = matches!(probe.status, PinStatus::Mismatch { .. });
+    if mismatch {
+        ui.label(
+            RichText::new("⚠ This computer's identity has changed!")
+                .color(ERROR)
+                .strong(),
+        );
+        ui.label(
+            "Someone may be intercepting the connection, or TideDesk was \
+             reinstalled on it. Only continue if you are sure.",
+        );
+    } else {
+        ui.label(format!("First connection to {}.", probe.address));
+        ui.label("Check that this fingerprint matches the one in the host window:");
+    }
+    ui.add_space(4.0);
+    ui.label(RichText::new(&probe.fingerprint).monospace());
+    ui.add_space(8.0);
+    let mut decision = None;
+    ui.horizontal(|ui| {
+        let label = if mismatch {
+            "Trust new identity"
+        } else {
+            "It matches — connect"
+        };
+        if ui.button(label).clicked() {
+            decision = Some(true);
+        }
+        if ui.button("Cancel").clicked() {
+            decision = Some(false);
+        }
+    });
+    decision
 }
 
 impl egui_software_backend::App for Launcher {
@@ -628,9 +839,11 @@ impl egui_software_backend::App for Launcher {
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
             ui.add_space(4.0);
-            if let Phase::Confirm(probe, target) = &self.phase {
-                let (probe, target) = (probe.clone(), target.clone());
-                self.confirm_view(ui, probe, target);
+            if matches!(
+                self.phase,
+                Phase::Confirm(..) | Phase::ConfirmSession { .. }
+            ) {
+                self.confirm_view(ui);
             } else if self.editor.is_some() {
                 self.editor_view(ui);
             } else {

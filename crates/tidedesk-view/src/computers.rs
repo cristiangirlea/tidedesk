@@ -16,6 +16,9 @@ pub struct Computer {
     pub address: String,
     #[serde(default = "yes")]
     pub sound: bool,
+    /// Reached over the internet through a path the host opens.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub internet: bool,
     /// DPAPI-encrypted access code, hex encoded.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     protected_code: Option<String>,
@@ -25,12 +28,17 @@ fn yes() -> bool {
     true
 }
 
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 impl Computer {
     pub fn new(name: String, address: String, sound: bool) -> Self {
         Self {
             name,
             address,
             sound,
+            internet: false,
             protected_code: None,
         }
     }
@@ -186,6 +194,41 @@ mod tests {
     fn addresses_compare_without_default_port() {
         assert!(same_address("My-PC", "my-pc:47800"));
         assert!(!same_address("my-pc:5000", "my-pc"));
+    }
+
+    #[test]
+    fn same_address_still_ignores_default_port() {
+        assert!(same_address("203.0.113.5:40000", " 203.0.113.5:40000"));
+        assert!(same_address("203.0.113.5", "203.0.113.5:47800"));
+        assert!(!same_address("203.0.113.5:40000", "203.0.113.5:40001"));
+    }
+
+    #[test]
+    fn computers_round_trip_keeps_internet_flag_default_false() {
+        // Saved before the flag existed.
+        let old: AddressBook = toml::from_str(
+            "[[computer]]
+name = \"Office\"
+address = \"10.0.0.5\"
+",
+        )
+        .unwrap();
+        assert!(!old.computers[0].internet);
+
+        let mut far = Computer::new("Mum".into(), "203.0.113.5:40000".into(), true);
+        far.internet = true;
+        let book = AddressBook {
+            computers: vec![far, old.computers[0].clone()],
+        };
+        let text = toml::to_string_pretty(&book).unwrap();
+        assert_eq!(
+            text.matches("internet").count(),
+            1,
+            "false is not written:
+{text}"
+        );
+        let back: AddressBook = toml::from_str(&text).unwrap();
+        assert_eq!(back.computers, book.computers);
     }
 
     #[test]
