@@ -73,7 +73,8 @@ pub struct ViewerSettings {
     pub clipboard_shortcut: Shortcut,
     pub mouse_shortcut: Shortcut,
     pub game_boost_shortcut: Shortcut,
-    /// `host[:port]` of the rendezvous service used to connect by device ID.
+    /// `host[:port]` of the rendezvous service used to connect by device ID;
+    /// empty means TideDesk's own.
     pub rendezvous_server: String,
 }
 
@@ -219,12 +220,12 @@ impl Editor {
         ui.label("Rendezvous service, for connecting by device ID");
         ui.add(
             egui::TextEdit::singleline(&mut self.config.rendezvous_server)
-                .hint_text("host:port")
+                .hint_text(tidedesk_core::nat::signal::DEFAULT_RENDEZVOUS)
                 .desired_width(240.0),
         );
         ui.small(
-            "Use the service the host registers with. It only introduces the two computers; \
-             sessions run directly between them.",
+            "Leave empty for TideDesk's own service, or name the one the host registers \
+             with. It only introduces the two computers; sessions run directly between them.",
         );
         ui.add_space(8.0);
         if ui.button("Save settings").clicked() {
@@ -292,7 +293,7 @@ mod tests {
         assert!(ViewerSettings::default().mouse);
         assert_eq!(
             config.rendezvous_server, "",
-            "no rendezvous service unless one is set"
+            "empty means TideDesk's own service; the default is not saved"
         );
         config.validate().unwrap();
         let back: ViewerSettings = toml::from_str(&toml::to_string(&config).unwrap()).unwrap();

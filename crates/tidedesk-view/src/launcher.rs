@@ -184,17 +184,10 @@ impl Launcher {
         // Internet and device-ID sessions open their path and probe the host
         // themselves, in the session process that owns the path.
         if let Some(id) = connect::parse_device_id(&host) {
-            let service = crate::settings::ViewerSettings::load()
-                .map(|s| s.rendezvous_server.trim().to_string())
+            let saved = crate::settings::ViewerSettings::load()
+                .map(|s| s.rendezvous_server)
                 .unwrap_or_default();
-            if service.is_empty() {
-                return self.fail(
-                    "Connecting by device ID needs a rendezvous service: enter it in Settings \
-                     and press Save settings."
-                        .into(),
-                );
-            }
-            let route = SessionRoute::Rendezvous(service);
+            let route = SessionRoute::Rendezvous(crate::rendezvous_service(None, Some(&saved)));
             return self.start_session(ctx, id.to_string(), &target, route);
         }
         if target.internet {
@@ -553,7 +546,7 @@ impl Launcher {
                     }
                 });
             if connect::parse_device_id(&self.address).is_some() {
-                ui.small("Device ID: found through the rendezvous service set in Settings.");
+                ui.small("Device ID: found through TideDesk's rendezvous service (or the one set in Settings).");
             }
             ui.checkbox(&mut self.sound, "Play sound from the remote computer");
             ui.checkbox(&mut self.internet, INTERNET_OPTION);

@@ -269,6 +269,11 @@ impl Lookup {
     }
 }
 
+/// TideDesk's own rendezvous service: what hosts register with and viewers
+/// ask unless Settings say otherwise. A name, never an address, so the
+/// server can move without a release.
+pub const DEFAULT_RENDEZVOUS: &str = "rendezvous.tidedesk.app:47900";
+
 /// Finds a rendezvous service given as `host[:port]` (IPv4, like all
 /// internet paths here).
 pub async fn resolve_service(name: &str) -> Option<SocketAddr> {

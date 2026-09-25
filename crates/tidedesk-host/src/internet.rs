@@ -67,8 +67,8 @@ impl ExpectedViewer {
 pub fn describe_rendezvous(status: &RendezvousStatus) -> String {
     match status {
         RendezvousStatus::Off => {
-            "To let viewers connect with this ID, set a rendezvous service under Settings, \
-             Internet."
+            "Turned off under Settings, Internet: viewers on other networks cannot connect \
+             with this ID."
                 .into()
         }
         RendezvousStatus::Connecting => "Connecting to the rendezvous service…".into(),
