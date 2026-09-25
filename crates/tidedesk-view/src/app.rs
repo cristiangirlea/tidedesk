@@ -230,6 +230,7 @@ impl App {
         let result = std::env::current_exe().and_then(|exe| {
             let mut command = Command::new(exe);
             command
+                .args(crate::self_prefix())
                 .arg("--settings")
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())

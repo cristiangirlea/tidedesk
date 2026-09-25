@@ -214,7 +214,7 @@ mod windows_impl {
         let name = HSTRING::from(RUN_VALUE);
         if enable {
             let exe = std::env::current_exe()?;
-            let command = format!("\"{}\" --tray", exe.display());
+            let command = super::autostart_command(&exe, crate::self_prefix());
             let wide: Vec<u16> = command.encode_utf16().chain(Some(0)).collect();
             unsafe {
                 RegSetKeyValueW(
@@ -249,5 +249,34 @@ mod fallback {
     }
     pub fn set_autostart(_enable: bool) -> anyhow::Result<()> {
         anyhow::bail!("starting with the system is not supported on this platform yet")
+    }
+}
+
+/// The Run-key command that starts the host hidden in the tray.
+#[cfg(windows)]
+fn autostart_command(exe: &std::path::Path, prefix: &[&str]) -> String {
+    let mut command = format!("\"{}\"", exe.display());
+    for word in prefix {
+        command.push(' ');
+        command.push_str(word);
+    }
+    command.push_str(" --tray");
+    command
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use std::path::Path;
+
+    #[test]
+    fn autostart_command_names_the_mode_inside_the_one_program() {
+        assert_eq!(
+            super::autostart_command(Path::new(r"C:\Apps\tidedesk.exe"), &["host"]),
+            r#""C:\Apps\tidedesk.exe" host --tray"#
+        );
+        assert_eq!(
+            super::autostart_command(Path::new(r"C:\Apps\tidedesk-host.exe"), &[]),
+            r#""C:\Apps\tidedesk-host.exe" --tray"#
+        );
     }
 }

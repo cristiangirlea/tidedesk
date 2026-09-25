@@ -115,7 +115,7 @@ sequenceDiagram
 
 1. The host shows its internet address (Status tab).
 2. The viewer is given that address with "Over the internet" ticked (or
-   `tidedesk-view --internet`). It learns its own address, refuses early when its
+   `tidedesk view --internet`). It learns its own address, refuses early when its
    network uses a symmetric NAT or has the same public IP as the host (same network:
    use the local address), shows its address and starts punching for 2 minutes.
 3. The person at the host types the viewer's address under "Viewer on another

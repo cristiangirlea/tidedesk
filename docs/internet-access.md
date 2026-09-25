@@ -24,7 +24,7 @@ need v0.1.0-alpha.5 or later.
 From a terminal, step 2 is:
 
 ```
-tidedesk-view --internet 203.0.113.5:40000 --code K7QM-3XPA-WZ
+tidedesk view --internet 203.0.113.5:40000 --code K7QM-3XPA-WZ
 ```
 
 `--stun a,b` picks other STUN servers. With `--stats` the viewer logs the network
@@ -72,7 +72,7 @@ given a service address to enter.
    start of the host certificate's fingerprint, and a host that does not match it is
    refused.
 
-From a terminal: `tidedesk-view TD-1A2B-3C4D-5E6F-7A8B --rendezvous host:port --code …`.
+From a terminal: `tidedesk view TD-1A2B-3C4D-5E6F-7A8B --rendezvous host:port --code …`.
 The same limits apply: no symmetric NAT, IPv4 only.
 
 What a service sees while a host is registered: the host's device ID and the public
@@ -91,12 +91,12 @@ is free for personal use. It also works where a direct connection cannot, such a
 mobile data.
 
 1. Install Tailscale on both computers and sign in with the same account.
-2. On the host, run `tidedesk-host`.
+2. On the host, run `tidedesk`.
 3. On the viewer, connect to the host's Tailscale name or `100.x.y.z` address, without
    ticking "Over the internet":
 
    ```
-   tidedesk-view my-desktop --code K7QM-3XPA-WZ
+   tidedesk view my-desktop --code K7QM-3XPA-WZ
    ```
 
 Nothing is exposed to the public internet.
@@ -116,6 +116,6 @@ This exposes TideDesk directly to the internet. The connection is always encrypt
 code is never sent over the network, and repeated wrong codes lock the host out for up to 15
 minutes. Even so:
 
-- Keep the default random access code; rotate it with `tidedesk-host --new-code`.
+- Keep the default random access code; rotate it with `tidedesk host --new-code`.
 - Stop the host when you don't need it.
 - Prefer the other options whenever you can.

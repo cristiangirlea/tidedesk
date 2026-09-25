@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
+    "crates/tidedesk",
     "crates/tidedesk-core",
     "crates/tidedesk-host",
     "crates/tidedesk-view",
@@ -18,6 +19,8 @@ rust-version = "1.88"
 
 [workspace.dependencies]
 tidedesk-core = { path = "crates/tidedesk-core" }
+tidedesk-host = { path = "crates/tidedesk-host" }
+tidedesk-view = { path = "crates/tidedesk-view" }
 tidedesk-rendezvous-proto = { path = "crates/tidedesk-rendezvous-proto" }
 anyhow = "1"
 arboard = { version = "3.6.1", default-features = false }

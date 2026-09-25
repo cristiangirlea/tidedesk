@@ -30,7 +30,8 @@ Keep MSIX_ENABLED=false until the required pre-submission checks below pass.
 2. In Partner Center > Apps and games, reserve the TideDesk app name (subject to
    availability) and choose packaged MSIX distribution, not the MSI/EXE route.
    The manifest names its Start entries TideDesk (the host, the main product) and
-   TideDesk Viewer: reserve the additional name for the same product and verify
+   TideDesk Viewer, both launching tidedesk.exe (the viewer entry with the `view`
+   parameter): reserve the additional name for the same product and verify
    name validation on upload. If a name is unavailable, adjust the manifest before
    submission. Store policy 10.1.1.11 requires that, with several Start entries, the
    main one carries the product name (certification of alpha.4 passed with this as
