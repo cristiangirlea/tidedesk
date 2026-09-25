@@ -248,7 +248,7 @@ fn run(args: Args) -> Result<()> {
     println!("  Device ID:    {}", identity.device_id());
     println!("  Rendezvous:   {rendezvous}");
     println!();
-    println!("  Connect with: tidedesk-view <this-pc-address> --code {code}");
+    println!("  Connect with: tidedesk view <this-pc-address> --code {code}");
     println!();
     runtime.block_on(std::future::pending::<()>());
     Ok(())

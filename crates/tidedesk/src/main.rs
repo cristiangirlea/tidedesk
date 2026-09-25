@@ -2,8 +2,9 @@
 //!
 //! `tidedesk host …` shares this computer (what `tidedesk-host` does) and
 //! `tidedesk view …` connects to another (what `tidedesk-view` does). With no
-//! mode word it shares: that is what the Start menu entry, the startup task
-//! and autostart launch, until one window offers both sides.
+//! mode word it shares (that is what the Start menu entry, the startup task
+//! and autostart launch), unless the first argument names a computer to
+//! connect to. This holds until one window offers both sides.
 
 // Release builds are GUI apps with no console window; each side borrows the
 // terminal it was started from.
@@ -37,6 +38,9 @@ fn dispatch(argv: &[OsString]) -> (Mode, Vec<OsString>) {
         Some("view") => (Mode::View, rest(2)),
         Some("--help" | "-h" | "help") if argv.len() == 2 => (Mode::Usage, Vec::new()),
         Some("--version" | "-V" | "version") if argv.len() == 2 => (Mode::Version, Vec::new()),
+        // The host takes no positional argument, so a bare one names a
+        // computer to connect to: `tidedesk my-pc --code …` works.
+        Some(word) if !word.starts_with('-') => (Mode::View, rest(1)),
         _ => (Mode::Host, rest(1)),
     }
 }
@@ -46,7 +50,7 @@ fn usage() -> String {
         &format!("TideDesk {}", env!("CARGO_PKG_VERSION")),
         "",
         "Usage: tidedesk host [OPTIONS]           share this computer (also with no mode word)",
-        "       tidedesk view [HOST] [OPTIONS]    connect to another computer",
+        "       tidedesk view [HOST] [OPTIONS]    connect to another computer (a bare HOST works too)",
         "",
         "`tidedesk host --help` and `tidedesk view --help` list the options.",
         "",
@@ -95,6 +99,18 @@ mod tests {
         // A side's own help stays its own.
         assert_eq!(
             dispatch(&argv(&["tidedesk", "view", "--help"])).0,
+            Mode::View
+        );
+    }
+
+    #[test]
+    fn a_bare_computer_name_connects_to_it() {
+        assert_eq!(
+            dispatch(&argv(&["tidedesk", "my-pc", "--code", "x"])),
+            (Mode::View, argv(&["tidedesk", "my-pc", "--code", "x"]))
+        );
+        assert_eq!(
+            dispatch(&argv(&["tidedesk", "TD-1A2B-3C4D-5E6F-7A8B"])).0,
             Mode::View
         );
     }

@@ -9,8 +9,9 @@ tidedesk.exe       One program for both sides.
                    shortcut to tidedesk.exe with "view" as its argument): enter
                    the address and access code, or save computers under
                    "My computers".
-tidedesk-host.exe  The same as "tidedesk host" and "tidedesk view". Both remain
-tidedesk-view.exe  in this release for existing shortcuts and autostart entries.
+tidedesk-host.exe  The same as "tidedesk host".   Both remain in this release
+tidedesk-view.exe  The same as "tidedesk view".   for existing shortcuts and
+                                                 autostart entries.
 
 Viewer Settings: text clipboard off by default; mouse control on by default.
 In the focused remote window, Ctrl+Alt+C toggles clipboard, Ctrl+Alt+M toggles mouse
