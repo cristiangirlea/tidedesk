@@ -13,9 +13,8 @@ the new terms do not revoke those permissions. See [licensing](docs/licensing.md
 
 [![Download for Windows](https://img.shields.io/github/v/release/cristiangirlea/tidedesk?include_prereleases&label=Download%20for%20Windows&style=for-the-badge&logo=windows&color=0e8a8a)](https://github.com/cristiangirlea/tidedesk/releases)
 
-Unzip and run `tidedesk.exe` on the computer to reach and `tidedesk view` on the one you're
-at — no installation needed. (`tidedesk-host.exe` and `tidedesk-view.exe` still work in this
-release.)
+Unzip and run `tidedesk.exe` on both computers — no installation needed. (`tidedesk-host.exe`
+and `tidedesk-view.exe` still work in this release.)
 
 > Status: **early alpha**. Windows → Windows works on a local network. Linux, Android and iOS
 > are planned. See the [roadmap](docs/ROADMAP.md).
@@ -57,13 +56,14 @@ implemented video encoder. Hardware encoding and lower 4K memory use remain plan
 
 ## Quick start
 
-**On the computer you want to reach**, run `tidedesk`. A small window shows the
-**access code** and this computer's addresses; TideDesk also sits in the notification area (tray).
-Closing the window keeps it running there — quit from the tray menu.
+**On the computer you want to reach**, run `tidedesk`. The **Share this computer** tab shows
+the **access code**, this computer's addresses and its **device ID**; TideDesk also sits in the
+notification area (tray). Closing the window keeps it sharing there — quit from the tray menu.
 
-**On the computer you are sitting at**, run `tidedesk view`, type the address and access code,
-and press **Connect**. Save computers you use often under **My computers** for one-click
-connections; access codes you choose to remember are encrypted for your Windows account.
+**On the computer you are sitting at**, run `tidedesk`, open **Connect to a computer**, type the
+device ID (or the address on a local network) and the access code, and press **Connect**. Save
+computers you use often under **My computers** for one-click connections; access codes you
+choose to remember are encrypted for your Windows account.
 
 The first time you connect, the viewer shows the host's fingerprint — check it matches the host
 window. The viewer remembers it and refuses to connect if it ever changes.
@@ -78,8 +78,8 @@ sign in to Windows. Settings are saved in `%APPDATA%\TideDesk\host.toml`.
 
 ### Command line
 
-Both sides work from a terminal: `tidedesk host …` and `tidedesk view …` (with no mode
-word, `tidedesk` shares).
+Either side alone, or from a terminal: `tidedesk host …` and `tidedesk view …` (plain
+`tidedesk` opens the window with both).
 
 ```
 tidedesk host --headless

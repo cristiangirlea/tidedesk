@@ -62,7 +62,7 @@ the host window) without anyone typing internet addresses, and a host started wi
 (`rendezvous.tidedesk.app`) introduces the two computers; the path and the session are
 the same direct ones as above, and the service never carries them.
 
-1. **Host:** nothing to set up. The Status tab shows the device ID and "Viewers on
+1. **Host:** nothing to set up. The Share tab shows the device ID and "Viewers on
    other networks can connect with this ID" once it is registered.
 2. **Viewer:** type the device ID where an address goes, and connect. There is no
    fingerprint question: the device ID is the start of the host certificate's

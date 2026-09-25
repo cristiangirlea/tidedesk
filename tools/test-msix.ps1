@@ -57,21 +57,20 @@ try {
         $manifest.Package.Properties.PublisherDisplayName -cne $settings.PublisherDisplayName) {
         throw 'Manifest identity differs from input.'
     }
-    if (@($manifest.Package.Applications.Application).Count -ne 2) { throw 'Expected host and viewer Start entries.' }
-    # Store policy 10.1.1.11: with several Start entries, the main one must carry the product name.
+    # One window, one Start entry, named like the product (Store policy 10.1.1.11 is moot with one).
+    if (@($manifest.Package.Applications.Application).Count -ne 1) { throw 'Expected one Start entry.' }
     $names = @($manifest.SelectNodes("//*[local-name()='VisualElements']") | ForEach-Object { $_.DisplayName })
-    if ($names[0] -cne 'TideDesk' -or $names[1] -cne 'TideDesk Viewer') { throw "Start entries must be 'TideDesk' and 'TideDesk Viewer', not: $($names -join ', ')" }
+    if ($names.Count -ne 1 -or $names[0] -cne 'TideDesk') { throw "The Start entry must be 'TideDesk', not: $($names -join ', ')" }
     $startup = $manifest.SelectSingleNode("//*[local-name()='StartupTask']")
     if ($startup.TaskId -cne 'TideDeskHost' -or $startup.Enabled -cne 'false') { throw 'Startup must be opt-in.' }
-    # One program: both entries and the startup task launch tidedesk.exe; only the viewer entry passes a mode.
+    # One program: the entry and the startup task launch tidedesk.exe plain, which opens the one window.
     $uap10 = 'http://schemas.microsoft.com/appx/manifest/uap/windows10/10'
     $apps = @($manifest.SelectNodes("//*[local-name()='Application']"))
     $startupExtension = $manifest.SelectSingleNode("//*[local-name()='Extension' and @Category='windows.startupTask']")
     foreach ($node in $apps + @($startupExtension)) {
         if ($node.Executable -cne 'tidedesk.exe') { throw "Every entry must launch tidedesk.exe, not $($node.Executable)." }
+        if ($node.HasAttribute('Parameters', $uap10)) { throw 'tidedesk.exe is launched with no mode word.' }
     }
-    if ($apps[0].HasAttribute('Parameters', $uap10)) { throw 'The main entry launches tidedesk.exe with no mode word.' }
-    if ($apps[1].GetAttribute('Parameters', $uap10) -cne 'view') { throw 'The viewer entry must pass the view mode.' }
     if (-not $archive.GetEntry('Assets/Square44x44Logo.png')) { throw 'Missing tile asset.' }
     foreach ($notice in @(
         'licenses/third-party/INDEX.txt',

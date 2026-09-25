@@ -7,11 +7,11 @@ mod child;
 mod computers;
 mod connect;
 mod icon;
-mod launcher;
+pub mod launcher;
 mod layout;
 mod playback;
 mod pointer;
-mod settings;
+pub mod settings;
 mod stream;
 mod window_placement;
 
@@ -207,10 +207,21 @@ pub fn self_prefix() -> &'static [&'static str] {
     SELF_PREFIX.get().copied().unwrap_or(&[])
 }
 
+/// Tells the viewer how this program launches itself (see [`self_prefix`]);
+/// the one program calls it before opening its window.
+pub fn set_self_prefix(prefix: &'static [&'static str]) {
+    let _ = SELF_PREFIX.set(prefix);
+}
+
+/// The window icon, for the one program's window.
+pub fn window_icon() -> std::sync::Arc<egui::IconData> {
+    icon::egui_icon()
+}
+
 /// Runs the viewer with a command line (`program` names it in usage text).
 /// Exits the process on failure.
 pub fn main(program: &str, argv: Vec<OsString>, self_prefix: &'static [&'static str]) {
-    let _ = SELF_PREFIX.set(self_prefix);
+    set_self_prefix(self_prefix);
     attach_console();
     tracing_subscriber::fmt().with_target(false).init();
     if let Err(e) = run(program, argv) {

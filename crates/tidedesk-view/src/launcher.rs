@@ -104,7 +104,7 @@ struct Editor {
     error: Option<String>,
 }
 
-struct Launcher {
+pub struct Launcher {
     // Quick connect.
     address: String,
     code: String,
@@ -132,24 +132,8 @@ pub fn run() -> Result<()> {
         .with_icon(icon::egui_icon())
         .with_inner_size([460.0, 580.0])
         .with_min_inner_size([380.0, 420.0]);
-    egui_software_backend::run_app_with_software_backend(config, |_ctx| Launcher {
-        address: String::new(),
-        code: String::new(),
-        sound: true,
-        internet: false,
-        focus_code: false,
-        book: AddressBook::load(),
-        recent: load_recent(),
-        editor: None,
-        pending_delete: None,
-        filter: String::new(),
-        phase: Phase::Idle,
-        message: None,
-        inbox: Arc::default(),
-        show_settings: false,
-        settings_editor: crate::settings::Editor::default(),
-    })
-    .map_err(|e| anyhow!("cannot open the viewer window: {e}"))
+    egui_software_backend::run_app_with_software_backend(config, |_ctx| Launcher::new())
+        .map_err(|e| anyhow!("cannot open the viewer window: {e}"))
 }
 
 fn load_recent() -> Vec<String> {
@@ -160,6 +144,53 @@ fn load_recent() -> Vec<String> {
 }
 
 impl Launcher {
+    /// The connect side of a window: quick connect, saved computers and the
+    /// steps of a session being opened.
+    pub fn new() -> Self {
+        Self {
+            address: String::new(),
+            code: String::new(),
+            sound: true,
+            internet: false,
+            focus_code: false,
+            book: AddressBook::load(),
+            recent: load_recent(),
+            editor: None,
+            pending_delete: None,
+            filter: String::new(),
+            phase: Phase::Idle,
+            message: None,
+            inbox: Arc::default(),
+            show_settings: false,
+            settings_editor: crate::settings::Editor::default(),
+        }
+    }
+
+    /// Draws the connect side into `ui`.
+    pub fn ui_in(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
+        self.handle_updates(&ctx);
+        egui::Window::new("Session controls")
+            .open(&mut self.show_settings)
+            .resizable(true)
+            .default_width(440.0)
+            .show(&ctx, |ui| self.settings_editor.ui(ui));
+
+        egui::CentralPanel::default().show_inside(ui, |ui| {
+            ui.add_space(4.0);
+            if matches!(
+                self.phase,
+                Phase::Confirm(..) | Phase::ConfirmSession { .. }
+            ) {
+                self.confirm_view(ui);
+            } else if self.editor.is_some() {
+                self.editor_view(ui);
+            } else {
+                self.main_view(ui);
+            }
+        });
+    }
+
     fn post(inbox: &Arc<Mutex<Vec<Update>>>, ctx: &egui::Context, update: Update) {
         inbox.lock().unwrap().push(update);
         ctx.request_repaint();
@@ -868,29 +899,15 @@ fn identity_prompt(ui: &mut egui::Ui, probe: &Probe) -> Option<bool> {
     decision
 }
 
+impl Default for Launcher {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl egui_software_backend::App for Launcher {
     fn ui(&mut self, ui: &mut egui::Ui, _backend: &mut SoftwareBackend) {
-        let ctx = ui.ctx().clone();
-        self.handle_updates(&ctx);
-        egui::Window::new("Session controls")
-            .open(&mut self.show_settings)
-            .resizable(true)
-            .default_width(440.0)
-            .show(&ctx, |ui| self.settings_editor.ui(ui));
-
-        egui::CentralPanel::default().show_inside(ui, |ui| {
-            ui.add_space(4.0);
-            if matches!(
-                self.phase,
-                Phase::Confirm(..) | Phase::ConfirmSession { .. }
-            ) {
-                self.confirm_view(ui);
-            } else if self.editor.is_some() {
-                self.editor_view(ui);
-            } else {
-                self.main_view(ui);
-            }
-        });
+        self.ui_in(ui);
     }
 }
 

@@ -83,7 +83,7 @@ $notes = @(
     '',
     '**Experimental alpha — not a stable release.** Game Boost is opt-in and off by default. Real-world two-computer gameplay and end-to-end latency validation are still pending.',
     '',
-    'New in this build: one program. tidedesk.exe is both sides: `tidedesk host` shares this computer and `tidedesk view` connects to another; started with no mode word, it shares. tidedesk-host.exe and tidedesk-view.exe remain in this release for existing shortcuts and autostart entries and do the same as the two modes.',
+    'New in this build: one program, one window. tidedesk.exe opens a window with "Share this computer", "Connect to a computer" and "Settings", and the Start menu has a single TideDesk entry. `tidedesk host` and `tidedesk view` still run either side alone (`tidedesk host --headless` for servers). tidedesk-host.exe and tidedesk-view.exe remain in this release for existing shortcuts and autostart entries.',
     '',
     'New in this build: experimental direct internet connections, computer to computer, with no relay. The host shows its internet address, learned from public STUN servers (configurable in Host Settings, Internet). In the viewer, tick "Over the internet", connect to that address, and give the viewer''s address to the person at the host, who types it under "Viewer on another network" and presses Open. Both computers then open a path through their routers and the session runs directly between them. Symmetric NAT, common on mobile data, cannot be traversed: use a VPN such as Tailscale there. Hosts with a forwarded port connect without the manual step.',
     '',
