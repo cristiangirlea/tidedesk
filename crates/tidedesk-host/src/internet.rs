@@ -71,7 +71,7 @@ pub fn describe_rendezvous(status: &RendezvousStatus) -> String {
              with this ID."
                 .into()
         }
-        RendezvousStatus::Connecting => "Connecting to the rendezvous service…".into(),
+        RendezvousStatus::Connecting => "Connecting to TideDesk's service…".into(),
         RendezvousStatus::Registered {
             nat: NatKind::Symmetric,
             ..
@@ -81,7 +81,9 @@ pub fn describe_rendezvous(status: &RendezvousStatus) -> String {
         RendezvousStatus::Registered { .. } => {
             "Viewers on other networks can connect with this ID.".into()
         }
-        RendezvousStatus::Unreachable(reason) => format!("Rendezvous unavailable: {reason}"),
+        RendezvousStatus::Unreachable(reason) => {
+            format!("Connection service unavailable: {reason}")
+        }
     }
 }
 

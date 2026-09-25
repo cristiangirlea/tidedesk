@@ -469,7 +469,7 @@ impl HostApp {
         )
         .on_hover_text(
             "Registers this computer's device ID and public address with TideDesk's \
-             rendezvous service (or the one under Advanced), which introduces viewers \
+             connection service (or the one under Advanced), which introduces viewers \
              and never carries a session.",
         );
         egui::CollapsingHeader::new("Advanced")

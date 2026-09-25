@@ -166,6 +166,12 @@ impl Launcher {
         }
     }
 
+    /// Whether the settings button was pressed since the last call. The one
+    /// window shows its Settings tab instead of the floating window.
+    pub fn settings_requested(&mut self) -> bool {
+        std::mem::take(&mut self.show_settings)
+    }
+
     /// Draws the connect side into `ui`.
     pub fn ui_in(&mut self, ui: &mut egui::Ui) {
         let ctx = ui.ctx().clone();
@@ -577,7 +583,7 @@ impl Launcher {
                     }
                 });
             if connect::parse_device_id(&self.address).is_some() {
-                ui.small("Device ID: found through TideDesk's rendezvous service (or the one set in Settings).");
+                ui.small("Device ID: found through TideDesk's connection service (or the one under Settings, Advanced).");
             }
             ui.checkbox(&mut self.sound, "Play sound from the remote computer");
             ui.checkbox(&mut self.internet, INTERNET_OPTION);

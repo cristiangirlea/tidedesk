@@ -63,7 +63,9 @@ pub fn run(hidden: bool) -> Result<()> {
         }
         Err(e) => {
             tracing::warn!("sharing could not start: {e:#}");
-            (Err(format!("{e:#}")), None, hidden, true)
+            // No tray icon without sharing, so never start hidden: the window
+            // would be unreachable.
+            (Err(format!("{e:#}")), None, false, true)
         }
     };
     let mut config = SoftwareBackendAppConfiguration::new();
@@ -135,7 +137,13 @@ impl egui_software_backend::App for Shell {
             Tab::Share => {
                 egui::ScrollArea::vertical().show(ui, |ui| self.share_tab(ui));
             }
-            Tab::Connect => self.launcher.ui_in(ui),
+            Tab::Connect => {
+                self.launcher.ui_in(ui);
+                if self.launcher.settings_requested() {
+                    self.viewer_settings = Editor::default();
+                    self.tab = Tab::Settings;
+                }
+            }
             Tab::Settings => {
                 egui::ScrollArea::vertical().show(ui, |ui| self.settings_tab(ui));
             }
