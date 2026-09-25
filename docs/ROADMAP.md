@@ -59,11 +59,10 @@ Every session runs directly between the two computers; TideDesk never relays.
 
 ### Experimental: connect by device ID
 
-- A rendezvous service lets a viewer reach a host by a stable device ID instead of
-  both people typing addresses, headless hosts included. It only introduces the two
-  computers and never carries session data; direct paths only, no relay. Off until a
-  service is configured; TideDesk's own service is being set up and will become the
-  default.
+- A viewer reaches a host by its stable device ID instead of both people typing
+  addresses, headless hosts included. TideDesk's own rendezvous service introduces the
+  two computers by default (changeable or off in Settings) and never carries session
+  data; direct paths only, no relay.
 
 ## Next: one app
 

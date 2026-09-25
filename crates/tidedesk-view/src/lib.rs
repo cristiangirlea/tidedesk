@@ -24,6 +24,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 use anyhow::{Context, Result, bail};
 use clap::{CommandFactory, FromArgMatches, Parser};
 use tidedesk_core::identity::{KnownHosts, PinStatus};
+use tidedesk_core::nat::signal::DEFAULT_RENDEZVOUS;
 use tidedesk_core::paths;
 use winit::event_loop::{EventLoop, EventLoopProxy};
 
@@ -67,7 +68,8 @@ struct Args {
     internet: bool,
 
     /// Rendezvous service for connecting by device ID (HOST is then
-    /// TD-XXXX-XXXX-XXXX-XXXX) [default: the one in Viewer Settings].
+    /// TD-XXXX-XXXX-XXXX-XXXX) [default: the one in Viewer Settings, else
+    /// TideDesk's own].
     #[arg(long, value_name = "HOST:PORT")]
     rendezvous: Option<String>,
 
@@ -86,6 +88,18 @@ impl Notify for ProxyNotify {
     fn notify(&self, event: UiEvent) {
         let _ = self.0.lock().unwrap().send_event(event);
     }
+}
+
+/// The rendezvous service for a device-ID connection: the `--rendezvous`
+/// argument, else the one saved in Viewer Settings, else TideDesk's own.
+pub(crate) fn rendezvous_service(argument: Option<&str>, saved: Option<&str>) -> String {
+    argument
+        .into_iter()
+        .chain(saved)
+        .map(str::trim)
+        .find(|s| !s.is_empty())
+        .unwrap_or(DEFAULT_RENDEZVOUS)
+        .to_string()
 }
 
 /// Shows how opening an internet path goes, on the console.
@@ -233,21 +247,10 @@ fn run(program: &str, argv: Vec<OsString>) -> Result<()> {
         if args.internet {
             bail!("a device ID is found through a rendezvous service; leave out --internet");
         }
-        let saved = || {
-            settings::ViewerSettings::load()
-                .ok()
-                .map(|s| s.rendezvous_server)
-        };
-        let service = args
-            .rendezvous
-            .clone()
-            .or_else(saved)
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .context(
-                "connecting by device ID needs a rendezvous service: pass --rendezvous \
-                 host:port or set one in Viewer Settings",
-            )?;
+        let saved = settings::ViewerSettings::load()
+            .ok()
+            .map(|s| s.rendezvous_server);
+        let service = rendezvous_service(args.rendezvous.as_deref(), saved.as_deref());
         connect::Route::Rendezvous { service }
     } else if args.internet {
         connect::parse_internet_host(&host)?;
@@ -412,4 +415,29 @@ fn run(program: &str, argv: Vec<OsString>) -> Result<()> {
         eprintln!("disconnected: {msg}");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use tidedesk_core::nat::signal::DEFAULT_RENDEZVOUS;
+
+    use super::rendezvous_service;
+
+    #[test]
+    fn device_id_connections_use_tidedesks_service_unless_told_otherwise() {
+        assert_eq!(rendezvous_service(None, None), DEFAULT_RENDEZVOUS);
+        assert_eq!(rendezvous_service(None, Some("  ")), DEFAULT_RENDEZVOUS);
+        assert_eq!(
+            rendezvous_service(None, Some(" rv.example:47900 ")),
+            "rv.example:47900"
+        );
+        assert_eq!(
+            rendezvous_service(Some("other.example"), Some("rv.example:47900")),
+            "other.example"
+        );
+        assert_eq!(
+            rendezvous_service(Some(" "), Some("rv.example")),
+            "rv.example"
+        );
+    }
 }

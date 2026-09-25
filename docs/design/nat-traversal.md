@@ -169,7 +169,8 @@ inbound rule.
 
 A small UDP service remembers each registered host's public address under a stable
 **device ID**: the first 64 bits of the SHA-256 of the host's certificate, shown as
-`TD-XXXX-XXXX-XXXX-XXXX`. It is off until a service is configured on both sides. The
+`TD-XXXX-XXXX-XXXX-XXXX`. TideDesk's own service, `rendezvous.tidedesk.app`, is the
+default on both sides; Settings can name another or turn registration off. The
 wire format is the `tidedesk-rendezvous-proto` crate here. The service itself is not
 public; the host and viewer tests that need one are ignored here and run in the
 service's own CI against it (`TIDEDESK_TEST_SERVICE=ip:port`).

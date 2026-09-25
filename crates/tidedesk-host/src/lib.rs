@@ -63,9 +63,14 @@ struct Args {
     no_audio: bool,
 
     /// Rendezvous service to register this host's device ID with, so viewers
-    /// on other networks can connect by ID [default: the one in Settings].
-    #[arg(long, value_name = "HOST:PORT")]
+    /// on other networks can connect by ID [default: the one in Settings,
+    /// else TideDesk's own].
+    #[arg(long, value_name = "HOST:PORT", conflicts_with = "no_rendezvous")]
     rendezvous: Option<String>,
+
+    /// Do not register the device ID with any rendezvous service.
+    #[arg(long)]
+    no_rendezvous: bool,
 
     /// Log frame rate, bitrate and encode time every two seconds.
     #[arg(long)]
@@ -199,6 +204,7 @@ fn run(args: Args) -> Result<()> {
         agent.start_refresh(config.effective_stun_servers(), STUN_REFRESH);
     }
     let rendezvous = match args.rendezvous.as_deref().map(str::trim) {
+        _ if args.no_rendezvous => None,
         Some(service) => Some(service).filter(|s| !s.is_empty()),
         None => config.rendezvous_service(),
     };

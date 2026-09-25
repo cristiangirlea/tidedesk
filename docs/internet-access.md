@@ -56,24 +56,25 @@ For how it works, see the [design notes](design/nat-traversal.md).
 
 ### By device ID (experimental)
 
-With a rendezvous service, a viewer can reach a host by its **device ID**
-(`TD-1A2B-3C4D-5E6F-7A8B`, shown in the host window) without anyone typing internet
-addresses, and a host started with `--headless` can be reached too. The service only
-introduces the two computers; the path and the session are the same direct ones as
-above. TideDesk's own service is being set up and will be built into a coming
-release; until then, leave the setting empty (the feature stays off) unless you were
-given a service address to enter.
+A viewer can reach a host by its **device ID** (`TD-1A2B-3C4D-5E6F-7A8B`, shown in
+the host window) without anyone typing internet addresses, and a host started with
+`--headless` can be reached too. TideDesk's own rendezvous service
+(`rendezvous.tidedesk.app`) introduces the two computers; the path and the session are
+the same direct ones as above, and the service never carries them.
 
-1. **Host:** set the service under Settings, Internet, "Rendezvous service" (or start
-   it with `--rendezvous host:port`). The Status tab then shows the device ID as
-   registered.
-2. **Viewer:** set the same service in Viewer Settings, type the device ID where an
-   address goes, and connect. There is no fingerprint question: the device ID is the
-   start of the host certificate's fingerprint, and a host that does not match it is
-   refused.
+1. **Host:** nothing to set up. The Status tab shows the device ID and "Viewers on
+   other networks can connect with this ID" once it is registered.
+2. **Viewer:** type the device ID where an address goes, and connect. There is no
+   fingerprint question: the device ID is the start of the host certificate's
+   fingerprint, and a host that does not match it is refused.
 
-From a terminal: `tidedesk view TD-1A2B-3C4D-5E6F-7A8B --rendezvous host:port --code …`.
-The same limits apply: no symmetric NAT, IPv4 only.
+From a terminal: `tidedesk view TD-1A2B-3C4D-5E6F-7A8B --code …`. The same limits
+apply: no symmetric NAT, IPv4 only.
+
+To use another service, name it under Settings, Internet on the host (or
+`--rendezvous host:port`) and in Viewer Settings (or `--rendezvous`); to register with
+none, untick the option on the host (`--no-rendezvous` when headless). A viewer only
+contacts the service when it connects by ID.
 
 What a service sees while a host is registered: the host's device ID and the public
 address and port it registered from, and which public address looked up which ID.

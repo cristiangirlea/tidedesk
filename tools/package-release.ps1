@@ -91,7 +91,7 @@ $notes = @(
     '',
     '**Keep host and viewer on the same release.** This build uses protocol v3: it connects to v0.1.0-alpha.3 and later on a local network, but not to the earlier v1/v2 alpha releases. Internet connections need both computers on this release.',
     '',
-    'Also experimental: connect by device ID. With a rendezvous service set in Host Settings and Viewer Settings (TideDesk''s own service is being set up and will become the default), a viewer types the host''s device ID instead of anyone typing internet addresses, and headless hosts can be reached too. The service only introduces the two computers; the session still runs directly between them.',
+    'Also experimental: connect by device ID, now out of the box. A viewer types the host''s device ID instead of anyone typing internet addresses, and headless hosts can be reached too. Hosts register with TideDesk''s rendezvous service (rendezvous.tidedesk.app) unless that is turned off in Host Settings; it only introduces the two computers and never carries the session. What it sees is in the privacy notes of the code signing policy.',
     '',
     'Retained from v0.1.0-alpha.4: no Microsoft Visual C++ Redistributable needed, and third-party license notices in the licenses folder.',
     '',

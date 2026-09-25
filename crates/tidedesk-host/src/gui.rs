@@ -13,6 +13,7 @@ use anyhow::{Result, anyhow};
 use egui::{Color32, RichText};
 use egui_software_backend::{SoftwareBackend, SoftwareBackendAppConfiguration};
 use tidedesk_core::nat::signal::Credentials;
+use tidedesk_core::nat::signal::DEFAULT_RENDEZVOUS;
 use tidedesk_core::nat::stun::{DEFAULT_STUN_SERVERS, STUN_REFRESH};
 use tidedesk_core::nat::{Agent, NatKind, PublicStatus};
 
@@ -450,21 +451,25 @@ impl HostApp {
             }
         });
         ui.small("host:port, separated by commas. Leave empty for the defaults.");
+        ui.checkbox(
+            &mut cfg.rendezvous,
+            "Let viewers on other networks connect by device ID (rendezvous)",
+        )
+        .on_hover_text(
+            "Registers this computer's device ID and public address with the rendezvous \
+             service, which introduces viewers and never carries a session. TideDesk's own \
+             service is used unless another is named below.",
+        );
         ui.horizontal(|ui| {
             ui.label("Rendezvous service");
-            let field = egui::TextEdit::singleline(&mut self.rendezvous_text)
-                .hint_text("host:port (empty: off)");
-            if ui.add(field).lost_focus() {
+            let field =
+                egui::TextEdit::singleline(&mut self.rendezvous_text).hint_text(DEFAULT_RENDEZVOUS);
+            if ui.add_enabled(cfg.rendezvous, field).lost_focus() {
                 cfg.rendezvous_server = self.rendezvous_text.trim().to_string();
                 self.rendezvous_text = cfg.rendezvous_server.clone();
             }
-        })
-        .response
-        .on_hover_text(
-            "Lets viewers on other networks connect with this computer's device ID. The \
-             service learns the ID and this computer's public address, introduces viewers \
-             and never carries a session.",
-        );
+        });
+        ui.small("host:port. Leave empty for TideDesk's own service.");
 
         if *cfg != before {
             {
@@ -479,7 +484,9 @@ impl HostApp {
             if cfg.show_in_taskbar != before.show_in_taskbar {
                 platform::set_taskbar_button(WINDOW_TITLE, cfg.show_in_taskbar);
             }
-            if cfg.rendezvous_server != before.rendezvous_server {
+            if cfg.rendezvous != before.rendezvous
+                || cfg.rendezvous_server != before.rendezvous_server
+            {
                 match cfg.rendezvous_service() {
                     Some(service) => {
                         let credentials = self.info.identity.clone();

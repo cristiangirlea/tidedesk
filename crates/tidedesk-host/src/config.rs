@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use tidedesk_core::nat::signal::DEFAULT_RENDEZVOUS;
 use tidedesk_core::nat::stun::DEFAULT_STUN_SERVERS;
 use tidedesk_core::{DEFAULT_PORT, paths};
 
@@ -27,8 +28,10 @@ pub struct HostConfig {
     pub discover_public_address: bool,
     /// `host[:port]` of the STUN servers to ask; empty means the defaults.
     pub stun_servers: Vec<String>,
-    /// `host[:port]` of a rendezvous service to register this host's device
-    /// ID with; empty means none.
+    /// Register this computer's device ID with a rendezvous service, so
+    /// viewers on other networks can connect by ID.
+    pub rendezvous: bool,
+    /// `host[:port]` of that service; empty means TideDesk's own.
     pub rendezvous_server: String,
 }
 
@@ -46,6 +49,7 @@ impl Default for HostConfig {
             start_in_tray: false,
             discover_public_address: true,
             stun_servers: Vec::new(),
+            rendezvous: true,
             rendezvous_server: String::new(),
         }
     }
@@ -89,9 +93,16 @@ impl HostConfig {
         self
     }
 
-    /// The rendezvous service to register with, if one is set.
+    /// The rendezvous service to register with: the configured one, else
+    /// TideDesk's own (not saved, so a later version can change it); none
+    /// when turned off.
     pub fn rendezvous_service(&self) -> Option<&str> {
-        Some(self.rendezvous_server.trim()).filter(|s| !s.is_empty())
+        if !self.rendezvous {
+            return None;
+        }
+        Some(self.rendezvous_server.trim())
+            .filter(|s| !s.is_empty())
+            .or(Some(DEFAULT_RENDEZVOUS))
     }
 
     /// The STUN servers to ask: the configured ones, else the defaults. The
@@ -155,16 +166,23 @@ mod tests {
     }
 
     #[test]
-    fn rendezvous_is_off_until_a_service_is_named() {
+    fn rendezvous_uses_tidedesks_service_unless_changed_or_turned_off() {
         let cfg = HostConfig::default();
-        assert_eq!(cfg.rendezvous_service(), None);
+        assert!(cfg.rendezvous);
+        assert_eq!(cfg.rendezvous_service(), Some(DEFAULT_RENDEZVOUS));
+        assert!(cfg.rendezvous_server.is_empty(), "the default is not saved");
         let blank = HostConfig {
             rendezvous_server: "   ".into(),
             ..Default::default()
         };
-        assert_eq!(blank.rendezvous_service(), None);
+        assert_eq!(blank.rendezvous_service(), Some(DEFAULT_RENDEZVOUS));
         let set: HostConfig = toml::from_str("rendezvous_server = \" rv.example.org \"").unwrap();
         assert_eq!(set.rendezvous_service(), Some("rv.example.org"));
+        let off: HostConfig = toml::from_str("rendezvous = false").unwrap();
+        assert_eq!(off.rendezvous_service(), None);
+        // A host.toml from before the setting existed keeps its named service.
+        let old: HostConfig = toml::from_str("rendezvous_server = \"rv.example.org\"").unwrap();
+        assert_eq!(old.rendezvous_service(), Some("rv.example.org"));
     }
 
     #[test]
