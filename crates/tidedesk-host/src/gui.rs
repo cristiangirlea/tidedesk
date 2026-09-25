@@ -28,6 +28,7 @@ use crate::{icon, platform};
 pub const WINDOW_TITLE: &str = "TideDesk Host";
 
 const ERROR_RED: Color32 = Color32::from_rgb(220, 60, 50);
+const WARNING_AMBER: Color32 = Color32::from_rgb(180, 110, 0);
 
 pub struct HostInfo {
     pub state: Arc<HostState>,
@@ -261,7 +262,7 @@ impl HostApp {
                  install TideDesk or to read out this code, stop: they may be trying to take \
                  control of your computer.",
             )
-            .color(Color32::from_rgb(180, 110, 0)),
+            .color(WARNING_AMBER),
         );
         ui.add_space(6.0);
 
