@@ -9,7 +9,8 @@ Both computers learn their internet address, and each person types in the other'
 The two computers then open a path through their routers and connect directly. Both
 need v0.1.0-alpha.5 or later.
 
-1. **Host:** start TideDesk Host. The Status tab shows its **Internet address**, for
+1. **Host:** start TideDesk Host (the **TideDesk** entry in the Start menu for Store
+   installs). The Status tab shows its **Internet address**, for
    example `203.0.113.5:40000`. Send it and the access code to the person at the
    viewer.
 2. **Viewer:** in the connect window, type the host's internet address and the access

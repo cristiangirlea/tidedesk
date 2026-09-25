@@ -17,12 +17,12 @@
   </Dependencies>
   <Applications>
     <Application Id="Host" Executable="tidedesk-host.exe" EntryPoint="Windows.FullTrustApplication">
-      <uap:VisualElements DisplayName="TideDesk Host" Description="Share this computer's screen and audio."
+      <uap:VisualElements DisplayName="TideDesk" Description="Share this computer's screen and audio."
                           Square150x150Logo="Assets\Square150x150Logo.png"
                           Square44x44Logo="Assets\Square44x44Logo.png" BackgroundColor="transparent" />
       <Extensions>
         <uap5:Extension Category="windows.startupTask" Executable="tidedesk-host.exe" EntryPoint="Windows.FullTrustApplication">
-          <uap5:StartupTask TaskId="TideDeskHost" Enabled="false" DisplayName="TideDesk Host" />
+          <uap5:StartupTask TaskId="TideDeskHost" Enabled="false" DisplayName="TideDesk" />
         </uap5:Extension>
       </Extensions>
     </Application>
