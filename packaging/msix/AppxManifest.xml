@@ -2,6 +2,7 @@
 <Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
          xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
          xmlns:uap5="http://schemas.microsoft.com/appx/manifest/uap/windows10/5"
+         xmlns:uap10="http://schemas.microsoft.com/appx/manifest/uap/windows10/10"
          xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
          IgnorableNamespaces="uap uap5 rescap">
   <Identity Name="@IDENTITY@" Publisher="@PUBLISHER@" Version="@VERSION@" ProcessorArchitecture="x64" />
@@ -16,17 +17,17 @@
     <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.19041.0" MaxVersionTested="10.0.26100.0" />
   </Dependencies>
   <Applications>
-    <Application Id="Host" Executable="tidedesk-host.exe" EntryPoint="Windows.FullTrustApplication">
+    <Application Id="Host" Executable="tidedesk.exe" EntryPoint="Windows.FullTrustApplication">
       <uap:VisualElements DisplayName="TideDesk" Description="Share this computer's screen and audio."
                           Square150x150Logo="Assets\Square150x150Logo.png"
                           Square44x44Logo="Assets\Square44x44Logo.png" BackgroundColor="transparent" />
       <Extensions>
-        <uap5:Extension Category="windows.startupTask" Executable="tidedesk-host.exe" EntryPoint="Windows.FullTrustApplication">
+        <uap5:Extension Category="windows.startupTask" Executable="tidedesk.exe" EntryPoint="Windows.FullTrustApplication">
           <uap5:StartupTask TaskId="TideDeskHost" Enabled="false" DisplayName="TideDesk" />
         </uap5:Extension>
       </Extensions>
     </Application>
-    <Application Id="Viewer" Executable="tidedesk-view.exe" EntryPoint="Windows.FullTrustApplication">
+    <Application Id="Viewer" Executable="tidedesk.exe" uap10:Parameters="view" EntryPoint="Windows.FullTrustApplication">
       <uap:VisualElements DisplayName="TideDesk Viewer" Description="Connect to another Windows computer."
                           Square150x150Logo="Assets\Square150x150Logo.png"
                           Square44x44Logo="Assets\Square44x44Logo.png" BackgroundColor="transparent" />

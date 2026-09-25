@@ -13,8 +13,9 @@ the new terms do not revoke those permissions. See [licensing](docs/licensing.md
 
 [![Download for Windows](https://img.shields.io/github/v/release/cristiangirlea/tidedesk?include_prereleases&label=Download%20for%20Windows&style=for-the-badge&logo=windows&color=0e8a8a)](https://github.com/cristiangirlea/tidedesk/releases)
 
-Unzip and run `tidedesk-host.exe` on the computer to reach and `tidedesk-view.exe` on the one
-you're at — no installation needed.
+Unzip and run `tidedesk.exe` on the computer to reach and `tidedesk view` on the one you're
+at — no installation needed. (`tidedesk-host.exe` and `tidedesk-view.exe` still work in this
+release.)
 
 > Status: **early alpha**. Windows → Windows works on a local network. Linux, Android and iOS
 > are planned. See the [roadmap](docs/ROADMAP.md).
@@ -56,18 +57,18 @@ implemented video encoder. Hardware encoding and lower 4K memory use remain plan
 
 ## Quick start
 
-**On the computer you want to reach**, run `tidedesk-host`. A small window shows the
+**On the computer you want to reach**, run `tidedesk`. A small window shows the
 **access code** and this computer's addresses; TideDesk also sits in the notification area (tray).
 Closing the window keeps it running there — quit from the tray menu.
 
-**On the computer you are sitting at**, run `tidedesk-view`, type the address and access code,
+**On the computer you are sitting at**, run `tidedesk view`, type the address and access code,
 and press **Connect**. Save computers you use often under **My computers** for one-click
 connections; access codes you choose to remember are encrypted for your Windows account.
 
 The first time you connect, the viewer shows the host's fingerprint — check it matches the host
 window. The viewer remembers it and refuses to connect if it ever changes.
 
-Windows Firewall will ask to allow `tidedesk-host` the first time; allow it on private networks.
+Windows Firewall will ask to allow `tidedesk` the first time; allow it on private networks.
 
 ### Host settings
 
@@ -77,11 +78,12 @@ sign in to Windows. Settings are saved in `%APPDATA%\TideDesk\host.toml`.
 
 ### Command line
 
-Both programs still work from a terminal:
+Both sides work from a terminal: `tidedesk host …` and `tidedesk view …` (with no mode
+word, `tidedesk` shares).
 
 ```
-tidedesk-host --headless
-tidedesk-view 192.168.1.50 --code K7QM-3XPA-WZ
+tidedesk host --headless
+tidedesk view 192.168.1.50 --code K7QM-3XPA-WZ
 ```
 
 | Host | |
@@ -169,12 +171,14 @@ Requirements (Windows):
 cargo build --release --workspace --locked
 ```
 
-Binaries land in `target/release/`: `tidedesk-host.exe` and `tidedesk-view.exe`.
+Binaries land in `target/release/`: `tidedesk.exe` (both sides), plus `tidedesk-host.exe`
+and `tidedesk-view.exe`, kept for one more release.
 
 ## Project layout
 
 | Crate | Purpose |
 |---|---|
+| `tidedesk` | The one program: `tidedesk host …` and `tidedesk view …` |
 | `tidedesk-core` | Platform-independent: wire protocol, auth, identity pinning, QUIC setup, audio helpers |
 | `tidedesk-host` | Screen capture, H.264 encoding, audio capture, input injection |
 | `tidedesk-view` | Window, H.264 decoding, audio playback, input capture |

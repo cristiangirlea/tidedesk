@@ -65,6 +65,12 @@ Every session runs directly between the two computers; TideDesk never relays.
   service is configured; TideDesk's own service is being set up and will become the
   default.
 
+## Next: one app
+
+- One program, `tidedesk.exe`, for both sides (`tidedesk host`, `tidedesk view`), then one
+  window with a Share tab and a Connect tab, so there is one thing to install on both
+  computers. Linux follows (viewer first, then host), then Android and iOS viewers.
+
 ## Next: Game mode — keyboard, mouse and streaming
 
 The first gaming milestone is fast, responsive screen/audio streaming with

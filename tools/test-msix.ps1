@@ -2,7 +2,7 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 $repo = Split-Path $PSScriptRoot -Parent
 $binaryRoot = Join-Path $repo 'target/release'
-$version = [Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $binaryRoot 'tidedesk-host.exe')).ProductVersion
+$version = [Diagnostics.FileVersionInfo]::GetVersionInfo((Join-Path $binaryRoot 'tidedesk.exe')).ProductVersion
 $output = Join-Path $repo ('target/msix-test-' + [guid]::NewGuid().ToString('N'))
 $settings = @{
     Version = $version
@@ -36,7 +36,7 @@ if ((Get-Content -LiteralPath "$package.sha256" -Raw).Trim() -cne "$hash  tidede
 }
 $archive = [IO.Compression.ZipFile]::OpenRead($package)
 try {
-    foreach ($file in @('tidedesk-host.exe', 'tidedesk-view.exe', 'LICENSE')) {
+    foreach ($file in @('tidedesk.exe', 'LICENSE')) {
         $entry = $archive.GetEntry($file)
         if (-not $entry) { throw "Missing $file in MSIX" }
         $stream = $entry.Open()
@@ -63,6 +63,15 @@ try {
     if ($names[0] -cne 'TideDesk' -or $names[1] -cne 'TideDesk Viewer') { throw "Start entries must be 'TideDesk' and 'TideDesk Viewer', not: $($names -join ', ')" }
     $startup = $manifest.SelectSingleNode("//*[local-name()='StartupTask']")
     if ($startup.TaskId -cne 'TideDeskHost' -or $startup.Enabled -cne 'false') { throw 'Startup must be opt-in.' }
+    # One program: both entries and the startup task launch tidedesk.exe; only the viewer entry passes a mode.
+    $uap10 = 'http://schemas.microsoft.com/appx/manifest/uap/windows10/10'
+    $apps = @($manifest.SelectNodes("//*[local-name()='Application']"))
+    $startupExtension = $manifest.SelectSingleNode("//*[local-name()='Extension' and @Category='windows.startupTask']")
+    foreach ($node in $apps + @($startupExtension)) {
+        if ($node.Executable -cne 'tidedesk.exe') { throw "Every entry must launch tidedesk.exe, not $($node.Executable)." }
+    }
+    if ($apps[0].HasAttribute('Parameters', $uap10)) { throw 'The main entry launches tidedesk.exe with no mode word.' }
+    if ($apps[1].GetAttribute('Parameters', $uap10) -cne 'view') { throw 'The viewer entry must pass the view mode.' }
     if (-not $archive.GetEntry('Assets/Square44x44Logo.png')) { throw 'Missing tile asset.' }
     foreach ($notice in @(
         'licenses/third-party/INDEX.txt',

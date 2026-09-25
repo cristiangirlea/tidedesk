@@ -3530,6 +3530,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidedesk"
+version = "0.1.0"
+dependencies = [
+ "embed-resource",
+ "tidedesk-host",
+ "tidedesk-view",
+]
+
+[[package]]
 name = "tidedesk-core"
 version = "0.1.0"
 dependencies = [

@@ -36,6 +36,7 @@ jobs:
         with:
           name: tidedesk-windows-x64
           path: |
+            target/release/tidedesk.exe
             target/release/tidedesk-host.exe
             target/release/tidedesk-view.exe
 

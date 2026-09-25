@@ -24,8 +24,8 @@ v0.1.0-alpha.1.
 
 The archive is tidedesk-VERSION-windows-x64.zip, containing these files at its root:
 
-- tidedesk-host.exe
-- tidedesk-view.exe
+- tidedesk.exe (both sides: `tidedesk host`, `tidedesk view`)
+- tidedesk-host.exe and tidedesk-view.exe (the same two modes; kept for one release)
 - README.txt
 - LICENSE
 - licenses/: earlier-release AGPL text and third-party notices, generated from

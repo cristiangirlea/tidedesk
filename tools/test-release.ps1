@@ -22,7 +22,7 @@ try {
     }
     $metadata = cargo metadata --locked --no-deps --format-version 1 | ConvertFrom-Json
     if ($LASTEXITCODE -ne 0) { throw 'Cargo metadata failed.' }
-    $version = ($metadata.packages | Where-Object name -eq 'tidedesk-host').version
+    $version = ($metadata.packages | Where-Object name -eq 'tidedesk').version
     $settings = ./tools/release-settings.ps1 -Tag "v$version"
     if ($settings.Signing -cne 'false') { throw 'Default must be unsigned.' }
     Assert-Fails { ./tools/release-settings.ps1 -Tag 'invalid' } 'Expected vMAJOR'
@@ -48,7 +48,7 @@ try {
 
     # Exercise actual built executables and extract the final distributable.
     $binaryVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo(
-        (Join-Path $repo 'target/release/tidedesk-host.exe')).ProductVersion
+        (Join-Path $repo 'target/release/tidedesk.exe')).ProductVersion
     $output = Join-Path $repo ("target/release-test-" + [guid]::NewGuid().ToString('N'))
     ./tools/package-release.ps1 -Version $binaryVersion -OutputDirectory $output
     $zipName = "tidedesk-$binaryVersion-windows-x64.zip"
@@ -58,7 +58,7 @@ try {
     if ($checksum -cne "$hash  $zipName") { throw 'ZIP checksum mismatch.' }
     $extract = Join-Path $output 'extracted'
     Expand-Archive -LiteralPath $zip -DestinationPath $extract
-    foreach ($file in @('tidedesk-host.exe', 'tidedesk-view.exe')) {
+    foreach ($file in @('tidedesk.exe', 'tidedesk-host.exe', 'tidedesk-view.exe')) {
         $expected = (Get-FileHash -LiteralPath "target/release/$file").Hash
         $actual = (Get-FileHash -LiteralPath (Join-Path $extract $file)).Hash
         if ($expected -cne $actual) { throw "Archive changed $file." }

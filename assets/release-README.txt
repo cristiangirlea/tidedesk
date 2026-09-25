@@ -2,10 +2,16 @@ TideDesk @VERSION@ (Windows x64)
 Remote access to your own computers. Free for personal, non-commercial use.
 https://github.com/cristiangirlea/tidedesk
 
-tidedesk-host.exe  Run on the computer you want to reach. It shows an access code
-                   and this computer's address, and lives in the tray.
-tidedesk-view.exe  Run on the computer you are sitting at. Enter the address and
-                   access code, or save computers under "My computers".
+tidedesk.exe       One program for both sides.
+                   On the computer you want to reach, run it: it shows an access
+                   code and this computer's address, and lives in the tray.
+                   On the computer you are sitting at, run "tidedesk view" (a
+                   shortcut to tidedesk.exe with "view" as its argument): enter
+                   the address and access code, or save computers under
+                   "My computers".
+tidedesk-host.exe  The same as "tidedesk host".   Both remain in this release
+tidedesk-view.exe  The same as "tidedesk view".   for existing shortcuts and
+                                                 autostart entries.
 
 Viewer Settings: text clipboard off by default; mouse control on by default.
 In the focused remote window, Ctrl+Alt+C toggles clipboard, Ctrl+Alt+M toggles mouse

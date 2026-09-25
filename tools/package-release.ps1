@@ -12,7 +12,7 @@ if ($Version -cnotmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-
     throw 'Invalid release version.'
 }
 $repo = Split-Path $PSScriptRoot -Parent
-$files = @('tidedesk-host.exe', 'tidedesk-view.exe')
+$files = @('tidedesk.exe', 'tidedesk-host.exe', 'tidedesk-view.exe')
 $binaryRoot = (Resolve-Path -LiteralPath $BinaryDirectory).Path
 foreach ($file in $files) {
     $path = Join-Path $binaryRoot $file
@@ -52,7 +52,7 @@ $signingText = if ($Signed) {
 $template = Get-Content -LiteralPath (Join-Path $repo 'assets/release-README.txt') -Raw
 $template.Replace('@VERSION@', $Version).Replace('@SIGNING@', $signingText) |
     Set-Content -LiteralPath (Join-Path $stage 'README.txt') -Encoding utf8NoBOM
-$expected = @('LICENSE', 'README.txt', 'tidedesk-host.exe', 'tidedesk-view.exe')
+$expected = @('LICENSE', 'README.txt', 'tidedesk-host.exe', 'tidedesk-view.exe', 'tidedesk.exe')
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 # CreateFromDirectory writes '/'-separated entry names on both PowerShell editions.
 [IO.Compression.ZipFile]::CreateFromDirectory($stage, $zipPath, [IO.Compression.CompressionLevel]::Optimal, $false)
@@ -77,11 +77,13 @@ $notes = @(
     '',
     'License: TideDesk Personal Use Source License 1.0 (see LICENSE in the ZIP). Business use requires separate written permission. Previously published AGPL releases retain their original permissions.',
     '',
-    "Download $stem and extract it. Run tidedesk-host.exe on the computer to reach and tidedesk-view.exe on the other computer.",
+    "Download $stem and extract it. Run tidedesk.exe on the computer to reach and ``tidedesk view`` on the other computer.",
     '',
     $signingText,
     '',
     '**Experimental alpha — not a stable release.** Game Boost is opt-in and off by default. Real-world two-computer gameplay and end-to-end latency validation are still pending.',
+    '',
+    'New in this build: one program. tidedesk.exe is both sides: `tidedesk host` shares this computer and `tidedesk view` connects to another; started with no mode word, it shares. tidedesk-host.exe and tidedesk-view.exe remain in this release for existing shortcuts and autostart entries and do the same as the two modes.',
     '',
     'New in this build: experimental direct internet connections, computer to computer, with no relay. The host shows its internet address, learned from public STUN servers (configurable in Host Settings, Internet). In the viewer, tick "Over the internet", connect to that address, and give the viewer''s address to the person at the host, who types it under "Viewer on another network" and presses Open. Both computers then open a path through their routers and the session runs directly between them. Symmetric NAT, common on mobile data, cannot be traversed: use a VPN such as Tailscale there. Hosts with a forwarded port connect without the manual step.',
     '',

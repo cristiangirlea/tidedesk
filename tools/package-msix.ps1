@@ -31,7 +31,7 @@ if ([string]::IsNullOrWhiteSpace($PublisherDisplayName) -or $PublisherDisplayNam
 }
 $repo = Split-Path $PSScriptRoot -Parent
 $binaryRoot = (Resolve-Path -LiteralPath $BinaryDirectory).Path
-foreach ($file in @('tidedesk-host.exe', 'tidedesk-view.exe')) {
+foreach ($file in @('tidedesk.exe')) {
     $path = Join-Path $binaryRoot $file
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Missing $file" }
     $info = [Diagnostics.FileVersionInfo]::GetVersionInfo($path)
@@ -58,7 +58,7 @@ foreach ($path in @($stage, $package, "$package.sha256")) {
     if (Test-Path -LiteralPath $path) { throw "Output already exists: $path" }
 }
 New-Item -ItemType Directory -Path (Join-Path $stage 'Assets') -Force | Out-Null
-foreach ($file in @('tidedesk-host.exe', 'tidedesk-view.exe')) {
+foreach ($file in @('tidedesk.exe')) {
     Copy-Item -LiteralPath (Join-Path $binaryRoot $file) -Destination $stage
 }
 Copy-Item -LiteralPath (Join-Path $repo 'LICENSE') -Destination $stage

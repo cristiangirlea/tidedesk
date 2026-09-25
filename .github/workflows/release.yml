@@ -67,6 +67,7 @@ jobs:
         with:
           name: unsigned-windows-x64
           path: |
+            target/release/tidedesk.exe
             target/release/tidedesk-host.exe
             target/release/tidedesk-view.exe
           if-no-files-found: error

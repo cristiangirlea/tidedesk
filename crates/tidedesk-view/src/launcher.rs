@@ -9,6 +9,7 @@
 //! the session process, which owns the punched path; it reports its steps
 //! and asks about the host's identity through the lines in [`crate::child`].
 
+use std::ffi::OsString;
 use std::io::{BufRead, BufReader, Write};
 use std::net::SocketAddr;
 use std::process::{ChildStdin, Command, Stdio};
@@ -228,26 +229,15 @@ impl Launcher {
             Err(e) => return self.fail(format!("cannot locate viewer: {e}")),
         };
         let mut cmd = Command::new(exe);
-        cmd.arg(&host)
+        cmd.args(crate::self_prefix())
+            .args(session_args(&host, target.sound, &route))
             // The code travels in the environment, not the (visible) command line.
             .env("TIDEDESK_CODE", target.code.trim())
             .env(child::LAUNCHER_ENV, "1")
             .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::piped());
-        if !target.sound {
-            cmd.arg("--no-audio");
-        }
         let opening = !matches!(route, SessionRoute::Direct);
-        match route {
-            SessionRoute::Direct => {}
-            SessionRoute::Internet => {
-                cmd.arg("--internet");
-            }
-            SessionRoute::Rendezvous(service) => {
-                cmd.arg("--rendezvous").arg(service);
-            }
-        }
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
@@ -911,9 +901,43 @@ impl egui_software_backend::App for Launcher {
     }
 }
 
+/// The session process's own arguments: the host, then the route and options.
+fn session_args(host: &str, sound: bool, route: &SessionRoute) -> Vec<OsString> {
+    let mut args = vec![OsString::from(host)];
+    if !sound {
+        args.push("--no-audio".into());
+    }
+    match route {
+        SessionRoute::Direct => {}
+        SessionRoute::Internet => args.push("--internet".into()),
+        SessionRoute::Rendezvous(service) => {
+            args.push("--rendezvous".into());
+            args.push(service.into());
+        }
+    }
+    args
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn session_arguments_name_the_host_then_the_route() {
+        assert_eq!(
+            session_args("my-pc", true, &SessionRoute::Direct),
+            [OsString::from("my-pc")]
+        );
+        assert_eq!(
+            session_args("203.0.113.5:40000", false, &SessionRoute::Internet),
+            ["203.0.113.5:40000", "--no-audio", "--internet"].map(OsString::from)
+        );
+        let service = SessionRoute::Rendezvous("rv.example:47900".into());
+        assert_eq!(
+            session_args("TD-1A2B-3C4D-5E6F-7A8B", true, &service),
+            ["TD-1A2B-3C4D-5E6F-7A8B", "--rendezvous", "rv.example:47900"].map(OsString::from)
+        );
+    }
 
     fn launcher() -> Launcher {
         Launcher {
