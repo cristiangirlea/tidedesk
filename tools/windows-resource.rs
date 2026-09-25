@@ -35,7 +35,8 @@ pub fn embed() {
         format!("TIDEDESK_VERSION=\"{version}\\0\""),
         format!("TIDEDESK_BINARY=\"{binary}\\0\""),
         format!("TIDEDESK_FILENAME=\"{binary}.exe\\0\""),
-        format!("TIDEDESK_DESCRIPTION=\"{binary}\\0\""),
+        // Task Manager, firewall and UAC prompts show this as the program's name.
+        "TIDEDESK_DESCRIPTION=\"TideDesk\0\"".to_string(),
     ];
     embed_resource::compile("../../assets/tidedesk.rc", &definitions)
         .manifest_optional()
