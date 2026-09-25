@@ -58,6 +58,9 @@ try {
         throw 'Manifest identity differs from input.'
     }
     if (@($manifest.Package.Applications.Application).Count -ne 2) { throw 'Expected host and viewer Start entries.' }
+    # Store policy 10.1.1.11: with several Start entries, the main one must carry the product name.
+    $names = @($manifest.Package.Applications.Application | ForEach-Object { $_.VisualElements.DisplayName })
+    if ($names[0] -cne 'TideDesk' -or $names[1] -cne 'TideDesk Viewer') { throw "Start entries must be 'TideDesk' and 'TideDesk Viewer', not: $($names -join ', ')" }
     $startup = $manifest.SelectSingleNode("//*[local-name()='StartupTask']")
     if ($startup.TaskId -cne 'TideDeskHost' -or $startup.Enabled -cne 'false') { throw 'Startup must be opt-in.' }
     if (-not $archive.GetEntry('Assets/Square44x44Logo.png')) { throw 'Missing tile asset.' }
