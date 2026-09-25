@@ -28,6 +28,7 @@ use crate::{icon, platform};
 pub const WINDOW_TITLE: &str = "TideDesk Host";
 
 const ERROR_RED: Color32 = Color32::from_rgb(220, 60, 50);
+const WARNING_AMBER: Color32 = Color32::from_rgb(180, 110, 0);
 
 pub struct HostInfo {
     pub state: Arc<HostState>,
@@ -254,6 +255,15 @@ impl HostApp {
         if let Some(n) = &self.notice {
             ui.small(n);
         }
+        // Where the "install this and read me the code" scam happens: say it here.
+        ui.small(
+            RichText::new(
+                "Give this code only to someone you know and trust. If a stranger asked you to \
+                 install TideDesk or to read out this code, stop: they may be trying to take \
+                 control of your computer.",
+            )
+            .color(WARNING_AMBER),
+        );
         ui.add_space(6.0);
 
         ui.label("This computer's addresses");

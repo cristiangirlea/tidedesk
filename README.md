@@ -65,6 +65,10 @@ device ID (or the address on a local network) and the access code, and press **C
 computers you use often under **My computers** for one-click connections; access codes you
 choose to remember are encrypted for your Windows account.
 
+> **Give the access code only to someone you know and trust.** If a stranger asked you to
+> install TideDesk or to read out the code, stop: they may be trying to take control of your
+> computer.
+
 The first time you connect, the viewer shows the host's fingerprint — check it matches the host
 window. The viewer remembers it and refuses to connect if it ever changes.
 

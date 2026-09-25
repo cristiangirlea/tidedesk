@@ -8,6 +8,9 @@ tidedesk.exe       One program, one window. Run it on both computers.
                    notification area (tray) when the window is closed.
                    "Connect to a computer" takes a device ID or an address plus
                    the access code, and keeps your saved computers.
+Give the access code only to someone you know and trust. If a stranger asked
+you to install TideDesk or to read out the code, stop: they may be trying to
+take control of your computer.
 tidedesk-host.exe  The same as "tidedesk host".   Both remain in this release
 tidedesk-view.exe  The same as "tidedesk view".   for existing shortcuts and
                                                  autostart entries.
