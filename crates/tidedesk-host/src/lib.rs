@@ -94,6 +94,23 @@ between the two computers.\n\
 To reach this host from another network, open a path to the viewer under \"Viewer on another \
 network\" in the host window, or use a VPN such as Tailscale. See docs/internet-access.md.";
 
+/// The rendezvous service to register with: none with `--no-rendezvous`,
+/// else the `--rendezvous` argument (empty meaning none), else the setting.
+fn rendezvous_choice(
+    argument: Option<&str>,
+    off: bool,
+    configured: Option<&str>,
+) -> Option<String> {
+    if off {
+        return None;
+    }
+    match argument.map(str::trim) {
+        Some(service) => Some(service).filter(|s| !s.is_empty()),
+        None => configured,
+    }
+    .map(str::to_string)
+}
+
 /// Reads the saved access code, creating one if missing or `regenerate` is set.
 pub fn load_code(regenerate: bool) -> Result<String> {
     let path = paths::config_dir()?.join("access-code.txt");
@@ -203,13 +220,13 @@ fn run(args: Args) -> Result<()> {
     if config.discover_public_address {
         agent.start_refresh(config.effective_stun_servers(), STUN_REFRESH);
     }
-    let rendezvous = match args.rendezvous.as_deref().map(str::trim) {
-        _ if args.no_rendezvous => None,
-        Some(service) => Some(service).filter(|s| !s.is_empty()),
-        None => config.rendezvous_service(),
-    };
+    let rendezvous = rendezvous_choice(
+        args.rendezvous.as_deref(),
+        args.no_rendezvous,
+        config.rendezvous_service(),
+    );
     if let Some(service) = rendezvous {
-        agent.start_rendezvous(service.to_string(), identity.rendezvous_credentials());
+        agent.start_rendezvous(service, identity.rendezvous_credentials());
     }
     let mut agent_status = agent.status();
     let repaint = state.clone();
@@ -277,5 +294,23 @@ async fn accept_loop(endpoint: quinn::Endpoint, state: Arc<session::HostState>) 
                 tracing::warn!("session with {remote} ended: {e:#}");
             }
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::rendezvous_choice;
+
+    #[test]
+    fn the_command_line_decides_the_service_before_the_setting() {
+        let saved = Some("rv.saved:47900");
+        assert_eq!(rendezvous_choice(None, false, saved).as_deref(), saved);
+        assert_eq!(rendezvous_choice(None, false, None), None);
+        assert_eq!(
+            rendezvous_choice(Some(" rv.arg "), false, saved).as_deref(),
+            Some("rv.arg")
+        );
+        assert_eq!(rendezvous_choice(Some(""), false, saved), None);
+        assert_eq!(rendezvous_choice(None, true, saved), None);
     }
 }
