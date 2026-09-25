@@ -1,19 +1,26 @@
 //! `tidedesk`: one program for both sides of a session.
 //!
-//! `tidedesk host …` shares this computer (what `tidedesk-host` does) and
-//! `tidedesk view …` connects to another (what `tidedesk-view` does). With no
-//! mode word it shares (that is what the Start menu entry, the startup task
-//! and autostart launch), unless the first argument names a computer to
-//! connect to. This holds until one window offers both sides.
+//! Started plain (the Start menu entry, the startup task, autostart) it opens
+//! the one window, with sharing this computer and connecting to another as
+//! tabs. `tidedesk host …` runs the sharing side alone (what `tidedesk-host`
+//! does, headless too) and `tidedesk view …` the connecting side (what
+//! `tidedesk-view` does); a first argument that names a computer connects
+//! to it.
 
 // Release builds are GUI apps with no console window; each side borrows the
 // terminal it was started from.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+mod app;
+
 use std::ffi::OsString;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mode {
+    /// The one window, hidden in the tray when asked.
+    App {
+        hidden: bool,
+    },
     Host,
     View,
     Usage,
@@ -34,6 +41,8 @@ fn dispatch(argv: &[OsString]) -> (Mode, Vec<OsString>) {
     };
     let word = argv.get(1).and_then(|w| w.to_str());
     match word {
+        None => (Mode::App { hidden: false }, Vec::new()),
+        Some("--tray") if argv.len() == 2 => (Mode::App { hidden: true }, Vec::new()),
         Some("host") => (Mode::Host, rest(2)),
         Some("view") => (Mode::View, rest(2)),
         Some("--help" | "-h" | "help") if argv.len() == 2 => (Mode::Usage, Vec::new()),
@@ -49,7 +58,9 @@ fn usage() -> String {
     [
         &format!("TideDesk {}", env!("CARGO_PKG_VERSION")),
         "",
-        "Usage: tidedesk host [OPTIONS]           share this computer (also with no mode word)",
+        "Usage: tidedesk                          the window: share this computer, connect to another",
+        "       tidedesk --tray                   the same, started hidden in the tray",
+        "       tidedesk host [OPTIONS]           share this computer only (or headless)",
         "       tidedesk view [HOST] [OPTIONS]    connect to another computer (a bare HOST works too)",
         "",
         "`tidedesk host --help` and `tidedesk view --help` list the options.",
@@ -62,6 +73,13 @@ fn main() {
     tidedesk_host::attach_console();
     let argv: Vec<OsString> = std::env::args_os().collect();
     match dispatch(&argv) {
+        (Mode::App { hidden }, _) => {
+            tracing_subscriber::fmt().with_target(false).init();
+            if let Err(e) = app::run(hidden) {
+                tidedesk_host::error_box(app::WINDOW_TITLE, &format!("{e:#}"));
+                std::process::exit(1);
+            }
+        }
         (Mode::Host, args) => tidedesk_host::main("tidedesk host", args, &["host"]),
         (Mode::View, args) => tidedesk_view::main("tidedesk view", args, &["view"]),
         (Mode::Usage, _) => print!("{}", usage()),
@@ -116,14 +134,27 @@ mod tests {
     }
 
     #[test]
-    fn without_a_mode_word_the_host_runs_with_every_argument() {
+    fn nothing_after_the_program_opens_the_window() {
         assert_eq!(
-            dispatch(&argv(&["tidedesk"])),
-            (Mode::Host, argv(&["tidedesk"]))
+            dispatch(&argv(&["tidedesk"])).0,
+            Mode::App { hidden: false }
         );
         assert_eq!(
-            dispatch(&argv(&[r"C:\x\tidedesk.exe", "--tray"])),
-            (Mode::Host, argv(&[r"C:\x\tidedesk.exe", "--tray"]))
+            dispatch(&argv(&[r"C:\x\tidedesk.exe", "--tray"])).0,
+            Mode::App { hidden: true },
+            "the startup entry and autostart open it hidden in the tray"
+        );
+    }
+
+    #[test]
+    fn host_options_without_a_mode_word_still_run_the_host() {
+        assert_eq!(
+            dispatch(&argv(&["tidedesk", "--headless"])),
+            (Mode::Host, argv(&["tidedesk", "--headless"]))
+        );
+        assert_eq!(
+            dispatch(&argv(&["tidedesk", "--tray", "--headless"])),
+            (Mode::Host, argv(&["tidedesk", "--tray", "--headless"]))
         );
     }
 

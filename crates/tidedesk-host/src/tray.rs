@@ -10,7 +10,6 @@ use anyhow::Result;
 use tray_icon::menu::{CheckMenuItem, Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 use tray_icon::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
-use crate::gui::WINDOW_TITLE;
 use crate::session::HostState;
 use crate::{icon, platform};
 
@@ -18,12 +17,14 @@ pub struct Tray {
     icon: TrayIcon,
     accept: CheckMenuItem,
     last_tooltip: String,
+    /// The window's title: shown in the menu and used to find the window.
+    title: &'static str,
 }
 
 impl Tray {
     /// Must be called on the UI thread once its event loop is running.
-    pub fn new(state: Arc<HostState>) -> Result<Self> {
-        let open = MenuItem::new("Open TideDesk Host", true, None);
+    pub fn new(state: Arc<HostState>, title: &'static str) -> Result<Self> {
+        let open = MenuItem::new(format!("Open {title}"), true, None);
         let accept = CheckMenuItem::new(
             "Accept new connections",
             true,
@@ -47,19 +48,19 @@ impl Tray {
                 icon::SIZE,
                 icon::SIZE,
             )?)
-            .with_tooltip("TideDesk Host")
+            .with_tooltip(title)
             .with_menu(Box::new(menu))
             .with_menu_on_left_click(false)
             .build()?;
 
-        TrayIconEvent::set_event_handler(Some(|event| {
+        TrayIconEvent::set_event_handler(Some(move |event| {
             if let TrayIconEvent::Click {
                 button: MouseButton::Left,
                 button_state: MouseButtonState::Up,
                 ..
             } = event
             {
-                platform::set_window_visible(WINDOW_TITLE, true);
+                platform::set_window_visible(title, true);
             }
         }));
 
@@ -71,7 +72,7 @@ impl Tray {
         );
         MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
             if event.id == open_id {
-                platform::set_window_visible(WINDOW_TITLE, true);
+                platform::set_window_visible(title, true);
             } else if event.id == accept_id {
                 // The check item has already toggled itself.
                 let now = !state.accepting.load(Ordering::SeqCst);
@@ -95,6 +96,7 @@ impl Tray {
             icon,
             accept,
             last_tooltip: String::new(),
+            title,
         })
     }
 
@@ -105,9 +107,9 @@ impl Tray {
             self.accept.set_checked(accepting);
         }
         let tooltip = match state.viewer.lock().unwrap().as_ref() {
-            Some(v) => format!("TideDesk Host — {} connected", v.name),
-            None if accepting => "TideDesk Host — waiting for a viewer".to_string(),
-            None => "TideDesk Host — paused".to_string(),
+            Some(v) => format!("{} — {} connected", self.title, v.name),
+            None if accepting => format!("{} — waiting for a viewer", self.title),
+            None => format!("{} — paused", self.title),
         };
         if tooltip != self.last_tooltip {
             let _ = self.icon.set_tooltip(Some(&tooltip));

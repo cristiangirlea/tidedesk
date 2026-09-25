@@ -2,13 +2,12 @@ TideDesk @VERSION@ (Windows x64)
 Remote access to your own computers. Free for personal, non-commercial use.
 https://github.com/cristiangirlea/tidedesk
 
-tidedesk.exe       One program for both sides.
-                   On the computer you want to reach, run it: it shows an access
-                   code and this computer's address, and lives in the tray.
-                   On the computer you are sitting at, run "tidedesk view" (a
-                   shortcut to tidedesk.exe with "view" as its argument): enter
-                   the address and access code, or save computers under
-                   "My computers".
+tidedesk.exe       One program, one window. Run it on both computers.
+                   "Share this computer" shows the access code, this computer's
+                   addresses and its device ID; TideDesk keeps sharing from the
+                   notification area (tray) when the window is closed.
+                   "Connect to a computer" takes a device ID or an address plus
+                   the access code, and keeps your saved computers.
 tidedesk-host.exe  The same as "tidedesk host".   Both remain in this release
 tidedesk-view.exe  The same as "tidedesk view".   for existing shortcuts and
                                                  autostart entries.

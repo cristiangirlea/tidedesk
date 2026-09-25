@@ -217,16 +217,21 @@ impl Editor {
         shortcut_ui(ui, "Game Boost", &mut self.config.game_boost_shortcut);
         ui.small("Ctrl+Alt+S opens these settings during a session.");
         ui.separator();
-        ui.label("Rendezvous service, for connecting by device ID");
-        ui.add(
-            egui::TextEdit::singleline(&mut self.config.rendezvous_server)
-                .hint_text(tidedesk_core::nat::signal::DEFAULT_RENDEZVOUS)
-                .desired_width(240.0),
-        );
-        ui.small(
-            "Leave empty for TideDesk's own service, or name the one the host registers \
-             with. It only introduces the two computers; sessions run directly between them.",
-        );
+        egui::CollapsingHeader::new("Advanced")
+            .id_salt("viewer-advanced")
+            .show(ui, |ui| {
+                ui.label("Connection service, for connecting by device ID");
+                ui.add(
+                    egui::TextEdit::singleline(&mut self.config.rendezvous_server)
+                        .hint_text(tidedesk_core::nat::signal::DEFAULT_RENDEZVOUS)
+                        .desired_width(240.0),
+                );
+                ui.small(
+                    "Leave empty for TideDesk's own service, or name the one the host \
+                     registers with. It only introduces the two computers; sessions run \
+                     directly between them.",
+                );
+            });
         ui.add_space(8.0);
         if ui.button("Save settings").clicked() {
             self.message = Some(match self.config.save() {

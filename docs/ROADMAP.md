@@ -66,9 +66,10 @@ Every session runs directly between the two computers; TideDesk never relays.
 
 ## Next: one app
 
-- One program, `tidedesk.exe`, for both sides (`tidedesk host`, `tidedesk view`), then one
-  window with a Share tab and a Connect tab, so there is one thing to install on both
-  computers. Linux follows (viewer first, then host), then Android and iOS viewers.
+- One program, `tidedesk.exe`, with one window: Share this computer, Connect to a
+  computer, Settings. One thing to install on both computers; `tidedesk host` and
+  `tidedesk view` still run either side alone. Linux follows (viewer first, then host),
+  then Android and iOS viewers.
 
 ## Next: Game mode — keyboard, mouse and streaming
 

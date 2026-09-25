@@ -3533,9 +3533,15 @@ dependencies = [
 name = "tidedesk"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "egui",
+ "egui_software_backend",
  "embed-resource",
  "tidedesk-host",
  "tidedesk-view",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

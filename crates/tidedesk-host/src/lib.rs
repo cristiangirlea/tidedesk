@@ -3,13 +3,13 @@
 
 mod audio;
 mod capture;
-mod config;
-mod gui;
+pub mod config;
+pub mod gui;
 mod icon;
 mod input;
 mod internet;
 mod platform;
-mod session;
+pub mod session;
 mod tray;
 mod video;
 
@@ -125,7 +125,138 @@ pub fn load_code(regenerate: bool) -> Result<String> {
     Ok(code)
 }
 
-pub use platform::attach_console;
+pub use gui::{HostApp, HostInfo};
+pub use platform::{attach_console, error_box};
+
+/// The window icon, for the one program's window.
+pub fn window_icon() -> Arc<egui::IconData> {
+    icon::egui_icon()
+}
+
+/// What sharing needs to start. The command line fills it in; the one
+/// program uses the saved settings.
+#[derive(Debug, Clone, Default)]
+pub struct StartOptions {
+    pub listen: Option<SocketAddr>,
+    pub display: Option<usize>,
+    pub fps: Option<u32>,
+    pub bitrate: Option<u32>,
+    pub no_audio: bool,
+    pub rendezvous: Option<String>,
+    pub no_rendezvous: bool,
+    pub stats: bool,
+    pub new_code: bool,
+    /// Start with the window hidden in the tray.
+    pub tray: bool,
+}
+
+impl From<&Args> for StartOptions {
+    fn from(args: &Args) -> Self {
+        Self {
+            listen: args.listen,
+            display: args.display,
+            fps: args.fps,
+            bitrate: args.bitrate,
+            no_audio: args.no_audio,
+            rendezvous: args.rendezvous.clone(),
+            no_rendezvous: args.no_rendezvous,
+            stats: args.stats,
+            new_code: args.new_code,
+            tray: args.tray,
+        }
+    }
+}
+
+/// Sharing that has started: viewers can connect. `runtime` runs it and must
+/// live as long as sharing should; a window or the console shows `info`.
+pub struct Started {
+    pub info: HostInfo,
+    pub runtime: tokio::runtime::Runtime,
+    pub device_id: String,
+    pub listen: SocketAddr,
+}
+
+/// Starts sharing this computer: loads the settings and identity, binds the
+/// socket, starts address discovery and rendezvous registration, and accepts
+/// viewers. Nothing is shown yet.
+pub fn start(options: &StartOptions) -> Result<Started> {
+    platform::enable_dpi_awareness();
+    let config = config::HostConfig::load();
+    let listen = options
+        .listen
+        .unwrap_or_else(|| SocketAddr::from(([0, 0, 0, 0], config.port)));
+    let identity = HostIdentity::load_or_create(&paths::config_dir()?)?;
+    let host_name = std::env::var("COMPUTERNAME")
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .unwrap_or_else(|_| "tidedesk-host".into());
+    let state = Arc::new(session::HostState {
+        host_name,
+        code: Mutex::new(load_code(options.new_code)?),
+        video: Mutex::new(video::VideoSettings {
+            display: options.display.unwrap_or(config.display),
+            fps: options.fps.unwrap_or(config.fps),
+            bitrate_bps: options.bitrate.unwrap_or(config.bitrate_kbps) * 1000,
+            stats: options.stats,
+        }),
+        audio: AtomicBool::new(config.share_audio && !options.no_audio),
+        clipboard: AtomicBool::new(config.allow_clipboard),
+        mouse: AtomicBool::new(config.allow_mouse),
+        accepting: AtomicBool::new(true),
+        throttle: Mutex::new(auth::Throttle::default()),
+        busy: AtomicBool::new(false),
+        viewer: Mutex::new(None),
+        expected_viewer: Mutex::new(None),
+        on_change: Mutex::new(None),
+    });
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()?;
+    let (endpoint, agent) = {
+        let _guard = runtime.enter();
+        let (socket, side_channel) =
+            SharedSocket::bind(listen).with_context(|| format!("listening on {listen}"))?;
+        let agent = Agent::spawn(socket.clone(), side_channel)?;
+        (net::server_endpoint_on(socket, &identity)?, agent)
+    };
+    if config.discover_public_address {
+        agent.start_refresh(config.effective_stun_servers(), STUN_REFRESH);
+    }
+    let rendezvous = rendezvous_choice(
+        options.rendezvous.as_deref(),
+        options.no_rendezvous,
+        config.rendezvous_service(),
+    );
+    if let Some(service) = rendezvous {
+        agent.start_rendezvous(service, identity.rendezvous_credentials());
+    }
+    let mut agent_status = agent.status();
+    let repaint = state.clone();
+    runtime.spawn(async move {
+        while agent_status.changed().await.is_ok() {
+            repaint.changed();
+        }
+    });
+    runtime.spawn(accept_loop(endpoint, state.clone()));
+
+    let info = gui::HostInfo {
+        state,
+        agent,
+        identity: identity.rendezvous_credentials(),
+        runtime: runtime.handle().clone(),
+        start_hidden: options.tray || config.start_in_tray,
+        config,
+        fingerprint: identity.fingerprint(),
+        port: listen.port(),
+    };
+    Ok(Started {
+        info,
+        runtime,
+        device_id: identity.device_id().to_string(),
+        listen,
+    })
+}
 
 static SELF_PREFIX: OnceLock<&'static [&'static str]> = OnceLock::new();
 
@@ -178,78 +309,19 @@ fn run(args: Args) -> Result<()> {
         return Ok(());
     }
 
-    let config = config::HostConfig::load();
-    let listen = args
-        .listen
-        .unwrap_or_else(|| SocketAddr::from(([0, 0, 0, 0], config.port)));
-    let identity = HostIdentity::load_or_create(&paths::config_dir()?)?;
-    let host_name = std::env::var("COMPUTERNAME")
-        .or_else(|_| std::env::var("HOSTNAME"))
-        .unwrap_or_else(|_| "tidedesk-host".into());
-    let state = Arc::new(session::HostState {
-        host_name: host_name.clone(),
-        code: Mutex::new(load_code(args.new_code)?),
-        video: Mutex::new(video::VideoSettings {
-            display: args.display.unwrap_or(config.display),
-            fps: args.fps.unwrap_or(config.fps),
-            bitrate_bps: args.bitrate.unwrap_or(config.bitrate_kbps) * 1000,
-            stats: args.stats,
-        }),
-        audio: AtomicBool::new(config.share_audio && !args.no_audio),
-        clipboard: AtomicBool::new(config.allow_clipboard),
-        mouse: AtomicBool::new(config.allow_mouse),
-        accepting: AtomicBool::new(true),
-        throttle: Mutex::new(auth::Throttle::default()),
-        busy: AtomicBool::new(false),
-        viewer: Mutex::new(None),
-        expected_viewer: Mutex::new(None),
-        on_change: Mutex::new(None),
-    });
-
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(2)
-        .enable_all()
-        .build()?;
-    let (endpoint, agent) = {
-        let _guard = runtime.enter();
-        let (socket, side_channel) =
-            SharedSocket::bind(listen).with_context(|| format!("listening on {listen}"))?;
-        let agent = Agent::spawn(socket.clone(), side_channel)?;
-        (net::server_endpoint_on(socket, &identity)?, agent)
-    };
-    if config.discover_public_address {
-        agent.start_refresh(config.effective_stun_servers(), STUN_REFRESH);
-    }
-    let rendezvous = rendezvous_choice(
-        args.rendezvous.as_deref(),
-        args.no_rendezvous,
-        config.rendezvous_service(),
-    );
-    if let Some(service) = rendezvous {
-        agent.start_rendezvous(service, identity.rendezvous_credentials());
-    }
-    let mut agent_status = agent.status();
-    let repaint = state.clone();
-    runtime.spawn(async move {
-        while agent_status.changed().await.is_ok() {
-            repaint.changed();
-        }
-    });
-    runtime.spawn(accept_loop(endpoint, state.clone()));
-
+    let Started {
+        info,
+        runtime,
+        device_id,
+        listen,
+    } = start(&StartOptions::from(&args))?;
     if !args.headless {
-        return gui::run(gui::HostInfo {
-            state,
-            agent,
-            identity: identity.rendezvous_credentials(),
-            runtime: runtime.handle().clone(),
-            start_hidden: args.tray || config.start_in_tray,
-            config,
-            fingerprint: identity.fingerprint(),
-            port: listen.port(),
-        });
+        let result = gui::run(info);
+        drop(runtime);
+        return result;
     }
 
+    let (state, agent) = (info.state.clone(), info.agent.clone());
     // A first answer usually takes a fraction of a second.
     let (internet, rendezvous) = runtime.block_on(async {
         let mut status = agent.status();
@@ -262,13 +334,13 @@ fn run(args: Args) -> Result<()> {
     let code = state.code.lock().unwrap().clone();
     println!();
     println!(
-        "  TideDesk host \"{host_name}\" is listening on UDP {}",
-        listen
+        "  TideDesk host \"{}\" is listening on UDP {listen}",
+        state.host_name
     );
     println!("  Access code:  {code}");
-    println!("  Fingerprint:  {}", identity.fingerprint());
+    println!("  Fingerprint:  {}", info.fingerprint);
     println!("  Internet address: {internet}");
-    println!("  Device ID:    {}", identity.device_id());
+    println!("  Device ID:    {device_id}");
     println!("  Rendezvous:   {rendezvous}");
     println!();
     println!("  Connect with: tidedesk view <this-pc-address> --code {code}");

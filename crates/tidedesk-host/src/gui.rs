@@ -48,8 +48,10 @@ enum Tab {
     Settings,
 }
 
-struct HostApp {
+pub struct HostApp {
     info: HostInfo,
+    /// The window title, by which tray and taskbar handling find the window.
+    title: &'static str,
     tab: Tab,
     displays: Vec<DisplayInfo>,
     addresses: Vec<Address>,
@@ -131,37 +133,65 @@ pub fn run(info: HostInfo) -> Result<()> {
         .with_min_inner_size([380.0, 440.0])
         .with_taskbar(info.config.show_in_taskbar)
         .with_visible(!info.start_hidden);
-    let displays = capture::list_displays().unwrap_or_default();
-    let addresses = local_addresses(info.port);
-    let stun_text = info.config.stun_servers.join(", ");
-    let rendezvous_text = info.config.rendezvous_server.clone();
-    let mut app = Some(HostApp {
-        info,
-        tab: Tab::Status,
-        displays,
-        addresses,
-        show_all_addresses: false,
-        stun_text,
-        rendezvous_text,
-        viewer_text: String::new(),
-        viewer_error: None,
-        notice: None,
-        settings_error: None,
-        autostart: platform::autostart_enabled(),
-        tray: None,
-        window_hooked: false,
-    });
+    let mut app = Some(HostApp::new(info, WINDOW_TITLE));
     egui_software_backend::run_app_with_software_backend(config, move |ctx| {
         let mut app = app.take().expect("the host window is created once");
-        let state = app.info.state.clone();
-        *state.on_change.lock().unwrap() = Some(Box::new(move || ctx.request_repaint()));
-        match Tray::new(state) {
-            Ok(tray) => app.tray = Some(tray),
-            Err(e) => tracing::warn!("no tray icon: {e:#}"),
-        }
+        app.attach(ctx);
         app
     })
     .map_err(|e| anyhow!("cannot open the host window: {e}"))
+}
+
+impl HostApp {
+    /// The host's side of a window titled `title`; sharing has started
+    /// already ([`crate::start`]).
+    pub fn new(info: HostInfo, title: &'static str) -> Self {
+        let displays = capture::list_displays().unwrap_or_default();
+        let addresses = local_addresses(info.port);
+        let stun_text = info.config.stun_servers.join(", ");
+        let rendezvous_text = info.config.rendezvous_server.clone();
+        Self {
+            info,
+            title,
+            tab: Tab::Status,
+            displays,
+            addresses,
+            show_all_addresses: false,
+            stun_text,
+            rendezvous_text,
+            viewer_text: String::new(),
+            viewer_error: None,
+            notice: None,
+            settings_error: None,
+            autostart: platform::autostart_enabled(),
+            tray: None,
+            window_hooked: false,
+        }
+    }
+
+    /// Once the window's event loop runs: repaints when the host changes and
+    /// adds the tray icon.
+    pub fn attach(&mut self, ctx: egui::Context) {
+        let state = self.info.state.clone();
+        *state.on_change.lock().unwrap() = Some(Box::new(move || ctx.request_repaint()));
+        match Tray::new(state, self.title) {
+            Ok(tray) => self.tray = Some(tray),
+            Err(e) => tracing::warn!("no tray icon: {e:#}"),
+        }
+    }
+
+    /// Once per frame, before drawing: hides on close when a tray icon can
+    /// bring the window back, and mirrors the state into the tray.
+    pub fn frame(&mut self) {
+        if !self.window_hooked && self.tray.is_some() {
+            // Only hide on close when there is a tray icon to come back from.
+            platform::hide_on_close(self.title);
+            self.window_hooked = true;
+        }
+        if let Some(tray) = &mut self.tray {
+            tray.sync(&self.info.state);
+        }
+    }
 }
 
 impl HostApp {
@@ -174,7 +204,8 @@ impl HostApp {
             .map(|e| format!("Could not save settings: {e:#}"));
     }
 
-    fn status_tab(&mut self, ui: &mut egui::Ui) {
+    /// Access code, addresses, device ID and who is connected.
+    pub fn status_tab(&mut self, ui: &mut egui::Ui) {
         let state = self.info.state.clone();
 
         let viewer = state.viewer.lock().unwrap().clone();
@@ -355,7 +386,9 @@ impl HostApp {
         }
     }
 
-    fn settings_tab(&mut self, ui: &mut egui::Ui) {
+    /// The sharing settings; changes apply at once and are saved.
+    pub fn settings_tab(&mut self, ui: &mut egui::Ui) {
+        let title = self.title;
         let state = self.info.state.clone();
         let before = self.info.config.clone();
         let cfg = &mut self.info.config;
@@ -431,45 +464,50 @@ impl HostApp {
 
         ui.label(RichText::new("Internet").strong());
         ui.checkbox(
-            &mut cfg.discover_public_address,
-            "Look up this computer's internet address (STUN)",
-        )
-        .on_hover_text(
-            "Asks public STUN servers which address and port your router gives TideDesk. \
-             They see this computer's public IP address and a 20-byte request, nothing else.",
-        );
-        ui.horizontal(|ui| {
-            ui.label("STUN servers");
-            let field = egui::TextEdit::singleline(&mut self.stun_text)
-                .hint_text(DEFAULT_STUN_SERVERS.join(", "));
-            if ui
-                .add_enabled(cfg.discover_public_address, field)
-                .lost_focus()
-            {
-                cfg.stun_servers = parse_stun_servers(&self.stun_text);
-                self.stun_text = cfg.stun_servers.join(", ");
-            }
-        });
-        ui.small("host:port, separated by commas. Leave empty for the defaults.");
-        ui.checkbox(
             &mut cfg.rendezvous,
-            "Let viewers on other networks connect by device ID (rendezvous)",
+            "Reachable by device ID from other networks",
         )
         .on_hover_text(
-            "Registers this computer's device ID and public address with the rendezvous \
-             service, which introduces viewers and never carries a session. TideDesk's own \
-             service is used unless another is named below.",
+            "Registers this computer's device ID and public address with TideDesk's \
+             connection service (or the one under Advanced), which introduces viewers \
+             and never carries a session.",
         );
-        ui.horizontal(|ui| {
-            ui.label("Rendezvous service");
-            let field =
-                egui::TextEdit::singleline(&mut self.rendezvous_text).hint_text(DEFAULT_RENDEZVOUS);
-            if ui.add_enabled(cfg.rendezvous, field).lost_focus() {
-                cfg.rendezvous_server = self.rendezvous_text.trim().to_string();
-                self.rendezvous_text = cfg.rendezvous_server.clone();
-            }
-        });
-        ui.small("host:port. Leave empty for TideDesk's own service.");
+        egui::CollapsingHeader::new("Advanced")
+            .id_salt("internet-advanced")
+            .show(ui, |ui| {
+                ui.checkbox(
+                    &mut cfg.discover_public_address,
+                    "Look up this computer's internet address (STUN)",
+                )
+                .on_hover_text(
+                    "Asks public STUN servers which address and port your router gives \
+                     TideDesk. They see this computer's public IP address and a 20-byte \
+                     request, nothing else.",
+                );
+                ui.horizontal(|ui| {
+                    ui.label("STUN servers");
+                    let field = egui::TextEdit::singleline(&mut self.stun_text)
+                        .hint_text(DEFAULT_STUN_SERVERS.join(", "));
+                    if ui
+                        .add_enabled(cfg.discover_public_address, field)
+                        .lost_focus()
+                    {
+                        cfg.stun_servers = parse_stun_servers(&self.stun_text);
+                        self.stun_text = cfg.stun_servers.join(", ");
+                    }
+                });
+                ui.small("host:port, separated by commas. Leave empty for the defaults.");
+                ui.horizontal(|ui| {
+                    ui.label("Connection service");
+                    let field = egui::TextEdit::singleline(&mut self.rendezvous_text)
+                        .hint_text(DEFAULT_RENDEZVOUS);
+                    if ui.add_enabled(cfg.rendezvous, field).lost_focus() {
+                        cfg.rendezvous_server = self.rendezvous_text.trim().to_string();
+                        self.rendezvous_text = cfg.rendezvous_server.clone();
+                    }
+                });
+                ui.small("host:port. Leave empty for TideDesk's own service.");
+            });
 
         if *cfg != before {
             {
@@ -482,7 +520,7 @@ impl HostApp {
             state.clipboard.store(cfg.allow_clipboard, Ordering::SeqCst);
             state.mouse.store(cfg.allow_mouse, Ordering::SeqCst);
             if cfg.show_in_taskbar != before.show_in_taskbar {
-                platform::set_taskbar_button(WINDOW_TITLE, cfg.show_in_taskbar);
+                platform::set_taskbar_button(title, cfg.show_in_taskbar);
             }
             if cfg.rendezvous != before.rendezvous
                 || cfg.rendezvous_server != before.rendezvous_server
@@ -517,14 +555,7 @@ impl HostApp {
 
 impl egui_software_backend::App for HostApp {
     fn ui(&mut self, ui: &mut egui::Ui, _backend: &mut SoftwareBackend) {
-        if !self.window_hooked && self.tray.is_some() {
-            // Only hide on close when there is a tray icon to come back from.
-            platform::hide_on_close(WINDOW_TITLE);
-            self.window_hooked = true;
-        }
-        if let Some(tray) = &mut self.tray {
-            tray.sync(&self.info.state);
-        }
+        self.frame();
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
             ui.heading(format!("TideDesk — {}", self.info.state.host_name));
