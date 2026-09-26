@@ -13,6 +13,8 @@ use tokio::runtime::Handle;
 use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 
+use super::DeviceId;
+use super::lan::{self, Search};
 use super::punch::{Exchange, Punched, SessionId, State};
 use super::signal::{
     Credentials, Event, Lookup, LookupOutcome, Registration, RendezvousStatus, resolve_service,
@@ -28,6 +30,9 @@ const INCOMING_WINDOW: Duration = Duration::from_secs(30);
 
 /// Introductions a host acts on per minute, whatever the service sends.
 const MAX_INCOMING_PER_MINUTE: usize = 10;
+
+/// Local-network queries a host answers per second, however many arrive.
+const MAX_LAN_ANSWERS_PER_SECOND: usize = 20;
 
 /// How long to wait before looking a rendezvous service's name up again.
 const RESOLVE_RETRY: Duration = Duration::from_secs(30);
@@ -89,6 +94,7 @@ pub struct Agent {
     dispatcher: JoinHandle<()>,
     refresh: Mutex<Option<JoinHandle<()>>>,
     rendezvous: Mutex<Option<JoinHandle<()>>>,
+    lan: Mutex<Option<JoinHandle<()>>>,
 }
 
 /// What a task working for the agent needs; cheap to clone into one.
@@ -136,6 +142,7 @@ impl Agent {
             dispatcher,
             refresh: Mutex::new(None),
             rendezvous: Mutex::new(None),
+            lan: Mutex::new(None),
         }))
     }
 
@@ -278,6 +285,57 @@ impl Agent {
         self.link.status.borrow().rendezvous.clone()
     }
 
+    /// Answers viewers on the local network that look for `device_id` (see
+    /// [`super::lan`]). Replaces an earlier call.
+    pub fn start_lan_discovery(&self, device_id: DeviceId) {
+        // Subscribed here, so a query arriving before the task runs is kept.
+        let datagrams = self.link.datagrams.subscribe();
+        let link = self.link.clone();
+        let task = self
+            .link
+            .runtime
+            .spawn(async move { link.answer_lan_queries(device_id, datagrams).await });
+        if let Some(earlier) = self.lan.lock().unwrap().replace(task) {
+            earlier.abort();
+        }
+    }
+
+    pub fn stop_lan_discovery(&self) {
+        if let Some(task) = self.lan.lock().unwrap().take() {
+            task.abort();
+        }
+    }
+
+    /// Asks `targets` (the local network's broadcast addresses) for the host
+    /// with `device_id`; its address if it answers within
+    /// [`lan::SEARCH_WINDOW`].
+    pub async fn find_on_lan(
+        &self,
+        device_id: DeviceId,
+        targets: Vec<SocketAddr>,
+    ) -> Option<SocketAddr> {
+        // Subscribe before sending, so no early answer is missed.
+        let mut datagrams = self.link.datagrams.subscribe();
+        let mut search = Search::new(device_id, targets, Instant::now());
+        loop {
+            for (to, query) in search.poll(Instant::now()) {
+                self.link.send(to, &query).await;
+            }
+            if let Some(host) = search.found() {
+                return Some(host);
+            }
+            let wake = search.next_deadline()?;
+            tokio::select! {
+                _ = tokio::time::sleep_until(wake.into()) => {}
+                received = datagrams.recv() => {
+                    if let Ok(datagram) = received {
+                        search.on_datagram(datagram.from, &datagram.data);
+                    }
+                }
+            }
+        }
+    }
+
     /// Stops asking and marks discovery as turned off.
     pub fn stop_refresh(&self) {
         if let Some(task) = self.refresh.lock().unwrap().take() {
@@ -295,7 +353,11 @@ impl Agent {
 impl Drop for Agent {
     fn drop(&mut self) {
         self.dispatcher.abort();
-        for task in [self.refresh.get_mut(), self.rendezvous.get_mut()] {
+        for task in [
+            self.refresh.get_mut(),
+            self.rendezvous.get_mut(),
+            self.lan.get_mut(),
+        ] {
             if let Some(task) = task.unwrap().take() {
                 task.abort();
             }
@@ -442,7 +504,7 @@ impl Link {
         let mut datagrams = self.datagrams.subscribe();
         let mut registration =
             Registration::new(service.clone(), main, credentials.clone(), Instant::now());
-        let mut introductions = IntroductionLimit::default();
+        let mut introductions = RateLimit::new(MAX_INCOMING_PER_MINUTE, Duration::from_secs(60));
         loop {
             // A service that stopped answering may have moved: look it up again.
             let now = Instant::now();
@@ -477,6 +539,30 @@ impl Link {
                         }
                     }
                 }
+            }
+        }
+    }
+
+    /// Answers local-network queries for `own`, however many arrive: at most
+    /// [`MAX_LAN_ANSWERS_PER_SECOND`], each as large as its query.
+    async fn answer_lan_queries(
+        &self,
+        own: DeviceId,
+        mut datagrams: broadcast::Receiver<RawDatagram>,
+    ) {
+        let mut answers = RateLimit::new(MAX_LAN_ANSWERS_PER_SECOND, Duration::from_secs(1));
+        loop {
+            match datagrams.recv().await {
+                Ok(datagram) => {
+                    if let Some(answer) = lan::answer(own, datagram.from, &datagram.data)
+                        && answers.allow(Instant::now())
+                    {
+                        self.send(datagram.from, &answer).await;
+                    }
+                }
+                // Lost queries are repeated by the viewer.
+                Err(broadcast::error::RecvError::Lagged(_)) => {}
+                Err(broadcast::error::RecvError::Closed) => return,
             }
         }
     }
@@ -532,23 +618,32 @@ impl Link {
     }
 }
 
-/// How many introduced viewers a host punches towards: whatever a service
-/// sends, at most [`MAX_INCOMING_PER_MINUTE`] a minute.
-#[derive(Default)]
-struct IntroductionLimit {
+/// How often a host acts on what others send it, such as introductions or
+/// local-network queries: at most `max` times per `per`, whatever arrives.
+struct RateLimit {
+    max: usize,
+    per: Duration,
     recent: VecDeque<Instant>,
 }
 
-impl IntroductionLimit {
+impl RateLimit {
+    fn new(max: usize, per: Duration) -> Self {
+        Self {
+            max,
+            per,
+            recent: VecDeque::new(),
+        }
+    }
+
     fn allow(&mut self, now: Instant) -> bool {
         while self
             .recent
             .front()
-            .is_some_and(|at| now.saturating_duration_since(*at) >= Duration::from_secs(60))
+            .is_some_and(|at| now.saturating_duration_since(*at) >= self.per)
         {
             self.recent.pop_front();
         }
-        if self.recent.len() >= MAX_INCOMING_PER_MINUTE {
+        if self.recent.len() >= self.max {
             return false;
         }
         self.recent.push_back(now);
@@ -958,10 +1053,30 @@ mod tests {
         assert_eq!(nobody, LookupOutcome::NotFound);
     }
 
+    #[tokio::test]
+    async fn viewer_finds_a_host_on_the_local_network_by_device_id() {
+        let id = test_identity("nat-lan").device_id();
+        let (host, _host_endpoint, host_addr) = agent_on_loopback();
+        let (viewer, _viewer_endpoint, _) = agent_on_loopback();
+        host.start_lan_discovery(id);
+        // Asked directly here; a broadcast address reaches the host the same way.
+        assert_eq!(
+            viewer.find_on_lan(id, vec![host_addr]).await,
+            Some(host_addr)
+        );
+
+        host.stop_lan_discovery();
+        assert_eq!(
+            viewer.find_on_lan(id, vec![host_addr]).await,
+            None,
+            "a host that stopped answering is not found"
+        );
+    }
+
     #[test]
     fn introductions_are_limited_per_minute() {
         let t0 = Instant::now();
-        let mut limit = IntroductionLimit::default();
+        let mut limit = RateLimit::new(MAX_INCOMING_PER_MINUTE, Duration::from_secs(60));
         let allowed = (0..15).filter(|_| limit.allow(t0)).count();
         assert_eq!(allowed, MAX_INCOMING_PER_MINUTE);
         assert!(!limit.allow(t0 + Duration::from_secs(59)));

@@ -7,6 +7,7 @@
 //! QUIC listens on, because a router's mapping belongs to that socket's port.
 
 pub mod agent;
+pub mod lan;
 pub mod punch;
 pub mod signal;
 pub mod socket;
@@ -27,6 +28,10 @@ pub const STUN_MAGIC_COOKIE: [u8; 4] = [0x21, 0x12, 0xA4, 0x42];
 /// apart from QUIC (whose fixed bit is always set towards TideDesk endpoints)
 /// and the rest keeps it apart from STUN.
 pub const PUNCH_MAGIC: [u8; 4] = [0x00, b'T', b'D', b'P'];
+
+/// First four bytes of every local-network device-ID query and answer (see
+/// [`lan`]); apart from QUIC and STUN for the same reasons as a punch.
+pub const LAN_MAGIC: [u8; 4] = [0x00, b'T', b'D', b'L'];
 
 /// Why an address cannot be another computer's address on the internet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,6 +81,7 @@ pub(crate) fn random_bytes<const N: usize>() -> [u8; N] {
 pub(crate) fn is_side_channel(datagram: &[u8]) -> bool {
     stun::is_stun(datagram)
         || datagram.starts_with(&PUNCH_MAGIC)
+        || datagram.starts_with(&LAN_MAGIC)
         || tidedesk_rendezvous_proto::is_signal(datagram)
 }
 
@@ -121,6 +127,7 @@ mod tests {
         stun[4..8].copy_from_slice(&STUN_MAGIC_COOKIE);
         assert!(is_side_channel(&stun));
         assert!(is_side_channel(&[0x00, b'T', b'D', b'P', 1]));
+        assert!(is_side_channel(&[0x00, b'T', b'D', b'L', 1]));
 
         // QUIC long and short headers always have the top or fixed bit set.
         let mut quic_long = stun;
