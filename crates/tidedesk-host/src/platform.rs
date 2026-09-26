@@ -222,7 +222,8 @@ mod windows_impl {
     /// no longer shipped, at this program; `true` when it did. The Store
     /// build's startup task names this program already.
     pub fn migrate_autostart() -> anyhow::Result<bool> {
-        if is_packaged() {
+        // A development build must not take over the entry of an installed one.
+        if is_packaged() || cfg!(debug_assertions) {
             return Ok(false);
         }
         let Some(existing) = run_value() else {

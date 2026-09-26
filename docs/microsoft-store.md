@@ -91,7 +91,7 @@ are separate from GitHub releases; portable ZIP users still update manually.
   candidate is not a double-click installer for end users.
 - Run Windows App Certification Kit against the installed package. MakeAppx
   schema validation alone is not certification.
-- Test both Start-menu entries on supported Windows x64 systems (manifest
+- Test the Start-menu entry on supported Windows x64 systems (manifest
   minimum Windows 10 build 19041), as a standard user. Test screen, audio,
   clipboard, remote input, tray behavior, disconnect and two-computer use.
 - Test first-run Windows Firewall access, reconnect after package updates and
