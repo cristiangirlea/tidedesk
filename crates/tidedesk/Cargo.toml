@@ -13,6 +13,7 @@ name = "tidedesk"
 path = "src/main.rs"
 
 [dependencies]
+tidedesk-core.workspace = true
 tidedesk-host.workspace = true
 tidedesk-view.workspace = true
 anyhow.workspace = true

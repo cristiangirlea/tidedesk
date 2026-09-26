@@ -143,6 +143,25 @@ mod windows_impl {
         }
     }
 
+    /// Opens a web page or a file with its usual program. The window's own
+    /// renderer does not open links.
+    pub fn open_link(target: &str) {
+        use windows::Win32::UI::Shell::ShellExecuteW;
+        use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+        use windows::core::{HSTRING, PCWSTR, w};
+        let target = HSTRING::from(target);
+        unsafe {
+            ShellExecuteW(
+                None,
+                w!("open"),
+                &target,
+                PCWSTR::null(),
+                PCWSTR::null(),
+                SW_SHOWNORMAL,
+            )
+        };
+    }
+
     const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
     const RUN_VALUE: &str = "TideDesk Host";
 
@@ -300,6 +319,7 @@ mod fallback {
     pub fn migrate_autostart() -> anyhow::Result<bool> {
         Ok(false)
     }
+    pub fn open_link(_target: &str) {}
 }
 
 /// The Run-key command that starts the host hidden in the tray.

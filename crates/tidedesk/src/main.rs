@@ -11,8 +11,16 @@
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod app;
+mod terms;
 
 use std::ffi::OsString;
+
+/// This build's version: the release's, which the release workflow sets,
+/// else the package's.
+const VERSION: &str = match option_env!("TIDEDESK_VERSION") {
+    Some(version) => version,
+    None => env!("CARGO_PKG_VERSION"),
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Mode {
@@ -55,7 +63,7 @@ fn dispatch(argv: &[OsString]) -> (Mode, Vec<OsString>) {
 
 fn usage() -> String {
     [
-        &format!("TideDesk {}", env!("CARGO_PKG_VERSION")),
+        &format!("TideDesk {VERSION}"),
         "",
         "Usage: tidedesk                          the window: share this computer, connect to another",
         "       tidedesk --tray                   the same, started hidden in the tray",
@@ -82,7 +90,7 @@ fn main() {
         (Mode::Host, args) => tidedesk_host::main("tidedesk host", args, &["host"]),
         (Mode::View, args) => tidedesk_view::main("tidedesk view", args, &["view"]),
         (Mode::Usage, _) => print!("{}", usage()),
-        (Mode::Version, _) => println!("TideDesk {}", env!("CARGO_PKG_VERSION")),
+        (Mode::Version, _) => println!("TideDesk {VERSION}"),
     }
 }
 

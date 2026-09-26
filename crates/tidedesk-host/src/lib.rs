@@ -126,7 +126,7 @@ pub fn load_code(regenerate: bool) -> Result<String> {
 }
 
 pub use gui::{HostApp, HostInfo};
-pub use platform::{attach_console, error_box};
+pub use platform::{attach_console, error_box, open_link};
 
 /// The window icon, for the one program's window.
 pub fn window_icon() -> Arc<egui::IconData> {
@@ -354,6 +354,8 @@ fn run(args: Args) -> Result<()> {
     println!("  Rendezvous:   {rendezvous}");
     println!();
     println!("  Connect with: tidedesk view <this-pc-address> --code {code}");
+    println!();
+    println!("  Terms of use: {}", tidedesk_core::TERMS_URL);
     println!();
     runtime.block_on(std::future::pending::<()>());
     Ok(())
