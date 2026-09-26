@@ -6,7 +6,7 @@
 //! goes straight between the two computers: TideDesk never relays.
 
 use std::fmt;
-use std::net::SocketAddr;
+use std::net::{Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -62,6 +62,8 @@ pub enum Route {
     Internet { stun_servers: Vec<String> },
     /// By device ID, through a rendezvous service (`host[:port]`) that
     /// introduces the two computers; the path is punched as for `Internet`.
+    /// The local network is asked for the ID at the same time, and a host
+    /// found there is reached directly.
     Rendezvous { service: String },
 }
 
@@ -88,6 +90,8 @@ pub enum RouteKind {
     Direct,
     Internet,
     Rendezvous,
+    /// By device ID, found on this computer's own network.
+    LocalNetwork,
 }
 
 /// How a session reaches its host. Logged, so users can check that the
@@ -106,6 +110,7 @@ impl fmt::Display for RouteInfo {
             RouteKind::Direct => "direct",
             RouteKind::Internet => "internet, direct",
             RouteKind::Rendezvous => "by device ID, direct",
+            RouteKind::LocalNetwork => "by device ID on this network, direct",
         };
         write!(f, "{kind} to {}", self.peer)?;
         if let Some(me) = self.observed_self {
@@ -132,8 +137,8 @@ fn verify_device_id(expected: DeviceId, fingerprint: &str) -> Result<()> {
     }
     bail!(
         "the computer that answered is not {expected}: its certificate does not match that \
-         device ID. Someone may be intercepting the connection, or the rendezvous service is \
-         wrong."
+         device ID. Someone may be intercepting the connection, or another computer answered \
+         in its place."
     )
 }
 
@@ -198,6 +203,86 @@ async fn answers_directly(endpoint: &quinn::Endpoint, host: SocketAddr) {
     }
 }
 
+/// Where to ask this computer's own networks for a device ID: the default
+/// port at the limited broadcast address, which some systems send out of one
+/// adapter only, and at each IPv4 network's own broadcast address.
+fn lan_targets() -> Vec<SocketAddr> {
+    let mut targets = vec![SocketAddr::from((Ipv4Addr::BROADCAST, DEFAULT_PORT))];
+    for interface in if_addrs::get_if_addrs().unwrap_or_default() {
+        if let if_addrs::IfAddr::V4(v4) = &interface.addr
+            && !v4.is_loopback()
+            && let Some(broadcast) = directed_broadcast(v4.ip, v4.prefixlen)
+        {
+            let target = SocketAddr::from((broadcast, DEFAULT_PORT));
+            if !targets.contains(&target) {
+                targets.push(target);
+            }
+        }
+    }
+    targets
+}
+
+/// The broadcast address of the network `ip/prefix`; none for point-to-point
+/// links, which have no room for one.
+fn directed_broadcast(ip: Ipv4Addr, prefix: u8) -> Option<Ipv4Addr> {
+    (1..=30)
+        .contains(&prefix)
+        .then(|| Ipv4Addr::from(u32::from(ip) | (u32::MAX >> prefix)))
+}
+
+/// The service's way to a host by device ID: it introduces this computer to
+/// the host, then both punch.
+async fn through_service(
+    agent: &Agent,
+    device_id: DeviceId,
+    service: &str,
+    progress: &impl Fn(Progress),
+) -> Result<RouteInfo> {
+    let main = resolve_service(service)
+        .await
+        .with_context(|| format!("cannot find the connection service {service}"))?;
+    let introduction = match agent.lookup(service.to_string(), main, device_id).await {
+        LookupOutcome::Introduced(introduction) => introduction,
+        LookupOutcome::NotFound => {
+            bail!("{device_id} is not online right now (not registered at {service})")
+        }
+        LookupOutcome::Unreachable(reason) => bail!("{reason}"),
+    };
+    if introduction.nat == NatKind::Symmetric {
+        bail!(symmetric_nat());
+    }
+    let peer = introduction.peer;
+    progress(Progress::Status(format!(
+        "Opening a path to {device_id} at {peer}…"
+    )));
+    let path = match agent
+        .punch(peer, Some(introduction.session), RENDEZVOUS_PUNCH_WINDOW)
+        .await
+    {
+        Ok(path) => path,
+        // Tried anyway: some routers do loop traffic back to themselves.
+        Err(_) if introduction.reflexive.ip() == peer.ip() => bail!(
+            "{device_id} did not answer. It has the same internet address as this computer \
+             ({}), so both are on the same network and the router may not loop traffic \
+             back: connect directly to one of the host's local addresses instead (the \
+             host's window lists them)",
+            peer.ip()
+        ),
+        Err(_) => bail!(
+            "{device_id} did not answer at {peer}. If either network uses a symmetric NAT \
+             (common on mobile data and carrier-grade NAT), a direct connection is \
+             impossible: TideDesk never relays, so use a VPN such as Tailscale or forward \
+             UDP port {DEFAULT_PORT} on the host's router. See docs/internet-access.md."
+        ),
+    };
+    progress(Progress::PathOpen(path.clone()));
+    Ok(RouteInfo {
+        kind: RouteKind::Rendezvous,
+        peer: path.peer,
+        observed_self: Some(introduction.reflexive),
+    })
+}
+
 /// `host`, `host:port`, `[v6]:port` → `(display form, socket address)`.
 async fn resolve(host: &str) -> Result<(String, SocketAddr)> {
     let with_port = net::with_default_port(host, DEFAULT_PORT);
@@ -255,7 +340,7 @@ impl Dialer {
             }
             Route::Internet { stun_servers } => stun_servers,
             Route::Rendezvous { service } => {
-                return Self::by_device_id(host, service, progress).await;
+                return Self::by_device_id(host, service, lan_targets(), progress).await;
             }
         };
 
@@ -333,66 +418,67 @@ impl Dialer {
         })
     }
 
-    /// The rendezvous route: the service introduces this computer to the
-    /// host with the device ID, then both punch.
-    async fn by_device_id(host: &str, service: &str, progress: impl Fn(Progress)) -> Result<Self> {
+    /// The device-ID route: asks this computer's own networks (`lan`, their
+    /// broadcast addresses) and the service at once and takes whichever finds
+    /// the host first. A host found on the network is dialled directly; one
+    /// the service introduces, through a punched path.
+    async fn by_device_id(
+        host: &str,
+        service: &str,
+        lan: Vec<SocketAddr>,
+        progress: impl Fn(Progress),
+    ) -> Result<Self> {
         let device_id = parse_device_id(host).with_context(|| {
             format!("{host} is not a device ID (they look like TD-1A2B-3C4D-5E6F-7A8B)")
         })?;
-        let (socket, side_channel) = SharedSocket::bind(SocketAddr::from(([0, 0, 0, 0], 0)))
+        let socket = std::net::UdpSocket::bind(SocketAddr::from(([0, 0, 0, 0], 0)))
             .context("opening a UDP socket")?;
+        // The local-network query goes to broadcast addresses.
+        socket.set_broadcast(true).context("opening a UDP socket")?;
+        let (socket, side_channel) =
+            SharedSocket::from_std(socket).context("opening a UDP socket")?;
         let endpoint = net::client_endpoint_on(socket.clone())?;
         let agent = Agent::spawn(socket, side_channel)?;
 
         progress(Progress::Status(format!(
-            "Asking {service} for {device_id}…"
+            "Looking for {device_id} on this network and at {service}…"
         )));
-        let main = resolve_service(service)
-            .await
-            .with_context(|| format!("cannot find the rendezvous service {service}"))?;
-        let introduction = match agent.lookup(service.to_string(), main, device_id).await {
-            LookupOutcome::Introduced(introduction) => introduction,
-            LookupOutcome::NotFound => {
-                bail!("{device_id} is not online right now (not registered at {service})")
+        // In a block, so the search that lost stops before the host is dialled.
+        let route = {
+            let on_lan = agent.find_on_lan(device_id, lan);
+            let through_service = through_service(&agent, device_id, service, &progress);
+            tokio::pin!(on_lan, through_service);
+            let (mut lan_done, mut service_failed) = (false, None);
+            loop {
+                tokio::select! {
+                    found = &mut on_lan, if !lan_done => match found {
+                        Some(peer) => {
+                            progress(Progress::Status(format!(
+                                "Found {device_id} on this network at {peer}."
+                            )));
+                            break RouteInfo {
+                                kind: RouteKind::LocalNetwork,
+                                peer,
+                                observed_self: None,
+                            };
+                        }
+                        None => lan_done = true,
+                    },
+                    opened = &mut through_service, if service_failed.is_none() => match opened {
+                        Ok(route) => break route,
+                        Err(e) => service_failed = Some(e),
+                    },
+                }
+                // A failure only counts once the other way has failed too.
+                if lan_done && let Some(e) = &service_failed {
+                    bail!("{device_id} was not found on this network, and {e:#}");
+                }
             }
-            LookupOutcome::Unreachable(reason) => bail!("{reason}"),
         };
-        if introduction.nat == NatKind::Symmetric {
-            bail!(symmetric_nat());
-        }
-        let peer = introduction.peer;
-        progress(Progress::Status(format!(
-            "Opening a path to {device_id} at {peer}…"
-        )));
-        let path = match agent
-            .punch(peer, Some(introduction.session), RENDEZVOUS_PUNCH_WINDOW)
-            .await
-        {
-            Ok(path) => path,
-            // Tried anyway: some routers do loop traffic back to themselves.
-            Err(_) if introduction.reflexive.ip() == peer.ip() => bail!(
-                "{device_id} did not answer. It has the same internet address as this computer \
-                 ({}), so both are on the same network and the router may not loop traffic \
-                 back: connect directly to one of the host's local addresses instead (the \
-                 host's window lists them)",
-                peer.ip()
-            ),
-            Err(_) => bail!(
-                "{device_id} did not answer at {peer}. If either network uses a symmetric NAT \
-                 (common on mobile data and carrier-grade NAT), a direct connection is \
-                 impossible: TideDesk never relays, so use a VPN such as Tailscale or forward \
-                 UDP port {DEFAULT_PORT} on the host's router. See docs/internet-access.md."
-            ),
-        };
-        progress(Progress::PathOpen(path.clone()));
         Ok(Self {
             address: device_id.to_string(),
             endpoint,
-            route: RouteInfo {
-                kind: RouteKind::Rendezvous,
-                peer: path.peer,
-                observed_self: Some(introduction.reflexive),
-            },
+            route,
             config_dir: None,
             device_id: Some(device_id),
             _agent: Some(agent),
@@ -435,9 +521,7 @@ impl Dialer {
             // one trusted by its fingerprint is not remembered. A device ID
             // is stable: remember it, so the launcher lists it as recent.
             PinStatus::Trusted => {
-                if self.route.kind == RouteKind::Rendezvous
-                    && known.check(display, &fp) != PinStatus::Trusted
-                {
+                if self.device_id.is_some() && known.check(display, &fp) != PinStatus::Trusted {
                     known.pin(display, &fp)?;
                 }
             }
@@ -526,7 +610,7 @@ impl Dialer {
             // A router's public address and port change while the host does not.
             RouteKind::Internet => known.check_fingerprint_first(&self.address, fp),
             // Checked against the device ID, which is the certificate's hash.
-            RouteKind::Rendezvous => PinStatus::Trusted,
+            RouteKind::Rendezvous | RouteKind::LocalNetwork => PinStatus::Trusted,
         }
     }
 
@@ -795,6 +879,153 @@ mod tests {
         .await;
         let err = unknown.err().expect("nobody has that ID").to_string();
         assert!(err.contains("not online"), "{err}");
+    }
+
+    #[test]
+    fn directed_broadcast_covers_the_subnet() {
+        let broadcast = |ip: [u8; 4], prefix| directed_broadcast(Ipv4Addr::from(ip), prefix);
+        assert_eq!(
+            broadcast([192, 168, 1, 20], 24),
+            Some(Ipv4Addr::new(192, 168, 1, 255))
+        );
+        assert_eq!(
+            broadcast([172, 16, 5, 9], 20),
+            Some(Ipv4Addr::new(172, 16, 15, 255))
+        );
+        assert_eq!(
+            broadcast([10, 1, 2, 3], 8),
+            Some(Ipv4Addr::new(10, 255, 255, 255))
+        );
+        // Point-to-point links have no broadcast address; /0 would be everything.
+        for prefix in [0, 31, 32] {
+            assert_eq!(broadcast([192, 168, 1, 20], prefix), None, "/{prefix}");
+        }
+
+        let targets = lan_targets();
+        assert_eq!(
+            targets.first(),
+            Some(&SocketAddr::from((Ipv4Addr::BROADCAST, DEFAULT_PORT)))
+        );
+        assert!(targets.iter().all(|t| t.port() == DEFAULT_PORT));
+        let mut unique = targets.clone();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), targets.len(), "{targets:?}");
+    }
+
+    /// A host on loopback that answers local-network queries for `answers_for`
+    /// while presenting `identity`'s certificate, for as long as the returned
+    /// agent lives.
+    fn host_on_this_network(
+        identity: &HostIdentity,
+        answers_for: DeviceId,
+    ) -> (Arc<Agent>, SocketAddr) {
+        let (socket, tap) = SharedSocket::bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        let addr = socket.local_addr().unwrap();
+        fake_host(net::server_endpoint_on(socket.clone(), identity).unwrap());
+        let agent = Agent::spawn(socket, tap).unwrap();
+        agent.start_lan_discovery(answers_for);
+        (agent, addr)
+    }
+
+    /// No IPv4 address: the service cannot even be looked up, as when offline.
+    const OFFLINE_SERVICE: &str = "[::1]:47900";
+
+    #[tokio::test]
+    async fn dialer_finds_a_host_on_this_network_without_the_service() {
+        let dir = temp_dir("dialer-lan");
+        let identity = HostIdentity::load_or_create(&dir).unwrap();
+        let (_host, host_addr) = host_on_this_network(&identity, identity.device_id());
+        let id = identity.device_id().to_string();
+
+        let statuses = Arc::new(Mutex::new(Vec::new()));
+        let progress = {
+            let statuses = statuses.clone();
+            move |step| {
+                if let Progress::Status(text) = step {
+                    statuses.lock().unwrap().push(text);
+                }
+            }
+        };
+        let dialer = Dialer::by_device_id(&id, OFFLINE_SERVICE, vec![host_addr], progress)
+            .await
+            .unwrap()
+            .with_config_dir(dir.clone());
+        let found = RouteInfo {
+            kind: RouteKind::LocalNetwork,
+            peer: host_addr,
+            observed_self: None,
+        };
+        assert_eq!(dialer.route, found);
+        assert_eq!(
+            found.to_string(),
+            format!("by device ID on this network, direct to {host_addr}")
+        );
+        let statuses = statuses.lock().unwrap().clone();
+        assert!(
+            statuses
+                .iter()
+                .any(|s| s.contains("Found") && s.contains(&id)),
+            "{statuses:?}"
+        );
+
+        let probe = dialer.probe().await.unwrap();
+        assert_eq!(probe.status, PinStatus::Trusted, "the ID vouches for it");
+        let route = Route::Rendezvous {
+            service: OFFLINE_SERVICE.into(),
+        };
+        let session = dialer.connect(&options(host_addr, route)).await.unwrap();
+        assert_eq!(session.route.kind, RouteKind::LocalNetwork);
+        assert_eq!(session.fingerprint, identity.fingerprint());
+        session.conn.close(0u32.into(), b"done");
+        let known = KnownHosts::load(&dir).unwrap();
+        assert!(
+            known.addresses().any(|a| a == id),
+            "remembered under the ID, for the recent list"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_spoofed_lan_answer_cannot_impersonate_the_host() {
+        let victim = HostIdentity::load_or_create(&temp_dir("lan-victim")).unwrap();
+        let dir = temp_dir("lan-impostor");
+        let impostor = HostIdentity::load_or_create(&dir).unwrap();
+        let (_impostor, addr) = host_on_this_network(&impostor, victim.device_id());
+        let id = victim.device_id().to_string();
+
+        let dialer = Dialer::by_device_id(&id, OFFLINE_SERVICE, vec![addr], |_| {})
+            .await
+            .expect("the impostor answers")
+            .with_config_dir(dir);
+        let refused = dialer.probe().await.err().expect("refused").to_string();
+        assert!(refused.contains(&format!("is not {id}")), "{refused}");
+        let route = Route::Rendezvous {
+            service: OFFLINE_SERVICE.into(),
+        };
+        let refused = dialer.connect(&options(addr, route)).await.err();
+        let refused = refused
+            .expect("refused before the code is used")
+            .to_string();
+        assert!(refused.contains(&format!("is not {id}")), "{refused}");
+    }
+
+    #[tokio::test]
+    async fn dialer_names_both_failures_when_nobody_answers() {
+        // Bound, so the queries go somewhere, but nobody answers them.
+        let silent = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let lan = vec![silent.local_addr().unwrap()];
+        let id = "TD-0000-0000-0000-0001";
+        let err = Dialer::by_device_id(id, OFFLINE_SERVICE, lan, |_| {})
+            .await
+            .err()
+            .expect("nobody has that ID")
+            .to_string();
+        assert!(
+            err.contains(&format!("{id} was not found on this network")),
+            "{err}"
+        );
+        assert!(err.contains("connection service"), "{err}");
+        assert!(!err.contains("rendezvous"), "{err}");
     }
 
     #[tokio::test]

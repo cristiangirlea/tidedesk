@@ -3608,6 +3608,7 @@ dependencies = [
  "egui-winit",
  "egui_software_backend",
  "embed-resource",
+ "if-addrs",
  "openh264",
  "opus",
  "quinn",
