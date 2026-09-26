@@ -60,7 +60,7 @@ retention). Download that artifact promptly and retain the approved candidate.
 It is not attached to the public GitHub release or presented as an installer.
 
 Store package versions are 1.0.<Release workflow run number>.0, separate from
-the user-facing TideDesk version embedded in the executables. This supports
+the user-facing TideDesk version embedded in tidedesk.exe. This supports
 alpha updates without mapping semver prerelease text into MSIX's numeric version.
 Reruns have the same package version. Do not submit different packages at the
 same version; create a new reviewed release. Before renaming/replacing the
@@ -82,7 +82,7 @@ are separate from GitHub releases; portable ZIP users still update manually.
   under licenses/third-party. Review this generated inventory before each
   submission; a successful script run is not a legal clearance of all rights.
 - Resolve H.264 patent rights before Store submission. TideDesk currently builds
-  OpenH264 from source into its executables. Cisco's OpenH264 FAQ says its
+  OpenH264 from source into its executable. Cisco's OpenH264 FAQ says its
   MPEG LA royalty coverage applies to the Cisco-distributed binary module,
   not independently built binaries. Including the BSD copyright notice does
   not extend that separate patent coverage. See https://www.openh264.org/faq.html.
@@ -126,7 +126,7 @@ Use PowerShell 7 and the x64 MakeAppx from the Windows 10/11 SDK.
 
 ~~~powershell
 $settings = @{
-    Version = '0.1.0-alpha.2-dev' # must match both executable product versions
+    Version = '0.1.0-alpha.2-dev' # must match tidedesk.exe's product version
     PackageVersion = '1.0.1.0'   # strictly above the last Store package
     IdentityName = $env:MSIX_IDENTITY_NAME
     Publisher = $env:MSIX_PUBLISHER

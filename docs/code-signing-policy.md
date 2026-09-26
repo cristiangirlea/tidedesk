@@ -2,9 +2,9 @@
 
 ## Current status
 
-TideDesk's published alpha executables are unsigned. Optional SignPath integration
+TideDesk's published alpha executable, tidedesk.exe, is unsigned. Optional SignPath integration
 is prepared but production signing is not active. Each release's notes state
-whether that release's executables are signed.
+whether that release's executable is signed.
 
 The personal-use-only source license is not eligible for SignPath Foundation's
 open-source program. Do not claim Foundation approval or submit this licensing
@@ -26,8 +26,8 @@ contributors require maintainer review, including changes to dependencies and bu
 
 When signing is activated, release signatures require manual approval in SignPath.
 Builds run on GitHub-hosted Windows runners from the public source repository. The
-signing configuration limits signing to the two TideDesk executables and verifies
-their product name, version and original filenames. Enabling signing makes signature
+signing configuration limits signing to the TideDesk executable, tidedesk.exe, and verifies
+its product name, version and original filename. Enabling signing makes signature
 verification mandatory before publication.
 
 ## Privacy
@@ -79,7 +79,7 @@ third-party network service, that service's privacy policy also applies.
 
 Use the SHA-256 file attached to the same release to check download integrity.
 A checksum alone does not authenticate the publisher. For a signed release, check
-both executables' Digital Signatures tab in Windows file properties or use
+tidedesk.exe's Digital Signatures tab in Windows file properties or use
 Get-AuthenticodeSignature in PowerShell.
 
 A valid signature identifies a signer and detects modification. Windows reputation

@@ -13,8 +13,9 @@ the new terms do not revoke those permissions. See [licensing](docs/licensing.md
 
 [![Download for Windows](https://img.shields.io/github/v/release/cristiangirlea/tidedesk?include_prereleases&label=Download%20for%20Windows&style=for-the-badge&logo=windows&color=0e8a8a)](https://github.com/cristiangirlea/tidedesk/releases)
 
-Unzip and run `tidedesk.exe` on both computers — no installation needed. (`tidedesk-host.exe`
-and `tidedesk-view.exe` still work in this release.)
+Unzip and run `tidedesk.exe` on both computers — no installation needed. (Earlier releases also
+shipped `tidedesk-host.exe` and `tidedesk-view.exe`: a start-up entry for the host moves to
+`tidedesk.exe` by itself, and shortcuts to either need to point to `tidedesk.exe`.)
 
 > Status: **early alpha**. Windows → Windows works on a local network. Linux, Android and iOS
 > are planned. See the [roadmap](docs/ROADMAP.md).
@@ -179,8 +180,7 @@ Requirements (Windows):
 cargo build --release --workspace --locked
 ```
 
-Binaries land in `target/release/`: `tidedesk.exe` (both sides), plus `tidedesk-host.exe`
-and `tidedesk-view.exe`, kept for one more release.
+The program lands in `target/release/tidedesk.exe` (both sides).
 
 ## Project layout
 
@@ -188,8 +188,8 @@ and `tidedesk-view.exe`, kept for one more release.
 |---|---|
 | `tidedesk` | The one program: `tidedesk host …` and `tidedesk view …` |
 | `tidedesk-core` | Platform-independent: wire protocol, auth, identity pinning, QUIC setup, audio helpers |
-| `tidedesk-host` | Screen capture, H.264 encoding, audio capture, input injection |
-| `tidedesk-view` | Window, H.264 decoding, audio playback, input capture |
+| `tidedesk-host` | Library: screen capture, H.264 encoding, audio capture, input injection |
+| `tidedesk-view` | Library: window, H.264 decoding, audio playback, input capture |
 | `third_party/egui_software_backend` | Vendored CPU renderer for the small app windows, with a repaint fix |
 
 The app windows are drawn on the CPU with [egui](https://github.com/emilk/egui): an OpenGL or
@@ -220,6 +220,6 @@ redistribute TideDesk builds, check what applies in your jurisdiction.
 
 ## Code signing policy
 
-Release executables are currently unsigned. Signing integration is prepared but is not
+The release executable is currently unsigned. Signing integration is prepared but is not
 active until a signing provider has approved and configured the project. See the
 [code signing policy](docs/code-signing-policy.md) and [release process](docs/releases.md).
