@@ -13,7 +13,7 @@ use anyhow::{Result, anyhow};
 use egui::{Color32, RichText};
 use egui_software_backend::{SoftwareBackend, SoftwareBackendAppConfiguration};
 use tidedesk_core::nat::signal::Credentials;
-use tidedesk_core::nat::signal::DEFAULT_RENDEZVOUS;
+use tidedesk_core::nat::signal::{DEFAULT_RENDEZVOUS, RendezvousStatus};
 use tidedesk_core::nat::stun::{DEFAULT_STUN_SERVERS, STUN_REFRESH};
 use tidedesk_core::nat::{Agent, NatKind, PublicStatus};
 
@@ -306,6 +306,14 @@ impl HostApp {
             copy_button(ui, &device_id);
         });
         ui.small(internet::describe_rendezvous(&self.info.agent.rendezvous()));
+        let registers = self.info.agent.rendezvous() != RendezvousStatus::Off;
+        if let Some(line) = internet::describe_lan_discovery(
+            self.info.config.lan_discovery,
+            self.info.port,
+            registers,
+        ) {
+            ui.small(line);
+        }
         ui.add_space(6.0);
 
         ui.label("Fingerprint");
@@ -470,6 +478,15 @@ impl HostApp {
         if cfg.port != self.info.port {
             ui.small("The new port is used after TideDesk Host restarts.");
         }
+        ui.checkbox(
+            &mut cfg.lan_discovery,
+            "Reachable by device ID on this network",
+        )
+        .on_hover_text(
+            "Answers viewers on this local network that look for this computer's device \
+                 ID, so they connect directly even without the internet. Only computers on \
+                 this network get an answer.",
+        );
         ui.add_space(8.0);
 
         ui.label(RichText::new("Internet").strong());
@@ -543,6 +560,14 @@ impl HostApp {
                             .start_rendezvous(service.to_string(), credentials);
                     }
                     None => self.info.agent.stop_rendezvous(),
+                }
+            }
+            if cfg.lan_discovery != before.lan_discovery {
+                if cfg.lan_discovery {
+                    let device_id = self.info.identity.device_id;
+                    self.info.agent.start_lan_discovery(device_id);
+                } else {
+                    self.info.agent.stop_lan_discovery();
                 }
             }
             if cfg.discover_public_address != before.discover_public_address

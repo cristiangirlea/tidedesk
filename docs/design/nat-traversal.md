@@ -194,6 +194,41 @@ service's own CI against it (`TIDEDESK_TEST_SERVICE=ip:port`).
   lookups must return a challenge sent to the sender's own address, and refreshes a
   secret token, so a forged source address gains nothing. Each address is rate-limited.
 
+## Device IDs on the local network
+
+A viewer given a device ID also asks its own network, so the ID works on one network
+with no service and no internet. The query and the answer are side-channel packets on
+the same shared socket, told apart by their magic like punches:
+
+| bytes  | field                                         |
+|--------|-----------------------------------------------|
+| 0..4   | magic `00 'T' 'D' 'L'`                        |
+| 4      | version (1)                                   |
+| 5      | kind: 0 query, 1 answer                       |
+| 6..8   | reserved, zero                                |
+| 8..16  | the device ID asked for                       |
+| 16..24 | nonce: random per search; an answer echoes it |
+
+- **Viewer.** Its IPv4 socket may broadcast. It sends the query to UDP port 47800 at
+  `255.255.255.255` and at the broadcast address of every IPv4 network it is on, at 0,
+  0.25, 0.75 and 1.75 seconds, and waits up to 3 seconds. At the same time it asks the
+  service as above. The first to find the host wins; a failure waits for the other
+  way. A host found on the network is dialled at the answer's source address, which
+  is the host's QUIC port, with no punching (`path: by device ID on this network`).
+- **Host.** Answers only a query for its own ID, only from a local-network IPv4
+  address (private, link-local, loopback or 100.64.0.0/10), at most 20 answers a
+  second, each exactly as large as its query: no amplification, and nothing for the
+  internet. On by default, independent of the service setting; `lan_discovery` in
+  `host.toml` or Settings, Network turns it off.
+- **Identity.** Nothing in the answer is trusted. Before an answer counts as found,
+  the viewer completes a handshake with its sender and checks that the certificate
+  hashes to the ID, as for the service. A computer answering in the host's place is
+  refused without stopping the service's way to the real host, and the access code is
+  never used towards it.
+- **Limits.** Viewers only look on port 47800 (a host on another port is found through
+  the service), IPv4 only, and broadcasts stop at routers (other subnets and VLANs use
+  the service or the address).
+
 ## Validation checklist
 
 Record results before each release that changes this area.
@@ -211,3 +246,7 @@ Record results before each release that changes this area.
 6. Host restart (new public port): no "identity changed" on the next connection.
 7. Wrong access code over the internet: one throttled failure per attempt; punches
    never count as attempts.
+8. Two computers on one network, internet unplugged: connecting by device ID finds
+   the host within a second and the viewer's `path:` line says "by device ID on this
+   network". With the host's option turned off, the viewer says it was not found on
+   this network after about 3 seconds.

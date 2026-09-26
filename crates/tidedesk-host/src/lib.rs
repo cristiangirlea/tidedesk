@@ -231,6 +231,10 @@ pub fn start(options: &StartOptions) -> Result<Started> {
     if let Some(service) = rendezvous {
         agent.start_rendezvous(service, identity.rendezvous_credentials());
     }
+    // Needs no service: viewers on this network ask the network itself.
+    if config.lan_discovery {
+        agent.start_lan_discovery(identity.device_id());
+    }
     let mut agent_status = agent.status();
     let repaint = state.clone();
     runtime.spawn(async move {

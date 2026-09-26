@@ -58,9 +58,10 @@ For how it works, see the [design notes](design/nat-traversal.md).
 
 A viewer can reach a host by its **device ID** (`TD-1A2B-3C4D-5E6F-7A8B`, shown in
 the host window) without anyone typing internet addresses, and a host started with
-`--headless` can be reached too. TideDesk's own rendezvous service
+`--headless` can be reached too. TideDesk's own connection service
 (`rendezvous.tidedesk.app`) introduces the two computers; the path and the session are
-the same direct ones as above, and the service never carries them.
+the same direct ones as above, and the service never carries them. On the same local
+network the ID works even without the service or the internet (see below).
 
 1. **Host:** nothing to set up. The Share tab shows the device ID and "Viewers on
    other networks can connect with this ID" once it is registered.
@@ -84,6 +85,21 @@ viewer checks that the host's certificate hashes to the device ID it asked for, 
 the access code never passes through the service. A broken or hostile service can at
 most send a viewer to a wrong address, where that check fails. See the privacy notes
 in the [code signing policy](code-signing-policy.md).
+
+**On the same local network.** While it asks the connection service, the viewer also
+asks its own network: a small broadcast query for the ID (24 bytes, UDP port 47800),
+which the host with that ID answers. Whichever answers first is used, so a device ID
+works at home or in an office with no setup, even when the internet or the service is
+down, and the session then takes the direct local path (`--stats` shows "by device ID
+on this network"). Only the host with that ID answers, only to computers on its own
+network, with a packet the same size as the query; the viewer still checks the
+certificate against the ID, so another computer answering in the host's place is
+refused. Hosts answer unless **Reachable by device ID on this network** is turned off
+under Settings, Network (`lan_discovery = false` in `host.toml`).
+
+Viewers look on UDP port 47800 only: a host set to another port is still found through
+the service. Broadcasts stop at routers, so computers on different subnets or VLANs
+use the service or the host's address.
 
 ## 2. Tailscale
 

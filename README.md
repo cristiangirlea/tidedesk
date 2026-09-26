@@ -77,8 +77,9 @@ Windows Firewall will ask to allow `tidedesk` the first time; allow it on privat
 ### Host settings
 
 The host's **Settings** tab covers the shared screen, frame rate, quality, sound, UDP port,
-whether the window appears in the taskbar, starting hidden in the tray, and starting when you
-sign in to Windows. Settings are saved in `%APPDATA%\TideDesk\host.toml`.
+whether viewers on the same network can find it by device ID, whether the window appears
+in the taskbar, starting hidden in the tray, and starting when you sign in to Windows.
+Settings are saved in `%APPDATA%\TideDesk\host.toml`.
 
 ### Command line
 
@@ -147,8 +148,10 @@ that address and give the viewer's address to the person at the host, who types 
 under **Viewer on another network** and presses **Open**. Where no direct path is
 possible (symmetric NAT, common on mobile data), a free VPN such as Tailscale still
 works. Viewers can also connect by the host's **device ID**, even to a headless host:
-TideDesk's own rendezvous service introduces the two computers and never carries the
-session (it can be changed or turned off in Settings). See
+TideDesk's own connection service introduces the two computers and never carries the
+session (it can be changed or turned off in Settings). On the same local network a
+device ID works even without the internet: the viewer asks the network too, and the
+host answers directly. See
 [internet access](docs/internet-access.md) and the
 [design notes](docs/design/nat-traversal.md).
 
