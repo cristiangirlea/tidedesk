@@ -65,6 +65,13 @@ service (or the one in Viewer Settings) for that ID, which tells the service the
 viewer's public address and which ID it asked for; a viewer that never connects by ID
 never contacts it.
 
+A viewer connecting by device ID also broadcasts a 24-byte query for that ID on its
+local network (UDP port 47800), so other computers on that network can see which ID
+it looks for. TideDesk Host answers only queries for its own ID from computers on its
+local network, with a packet of the same size; nothing of this leaves the local
+network. Turn answering off under Settings, Network (or with `lan_discovery = false`
+in `host.toml`).
+
 Operators choose their network destinations. If they use a separate VPN or other
 third-party network service, that service's privacy policy also applies.
 

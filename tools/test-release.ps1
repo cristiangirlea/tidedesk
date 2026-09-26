@@ -94,6 +94,9 @@ try {
         if ($text -notmatch 'device ID' -or $text -notmatch 'rendezvous\.tidedesk\.app') {
             throw 'Release text must describe connecting by device ID and name the rendezvous service.'
         }
+        if ($text -notmatch 'same local network') {
+            throw 'Release text must say device IDs work on the same local network.'
+        }
     }
     if ($releaseNotes -notmatch 'Business use requires separate written permission' -or
         $releaseNotes -match 'free, open-source') {

@@ -51,9 +51,11 @@ presses Open. The session runs directly between the two computers: TideDesk neve
 Symmetric NAT (common on mobile data) prevents a direct path; use a VPN such as Tailscale.
 Addresses are looked up from public STUN servers, which see the public IP address and port.
 A viewer can instead connect by the host's device ID (TD-XXXX-XXXX-XXXX-XXXX), headless
-hosts too: TideDesk's rendezvous service (rendezvous.tidedesk.app) introduces the two
+hosts too: TideDesk's connection service (rendezvous.tidedesk.app) introduces the two
 computers and never carries the session. Hosts register with it unless that is turned off
 in Host Settings; another service can be named in Host and Viewer Settings.
+On the same local network a device ID works even without the internet: the viewer also
+asks the network, and the host answers directly (Host Settings, Network can turn it off).
 
 Windows to Windows, one viewer at a time. For internet connections, see:
 https://github.com/cristiangirlea/tidedesk/blob/main/docs/internet-access.md

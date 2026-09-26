@@ -60,9 +60,11 @@ Every session runs directly between the two computers; TideDesk never relays.
 ### Experimental: connect by device ID
 
 - A viewer reaches a host by its stable device ID instead of both people typing
-  addresses, headless hosts included. TideDesk's own rendezvous service introduces the
+  addresses, headless hosts included. TideDesk's own connection service introduces the
   two computers by default (changeable or off in Settings) and never carries session
   data; direct paths only, no relay.
+- On the same local network the viewer also asks the network for the ID and the host
+  answers directly, so device IDs work there without the service or the internet.
 
 ## Next: one app
 
