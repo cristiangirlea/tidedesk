@@ -143,7 +143,7 @@ impl Lookup {
         }
         if now.saturating_duration_since(self.started) >= LOOKUP_GIVE_UP {
             self.outcome = Some(LookupOutcome::Unreachable(format!(
-                "no answer from the rendezvous service {}",
+                "no answer from the connection service {}",
                 self.name
             )));
             return Vec::new();
