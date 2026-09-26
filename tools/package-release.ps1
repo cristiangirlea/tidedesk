@@ -12,7 +12,7 @@ if ($Version -cnotmatch '^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-
     throw 'Invalid release version.'
 }
 $repo = Split-Path $PSScriptRoot -Parent
-$files = @('tidedesk.exe', 'tidedesk-host.exe', 'tidedesk-view.exe')
+$files = @('tidedesk.exe')
 $binaryRoot = (Resolve-Path -LiteralPath $BinaryDirectory).Path
 foreach ($file in $files) {
     $path = Join-Path $binaryRoot $file
@@ -45,14 +45,14 @@ Copy-Item -LiteralPath (Join-Path $repo 'LICENSE') -Destination $stage
 Copy-Item -LiteralPath (Join-Path $repo 'licenses') -Destination $stage -Recurse
 & (Join-Path $repo 'tools/package-third-party-notices.ps1') -StageDirectory $stage | Out-Null
 $signingText = if ($Signed) {
-    'The executables have verified, timestamped Authenticode signatures. Windows reputation checks may still show a warning.'
+    'tidedesk.exe has a verified, timestamped Authenticode signature. Windows reputation checks may still show a warning.'
 } else {
-    'The executables are unsigned. Windows SmartScreen may show an unknown-publisher warning.'
+    'tidedesk.exe is unsigned. Windows SmartScreen may show an unknown-publisher warning.'
 }
 $template = Get-Content -LiteralPath (Join-Path $repo 'assets/release-README.txt') -Raw
 $template.Replace('@VERSION@', $Version).Replace('@SIGNING@', $signingText) |
     Set-Content -LiteralPath (Join-Path $stage 'README.txt') -Encoding utf8NoBOM
-$expected = @('LICENSE', 'README.txt', 'tidedesk-host.exe', 'tidedesk-view.exe', 'tidedesk.exe')
+$expected = @('LICENSE', 'README.txt', 'tidedesk.exe')
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 # CreateFromDirectory writes '/'-separated entry names on both PowerShell editions.
 [IO.Compression.ZipFile]::CreateFromDirectory($stage, $zipPath, [IO.Compression.CompressionLevel]::Optimal, $false)
@@ -77,13 +77,13 @@ $notes = @(
     '',
     'License: TideDesk Personal Use Source License 1.0 (see LICENSE in the ZIP). Business use requires separate written permission. Previously published AGPL releases retain their original permissions.',
     '',
-    "Download $stem and extract it. Run tidedesk.exe on the computer to reach and ``tidedesk view`` on the other computer.",
+    "Download $stem and extract it. Run tidedesk.exe on both computers.",
     '',
     $signingText,
     '',
     '**Experimental alpha — not a stable release.** Game Boost is opt-in and off by default. Real-world two-computer gameplay and end-to-end latency validation are still pending.',
     '',
-    'New in this build: one program, one window. tidedesk.exe opens a window with "Share this computer", "Connect to a computer" and "Settings", and the Start menu has a single TideDesk entry. `tidedesk host` and `tidedesk view` still run either side alone (`tidedesk host --headless` for servers). tidedesk-host.exe and tidedesk-view.exe remain in this release for existing shortcuts and autostart entries.',
+    'New in this build: tidedesk.exe is the only program. tidedesk-host.exe and tidedesk-view.exe, kept in v0.1.0-alpha.7 for existing shortcuts, are no longer included: a start-up entry that ran tidedesk-host.exe starts tidedesk.exe instead from its first run, and shortcuts to the old programs need to point to tidedesk.exe. tidedesk.exe opens one window with "Share this computer", "Connect to a computer" and "Settings"; `tidedesk host` and `tidedesk view` still run either side alone (`tidedesk host --headless` for servers).',
     '',
     'New in this build: experimental direct internet connections, computer to computer, with no relay. The host shows its internet address, learned from public STUN servers (configurable in Host Settings, Internet). In the viewer, tick "Over the internet", connect to that address, and give the viewer''s address to the person at the host, who types it under "Viewer on another network" and presses Open. Both computers then open a path through their routers and the session runs directly between them. Symmetric NAT, common on mobile data, cannot be traversed: use a VPN such as Tailscale there. Hosts with a forwarded port connect without the manual step.',
     '',

@@ -24,15 +24,15 @@ v0.1.0-alpha.1.
 
 The archive is tidedesk-VERSION-windows-x64.zip, containing these files at its root:
 
-- tidedesk.exe (both sides: `tidedesk host`, `tidedesk view`)
-- tidedesk-host.exe and tidedesk-view.exe (the same two modes; kept for one release)
+- tidedesk.exe (both sides: `tidedesk host`, `tidedesk view`; earlier releases also
+  shipped tidedesk-host.exe and tidedesk-view.exe)
 - README.txt
 - LICENSE
 - licenses/: earlier-release AGPL text and third-party notices, generated from
   Cargo.lock by tools/package-third-party-notices.ps1 (index: licenses/third-party/INDEX.txt)
 
 The workflow attaches the ZIP and ZIP.sha256 to the release. Release notes also contain
-both executable hashes and a Code signing policy link. Hashes are calculated after
+the executable's hash and a Code signing policy link. Hashes are calculated after
 signing. Tags with a prerelease suffix produce a GitHub prerelease.
 
 Packaging checks Windows product/version metadata and rejects stale output directories.
@@ -44,7 +44,7 @@ cargo build --locked --release --workspace
 ./tools/package-release.ps1 -Version $env:TIDEDESK_VERSION -OutputDirectory target/local-package
 ~~~
 
-The build embeds this version in both executables. Without TIDEDESK_VERSION it uses
+The build embeds this version in tidedesk.exe. Without TIDEDESK_VERSION it uses
 the Cargo package version. Versions have three numeric components and an optional
 prerelease suffix; Windows numeric version components must fit into 16 bits.
 
@@ -76,7 +76,7 @@ Under GitHub repository Settings > Secrets and variables > Actions, configure:
 | Variable | SIGNPATH_SIGNING_POLICY_SLUG | Exact production signing-policy slug |
 
 Use .signpath/artifact-configuration.xml as the project's default artifact configuration.
-It expects the GitHub artifact ZIP containing exactly the two root-level executables,
+It expects the GitHub artifact ZIP containing exactly tidedesk.exe at its root,
 not a ZIP nested inside another ZIP. The workflow supplies its version parameter.
 
 The official SignPath action is pinned to the reviewed v3 commit. The unsigned artifact

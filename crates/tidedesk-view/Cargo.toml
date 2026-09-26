@@ -8,10 +8,6 @@ authors.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
-[[bin]]
-name = "tidedesk-view"
-path = "src/main.rs"
-
 [dependencies]
 tidedesk-core.workspace = true
 anyhow.workspace = true
@@ -35,6 +31,3 @@ serde = { workspace = true, features = ["derive"] }
 [target.'cfg(windows)'.dependencies.windows]
 version = "0.62"
 features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Security_Cryptography", "Win32_System_Console", "Win32_UI_WindowsAndMessaging"]
-
-[build-dependencies]
-embed-resource = "3.0.11"

@@ -1,6 +1,6 @@
 //! The TideDesk viewer: shows a host's screen, plays its audio and forwards
 //! keyboard and mouse. Started without a host, it opens a connect window.
-//! Runs as `tidedesk view …` inside the one program, or as `tidedesk-view.exe`.
+//! Runs as `tidedesk view …` inside the one program.
 
 mod app;
 mod child;
@@ -202,7 +202,7 @@ fn attach_console() {}
 static SELF_PREFIX: OnceLock<&'static [&'static str]> = OnceLock::new();
 
 /// The words that start this program's own command line when it launches
-/// itself: `["view"]` inside `tidedesk.exe`, none as `tidedesk-view.exe`.
+/// itself: `["view"]`, set by `tidedesk view` and by the one window.
 pub fn self_prefix() -> &'static [&'static str] {
     SELF_PREFIX.get().copied().unwrap_or(&[])
 }

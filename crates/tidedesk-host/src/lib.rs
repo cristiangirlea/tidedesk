@@ -1,5 +1,5 @@
-//! The TideDesk host: shares this machine's screen and audio. Runs as
-//! `tidedesk host …` inside the one program, or as `tidedesk-host.exe`.
+//! The TideDesk host: shares this machine's screen and audio. Runs as the
+//! one window's Share tab, or alone as `tidedesk host …`.
 
 mod audio;
 mod capture;
@@ -181,6 +181,12 @@ pub struct Started {
 /// viewers. Nothing is shown yet.
 pub fn start(options: &StartOptions) -> Result<Started> {
     platform::enable_dpi_awareness();
+    // Earlier releases started tidedesk-host.exe at sign-in, no longer shipped.
+    match platform::migrate_autostart() {
+        Ok(true) => tracing::info!("the start-up entry now starts this program"),
+        Ok(false) => {}
+        Err(e) => tracing::warn!("could not move the start-up entry to this program: {e:#}"),
+    }
     let config = config::HostConfig::load();
     let listen = options
         .listen
@@ -265,7 +271,7 @@ pub fn start(options: &StartOptions) -> Result<Started> {
 static SELF_PREFIX: OnceLock<&'static [&'static str]> = OnceLock::new();
 
 /// The words that start this program's own command line when it launches
-/// itself: `["host"]` inside `tidedesk.exe`, none as `tidedesk-host.exe`.
+/// itself: `["host"]` as `tidedesk host`, none in the one window.
 pub fn self_prefix() -> &'static [&'static str] {
     SELF_PREFIX.get().copied().unwrap_or(&[])
 }

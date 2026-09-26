@@ -58,10 +58,12 @@ try {
     if ($checksum -cne "$hash  $zipName") { throw 'ZIP checksum mismatch.' }
     $extract = Join-Path $output 'extracted'
     Expand-Archive -LiteralPath $zip -DestinationPath $extract
-    foreach ($file in @('tidedesk.exe', 'tidedesk-host.exe', 'tidedesk-view.exe')) {
-        $expected = (Get-FileHash -LiteralPath "target/release/$file").Hash
-        $actual = (Get-FileHash -LiteralPath (Join-Path $extract $file)).Hash
-        if ($expected -cne $actual) { throw "Archive changed $file." }
+    $expected = (Get-FileHash -LiteralPath 'target/release/tidedesk.exe').Hash
+    $actual = (Get-FileHash -LiteralPath (Join-Path $extract 'tidedesk.exe')).Hash
+    if ($expected -cne $actual) { throw 'Archive changed tidedesk.exe.' }
+    # One program: the two it replaced are gone.
+    foreach ($old in @('tidedesk-host.exe', 'tidedesk-view.exe')) {
+        if (Test-Path -LiteralPath (Join-Path $extract $old)) { throw "Archive still ships $old." }
     }
     $readme = Get-Content -LiteralPath (Join-Path $extract 'README.txt') -Raw
     foreach ($notice in @('licenses/third-party/INDEX.txt', 'licenses/third-party/openh264-sys2-0.9.8/OpenH264-LICENSE',
@@ -69,7 +71,7 @@ try {
         if (-not (Test-Path -LiteralPath (Join-Path $extract $notice) -PathType Leaf)) { throw "Archive is missing $notice." }
     }
     if ($readme -notmatch 'licenses/third-party/INDEX.txt') { throw 'README must point to the bundled notices.' }
-    if ($readme -notmatch 'executables are unsigned' -or $readme -match '@VERSION@|@SIGNING@') {
+    if ($readme -notmatch 'tidedesk\.exe is unsigned' -or $readme -match '@VERSION@|@SIGNING@') {
         throw 'README has incorrect signing/version text.'
     }
     $sourceLicense = Get-FileHash -LiteralPath (Join-Path $repo 'LICENSE') -Algorithm SHA256

@@ -1,4 +1,4 @@
-//! Shared Windows icon and version metadata for the host and viewer.
+//! Windows icon and version metadata for tidedesk.exe.
 
 pub fn embed() {
     println!("cargo::rerun-if-env-changed=TIDEDESK_VERSION");

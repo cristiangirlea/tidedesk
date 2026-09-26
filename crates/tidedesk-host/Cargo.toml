@@ -8,10 +8,6 @@ authors.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 
-[[bin]]
-name = "tidedesk-host"
-path = "src/main.rs"
-
 [dependencies]
 tidedesk-core.workspace = true
 anyhow.workspace = true
@@ -52,6 +48,3 @@ features = [
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_WindowsAndMessaging",
 ]
-
-[build-dependencies]
-embed-resource = "3.0.11"

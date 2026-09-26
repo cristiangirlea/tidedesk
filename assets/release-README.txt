@@ -11,9 +11,10 @@ tidedesk.exe       One program, one window. Run it on both computers.
 Give the access code only to someone you know and trust. If a stranger asked
 you to install TideDesk or to read out the code, stop: they may be trying to
 take control of your computer.
-tidedesk-host.exe  The same as "tidedesk host".   Both remain in this release
-tidedesk-view.exe  The same as "tidedesk view".   for existing shortcuts and
-                                                 autostart entries.
+tidedesk-host.exe and tidedesk-view.exe from earlier releases are no longer included.
+A start-up entry that ran tidedesk-host.exe starts tidedesk.exe instead from its first
+run; point any shortcuts to the old programs to tidedesk.exe. If you allowed only the
+old program through Windows Firewall, Windows asks again for tidedesk.exe.
 
 Viewer Settings: text clipboard off by default; mouse control on by default.
 Changes save as you make them and apply to open sessions at once.
@@ -70,5 +71,5 @@ Licensed under the TideDesk Personal Use Source License 1.0 (see LICENSE).
 Business use, resale and paid customer support require separate written permission.
 Earlier AGPL releases retain their original permissions; these terms are not retroactive.
 Source for this version: https://github.com/cristiangirlea/tidedesk/tree/v@VERSION@
-Third-party license notices for the components built into these executables are in
+Third-party license notices for the components built into tidedesk.exe are in
 the licenses folder (see licenses/third-party/INDEX.txt).
