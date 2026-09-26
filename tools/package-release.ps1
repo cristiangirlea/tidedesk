@@ -113,7 +113,7 @@ $notes = @(
     '',
     'Windows to Windows, one viewer at a time. Allow the host through Windows Firewall on private networks.',
     '',
-    "[Code signing policy](https://github.com/cristiangirlea/tidedesk/blob/v$Version/docs/code-signing-policy.md)",
+    "[Code signing policy](https://github.com/cristiangirlea/tidedesk/blob/v$Version/docs/code-signing-policy.md) and [terms of use](https://github.com/cristiangirlea/tidedesk/blob/v$Version/docs/terms-of-use.md), which a new installation asks to accept before it shares anything",
     '',
     'SHA-256:',
     '',

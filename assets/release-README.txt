@@ -45,6 +45,8 @@ Allow the host through Windows Firewall on private networks.
 @SIGNING@
 Code signing policy:
 https://github.com/cristiangirlea/tidedesk/blob/main/docs/code-signing-policy.md
+Terms of use, including the connection service's rules (asked for on first start):
+https://github.com/cristiangirlea/tidedesk/blob/main/docs/terms-of-use.md
 
 Direct internet connections are EXPERIMENTAL. The host shows its internet address.
 In the viewer, tick "Over the internet", connect to that address, and give the viewer's
