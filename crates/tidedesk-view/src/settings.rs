@@ -2,6 +2,7 @@
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 use winit::keyboard::{ModifiersState, PhysicalKey};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -98,7 +99,10 @@ impl ViewerSettings {
     }
 
     pub fn load() -> Result<Self> {
-        let path = Self::path()?;
+        Self::load_from(&Self::path()?)
+    }
+
+    fn load_from(path: &std::path::Path) -> Result<Self> {
         if !path.exists() {
             return Ok(Self::default());
         }
@@ -155,29 +159,113 @@ impl ViewerSettings {
     }
 }
 
+/// How often an open editor looks for changes made elsewhere, such as a
+/// session's shortcuts. Only on frames it draws anyway, so an idle window
+/// stays idle.
+const RELOAD_EVERY: Duration = Duration::from_millis(500);
+
+const ERROR_RED: egui::Color32 = egui::Color32::from_rgb(220, 60, 50);
+
+/// The viewer settings, saved as they change; open sessions pick them up.
 pub struct Editor {
+    /// Where they live: `viewer.toml` outside tests.
+    path: PathBuf,
     config: ViewerSettings,
-    message: Option<String>,
+    /// What the file holds as far as this editor knows: its last save or read.
+    saved: ViewerSettings,
+    /// The connection service as typed; applied when the field loses focus.
+    rendezvous_text: String,
+    /// Why the file could not be read; the first save replaces it.
+    load_error: Option<String>,
+    /// Why the current edit is not saved yet.
+    save_error: Option<String>,
+    reloaded: Instant,
 }
 
 impl Default for Editor {
     fn default() -> Self {
-        match ViewerSettings::load() {
-            Ok(config) => Self {
-                config,
-                message: None,
-            },
-            Err(e) => Self {
-                config: ViewerSettings::default(),
-                message: Some(format!("Cannot read settings: {e}")),
-            },
-        }
+        Self::at(ViewerSettings::path().unwrap_or_default())
     }
 }
 
 impl Editor {
+    fn at(path: PathBuf) -> Self {
+        let (config, load_error) = match ViewerSettings::load_from(&path) {
+            Ok(config) => (config, None),
+            Err(e) => (
+                ViewerSettings::default(),
+                Some(format!(
+                    "Cannot read settings: {e}. Changing one here replaces them."
+                )),
+            ),
+        };
+        Self {
+            path,
+            rendezvous_text: config.rendezvous_server.clone(),
+            saved: config.clone(),
+            config,
+            load_error,
+            save_error: None,
+            reloaded: Instant::now(),
+        }
+    }
+
+    /// Saves the edits once they are valid; until then says why not.
+    fn commit(&mut self) {
+        if self.config == self.saved {
+            // Nothing to save, including an invalid edit that was undone.
+            self.save_error = None;
+            return;
+        }
+        match self
+            .config
+            .validate()
+            .and_then(|()| self.config.save_to(&self.path))
+        {
+            Ok(()) => {
+                self.saved = self.config.clone();
+                self.load_error = None;
+                self.save_error = None;
+            }
+            Err(e) => self.save_error = Some(format!("Not saved: {e:#}")),
+        }
+    }
+
+    /// Picks up changes made elsewhere (a session's shortcuts, another
+    /// settings window), unless an edit here is still waiting to be saved.
+    fn reload(&mut self) {
+        if self.config != self.saved {
+            return;
+        }
+        let Ok(on_disk) = ViewerSettings::load_from(&self.path) else {
+            return;
+        };
+        if on_disk == self.saved {
+            return;
+        }
+        // Text being typed is not the setting yet; leave it alone.
+        if self.rendezvous_text == self.config.rendezvous_server {
+            self.rendezvous_text = on_disk.rendezvous_server.clone();
+        }
+        self.config = on_disk.clone();
+        self.saved = on_disk;
+    }
+
+    fn apply_service_text(&mut self) {
+        self.config.rendezvous_server = self.rendezvous_text.trim().to_string();
+        self.rendezvous_text = self.config.rendezvous_server.clone();
+    }
+
     pub fn ui(&mut self, ui: &mut egui::Ui) {
+        if self.reloaded.elapsed() >= RELOAD_EVERY {
+            self.reloaded = Instant::now();
+            self.reload();
+        }
         ui.heading("Viewer Settings");
+        ui.small("Changes are saved at once and apply to open sessions.");
+        for problem in [&self.load_error, &self.save_error].into_iter().flatten() {
+            ui.colored_label(ERROR_RED, problem);
+        }
         ui.add_space(8.0);
         let boost_label = if self.config.game_boost {
             "Game Boost: ON — return to Desktop"
@@ -186,13 +274,6 @@ impl Editor {
         };
         if ui.button(boost_label).clicked() {
             self.config.game_boost = !self.config.game_boost;
-            match self.config.save() {
-                Ok(()) => self.message = Some("Saved. Applying to open sessions.".into()),
-                Err(e) => {
-                    self.config.game_boost = !self.config.game_boost;
-                    self.message = Some(format!("Cannot save: {e}"));
-                }
-            }
         }
         ui.small("Experimental: 60 FPS target, motion preset and smaller audio/video buffers.");
         ui.small(
@@ -221,26 +302,26 @@ impl Editor {
             .id_salt("viewer-advanced")
             .show(ui, |ui| {
                 ui.label("Connection service, for connecting by device ID");
-                ui.add(
-                    egui::TextEdit::singleline(&mut self.config.rendezvous_server)
+                let field = ui.add(
+                    egui::TextEdit::singleline(&mut self.rendezvous_text)
                         .hint_text(tidedesk_core::nat::signal::DEFAULT_RENDEZVOUS)
                         .desired_width(240.0),
                 );
+                if field.lost_focus() {
+                    self.apply_service_text();
+                }
                 ui.small(
                     "Leave empty for TideDesk's own service, or name the one the host \
                      registers with. It only introduces the two computers; sessions run \
                      directly between them.",
                 );
             });
-        ui.add_space(8.0);
-        if ui.button("Save settings").clicked() {
-            self.message = Some(match self.config.save() {
-                Ok(()) => "Saved. Changes apply to open sessions immediately.".into(),
-                Err(e) => format!("Cannot save: {e}"),
-            });
-        }
-        if let Some(message) = &self.message {
-            ui.label(message);
+
+        let shown = (self.load_error.clone(), self.save_error.clone());
+        self.commit();
+        // The problems are drawn above: show a change on the next frame.
+        if (self.load_error.clone(), self.save_error.clone()) != shown {
+            ui.ctx().request_repaint();
         }
     }
 }
@@ -336,6 +417,99 @@ mod tests {
         let saved: ViewerSettings =
             toml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(saved, config);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    fn temp_path(name: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "tidedesk-viewer-{name}-{}.toml",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&path);
+        path
+    }
+
+    #[test]
+    fn valid_edits_are_saved_at_once_and_invalid_ones_wait() {
+        let path = temp_path("autosave");
+        let mut editor = Editor::at(path.clone());
+        editor.commit();
+        assert!(!path.exists(), "nothing changed, nothing written");
+
+        editor.config.clipboard = true;
+        editor.commit();
+        assert!(ViewerSettings::load_from(&path).unwrap().clipboard);
+        assert_eq!(editor.save_error, None);
+
+        // Half-way through swapping two shortcuts: shown, not saved.
+        editor.config.mouse_shortcut = editor.config.clipboard_shortcut.clone();
+        editor.commit();
+        let why = editor.save_error.clone().expect("the reason is shown");
+        assert!(why.contains("must be different"), "{why}");
+        let saved = ViewerSettings::load_from(&path).unwrap();
+        assert_eq!(saved.mouse_shortcut, Shortcut::default_for("KeyM"));
+
+        editor.config.clipboard_shortcut = Shortcut::default_for("KeyK");
+        editor.commit();
+        assert_eq!(editor.save_error, None);
+        let saved = ViewerSettings::load_from(&path).unwrap();
+        assert_eq!(saved.clipboard_shortcut.key, "KeyK");
+        assert_eq!(saved.mouse_shortcut.key, "KeyC");
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn changes_made_elsewhere_are_picked_up_unless_an_edit_is_pending() {
+        let path = temp_path("elsewhere");
+        let mut editor = Editor::at(path.clone());
+        // A session toggles Game Boost with its shortcut.
+        let mut session = ViewerSettings {
+            game_boost: true,
+            ..Default::default()
+        };
+        session.save_to(&path).unwrap();
+        editor.reload();
+        assert!(editor.config.game_boost);
+        editor.commit();
+        assert_eq!(ViewerSettings::load_from(&path).unwrap(), session);
+
+        // An edit that cannot be saved yet is not thrown away.
+        editor.config.mouse_shortcut = editor.config.clipboard_shortcut.clone();
+        session.clipboard = true;
+        session.save_to(&path).unwrap();
+        editor.reload();
+        assert_eq!(
+            editor.config.mouse_shortcut,
+            editor.config.clipboard_shortcut
+        );
+        assert!(!editor.config.clipboard);
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn the_connection_service_is_applied_trimmed() {
+        let path = temp_path("service");
+        let mut editor = Editor::at(path.clone());
+        editor.rendezvous_text = " rv.example:47900 ".into();
+        editor.apply_service_text();
+        editor.commit();
+        assert_eq!(editor.rendezvous_text, "rv.example:47900");
+        let saved = ViewerSettings::load_from(&path).unwrap();
+        assert_eq!(saved.rendezvous_server, "rv.example:47900");
+
+        // Named in another settings window: shown here too.
+        let other = ViewerSettings {
+            rendezvous_server: "other.example".into(),
+            ..saved
+        };
+        other.save_to(&path).unwrap();
+        editor.reload();
+        assert_eq!(editor.rendezvous_text, "other.example");
+        // Text still being typed is kept.
+        editor.rendezvous_text = "half-typ".into();
+        ViewerSettings::default().save_to(&path).unwrap();
+        editor.reload();
+        assert_eq!(editor.rendezvous_text, "half-typ");
         std::fs::remove_file(path).unwrap();
     }
 
