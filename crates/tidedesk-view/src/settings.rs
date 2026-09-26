@@ -173,18 +173,26 @@ pub struct Editor {
     config: ViewerSettings,
     /// What the file holds as far as this editor knows: its last save or read.
     saved: ViewerSettings,
-    /// The connection service as typed; applied when the field loses focus.
+    /// The connection service as typed; the setting follows it, trimmed.
     rendezvous_text: String,
     /// Why the file could not be read; the first save replaces it.
     load_error: Option<String>,
     /// Why the current edit is not saved yet.
     save_error: Option<String>,
+    /// The edit whose save failed; not tried again until it changes.
+    failed: Option<ViewerSettings>,
     reloaded: Instant,
 }
 
 impl Default for Editor {
     fn default() -> Self {
-        Self::at(ViewerSettings::path().unwrap_or_default())
+        match ViewerSettings::path() {
+            Ok(path) => Self::at(path),
+            Err(e) => Self {
+                load_error: Some(format!("Cannot read settings: {e:#}")),
+                ..Self::at(PathBuf::new())
+            },
+        }
     }
 }
 
@@ -206,29 +214,65 @@ impl Editor {
             config,
             load_error,
             save_error: None,
+            failed: None,
             reloaded: Instant::now(),
         }
     }
 
-    /// Saves the edits once they are valid; until then says why not.
-    fn commit(&mut self) {
+    /// Saves the edits once they are valid, on top of what the file holds
+    /// now, so a change made elsewhere since the last reload is kept; until
+    /// then says why not. `true` when what it says changed.
+    fn commit(&mut self) -> bool {
         if self.config == self.saved {
             // Nothing to save, including an invalid edit that was undone.
-            self.save_error = None;
-            return;
+            self.failed = None;
+            return self.save_error.take().is_some();
         }
-        match self
-            .config
-            .validate()
-            .and_then(|()| self.config.save_to(&self.path))
-        {
+        if self.failed.as_ref() == Some(&self.config) {
+            return false; // waits for the next change
+        }
+        let current = ViewerSettings::load_from(&self.path).unwrap_or_else(|_| self.saved.clone());
+        let merged = self.edits_onto(current);
+        match merged.validate().and_then(|()| merged.save_to(&self.path)) {
             Ok(()) => {
-                self.saved = self.config.clone();
-                self.load_error = None;
-                self.save_error = None;
+                if merged.rendezvous_server != self.config.rendezvous_server {
+                    self.rendezvous_text = merged.rendezvous_server.clone();
+                }
+                self.config = merged.clone();
+                self.saved = merged;
+                self.failed = None;
+                self.load_error.take().is_some() | self.save_error.take().is_some()
             }
-            Err(e) => self.save_error = Some(format!("Not saved: {e:#}")),
+            Err(e) => {
+                self.failed = Some(self.config.clone());
+                self.save_error = Some(format!("Not saved: {e:#}"));
+                true
+            }
         }
+    }
+
+    /// The fields edited here (where `config` differs from `saved`), put
+    /// onto `base`.
+    fn edits_onto(&self, mut base: ViewerSettings) -> ViewerSettings {
+        macro_rules! edited {
+            ($($field:ident),*) => {{
+                // Names every field: a new one does not compile until listed.
+                let ViewerSettings { $($field: _),* } = &self.config;
+                $(if self.config.$field != self.saved.$field {
+                    base.$field = self.config.$field.clone();
+                })*
+            }};
+        }
+        edited!(
+            clipboard,
+            mouse,
+            game_boost,
+            clipboard_shortcut,
+            mouse_shortcut,
+            game_boost_shortcut,
+            rendezvous_server
+        );
+        base
     }
 
     /// Picks up changes made elsewhere (a session's shortcuts, another
@@ -244,16 +288,16 @@ impl Editor {
             return;
         }
         // Text being typed is not the setting yet; leave it alone.
-        if self.rendezvous_text == self.config.rendezvous_server {
+        if self.rendezvous_text.trim() == self.config.rendezvous_server {
             self.rendezvous_text = on_disk.rendezvous_server.clone();
         }
         self.config = on_disk.clone();
         self.saved = on_disk;
     }
 
-    fn apply_service_text(&mut self) {
+    /// The service field changed: the setting follows it, trimmed.
+    fn service_typed(&mut self) {
         self.config.rendezvous_server = self.rendezvous_text.trim().to_string();
-        self.rendezvous_text = self.config.rendezvous_server.clone();
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui) {
@@ -307,8 +351,12 @@ impl Editor {
                         .hint_text(tidedesk_core::nat::signal::DEFAULT_RENDEZVOUS)
                         .desired_width(240.0),
                 );
+                // Saved as typed: leaving the tab mid-edit must not lose it.
+                if field.changed() {
+                    self.service_typed();
+                }
                 if field.lost_focus() {
-                    self.apply_service_text();
+                    self.rendezvous_text = self.config.rendezvous_server.clone();
                 }
                 ui.small(
                     "Leave empty for TideDesk's own service, or name the one the host \
@@ -317,10 +365,8 @@ impl Editor {
                 );
             });
 
-        let shown = (self.load_error.clone(), self.save_error.clone());
-        self.commit();
         // The problems are drawn above: show a change on the next frame.
-        if (self.load_error.clone(), self.save_error.clone()) != shown {
+        if self.commit() {
             ui.ctx().request_repaint();
         }
     }
@@ -487,13 +533,39 @@ mod tests {
     }
 
     #[test]
+    fn a_change_made_elsewhere_while_editing_is_kept() {
+        let path = temp_path("merge");
+        let mut editor = Editor::at(path.clone());
+        // Half-way through swapping two shortcuts, so nothing is reloaded…
+        editor.config.mouse_shortcut = editor.config.clipboard_shortcut.clone();
+        editor.commit();
+        // …while a session's shortcut turns Game Boost on.
+        let session = ViewerSettings {
+            game_boost: true,
+            ..Default::default()
+        };
+        session.save_to(&path).unwrap();
+        editor.reload();
+
+        editor.config.clipboard_shortcut = Shortcut::default_for("KeyK");
+        editor.commit();
+        assert_eq!(editor.save_error, None);
+        let saved = ViewerSettings::load_from(&path).unwrap();
+        assert!(saved.game_boost, "the session's change survives");
+        assert_eq!(saved.clipboard_shortcut.key, "KeyK");
+        assert_eq!(saved.mouse_shortcut.key, "KeyC");
+        assert_eq!(editor.config, saved, "and shows here");
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[test]
     fn the_connection_service_is_applied_trimmed() {
         let path = temp_path("service");
         let mut editor = Editor::at(path.clone());
+        // Saved as typed, so leaving the tab mid-edit loses nothing.
         editor.rendezvous_text = " rv.example:47900 ".into();
-        editor.apply_service_text();
+        editor.service_typed();
         editor.commit();
-        assert_eq!(editor.rendezvous_text, "rv.example:47900");
         let saved = ViewerSettings::load_from(&path).unwrap();
         assert_eq!(saved.rendezvous_server, "rv.example:47900");
 
