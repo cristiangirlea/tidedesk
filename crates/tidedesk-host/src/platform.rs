@@ -206,30 +206,76 @@ mod windows_impl {
             }
             return Ok(());
         }
-        use windows::Win32::System::Registry::{
-            HKEY_CURRENT_USER, REG_SZ, RegDeleteKeyValueW, RegSetKeyValueW,
-        };
+        use windows::Win32::System::Registry::{HKEY_CURRENT_USER, RegDeleteKeyValueW};
         use windows::core::HSTRING;
-        let key = HSTRING::from(RUN_KEY);
-        let name = HSTRING::from(RUN_VALUE);
         if enable {
             let exe = std::env::current_exe()?;
-            let command = super::autostart_command(&exe, crate::self_prefix());
-            let wide: Vec<u16> = command.encode_utf16().chain(Some(0)).collect();
-            unsafe {
-                RegSetKeyValueW(
-                    HKEY_CURRENT_USER,
-                    &key,
-                    &name,
-                    REG_SZ.0,
-                    Some(wide.as_ptr().cast()),
-                    (wide.len() * 2) as u32,
-                )
-            }
-            .ok()?;
+            set_run_value(&super::autostart_command(&exe, crate::self_prefix()))?;
         } else if autostart_enabled() {
+            let (key, name) = (HSTRING::from(RUN_KEY), HSTRING::from(RUN_VALUE));
             unsafe { RegDeleteKeyValueW(HKEY_CURRENT_USER, &key, &name) }.ok()?;
         }
+        Ok(())
+    }
+
+    /// Points an autostart entry that starts `tidedesk-host.exe`, which is
+    /// no longer shipped, at this program; `true` when it did. The Store
+    /// build's startup task names this program already.
+    pub fn migrate_autostart() -> anyhow::Result<bool> {
+        if is_packaged() {
+            return Ok(false);
+        }
+        let Some(existing) = run_value() else {
+            return Ok(false);
+        };
+        let exe = std::env::current_exe()?;
+        let Some(command) = super::migrated_autostart(&existing, &exe) else {
+            return Ok(false);
+        };
+        set_run_value(&command)?;
+        Ok(true)
+    }
+
+    /// The command under the Run key, if there is one.
+    fn run_value() -> Option<String> {
+        use windows::Win32::System::Registry::{HKEY_CURRENT_USER, RRF_RT_REG_SZ, RegGetValueW};
+        use windows::core::HSTRING;
+        let (key, name) = (HSTRING::from(RUN_KEY), HSTRING::from(RUN_VALUE));
+        let mut bytes = 0u32;
+        let read = |data: Option<*mut std::ffi::c_void>, bytes: &mut u32| unsafe {
+            RegGetValueW(
+                HKEY_CURRENT_USER,
+                &key,
+                &name,
+                RRF_RT_REG_SZ,
+                None,
+                data,
+                Some(bytes),
+            )
+        };
+        read(None, &mut bytes).ok().ok()?;
+        let mut text = vec![0u16; (bytes as usize).div_ceil(2)];
+        read(Some(text.as_mut_ptr().cast()), &mut bytes).ok().ok()?;
+        let end = text.iter().position(|&c| c == 0).unwrap_or(text.len());
+        Some(String::from_utf16_lossy(&text[..end]))
+    }
+
+    fn set_run_value(command: &str) -> anyhow::Result<()> {
+        use windows::Win32::System::Registry::{HKEY_CURRENT_USER, REG_SZ, RegSetKeyValueW};
+        use windows::core::HSTRING;
+        let (key, name) = (HSTRING::from(RUN_KEY), HSTRING::from(RUN_VALUE));
+        let wide: Vec<u16> = command.encode_utf16().chain(Some(0)).collect();
+        unsafe {
+            RegSetKeyValueW(
+                HKEY_CURRENT_USER,
+                &key,
+                &name,
+                REG_SZ.0,
+                Some(wide.as_ptr().cast()),
+                (wide.len() * 2) as u32,
+            )
+        }
+        .ok()?;
         Ok(())
     }
 }
@@ -250,6 +296,9 @@ mod fallback {
     pub fn set_autostart(_enable: bool) -> anyhow::Result<()> {
         anyhow::bail!("starting with the system is not supported on this platform yet")
     }
+    pub fn migrate_autostart() -> anyhow::Result<bool> {
+        Ok(false)
+    }
 }
 
 /// The Run-key command that starts the host hidden in the tray.
@@ -264,6 +313,23 @@ fn autostart_command(exe: &std::path::Path, prefix: &[&str]) -> String {
     command
 }
 
+/// What an autostart entry should say instead, if it starts
+/// `tidedesk-host.exe`: that program is no longer shipped, and an old copy
+/// left in its folder would keep starting an old version. It becomes `exe`'s
+/// window, hidden in the tray. `None` for any other entry.
+#[cfg(windows)]
+fn migrated_autostart(existing: &str, exe: &std::path::Path) -> Option<String> {
+    let existing = existing.trim_start();
+    let program = match existing.strip_prefix('"') {
+        Some(quoted) => quoted.split('"').next().unwrap_or_default(),
+        None => existing.split_whitespace().next().unwrap_or_default(),
+    };
+    std::path::Path::new(program)
+        .file_name()
+        .is_some_and(|name| name.eq_ignore_ascii_case("tidedesk-host.exe"))
+        .then(|| autostart_command(exe, &[]))
+}
+
 #[cfg(all(test, windows))]
 mod tests {
     use std::path::Path;
@@ -275,8 +341,32 @@ mod tests {
             r#""C:\Apps\tidedesk.exe" host --tray"#
         );
         assert_eq!(
-            super::autostart_command(Path::new(r"C:\Apps\tidedesk-host.exe"), &[]),
-            r#""C:\Apps\tidedesk-host.exe" --tray"#
+            super::autostart_command(Path::new(r"C:\Apps\tidedesk.exe"), &[]),
+            r#""C:\Apps\tidedesk.exe" --tray"#,
+            "the one window, hidden in the tray"
         );
+    }
+
+    #[test]
+    fn an_autostart_entry_for_the_old_host_program_moves_to_this_one() {
+        let exe = Path::new(r"C:\New\tidedesk.exe");
+        let one_window = Some(r#""C:\New\tidedesk.exe" --tray"#.to_string());
+        for old in [
+            r#""C:\Old\tidedesk-host.exe" --tray"#,
+            r#""C:\Program Files\TideDesk\TIDEDESK-HOST.EXE" --tray"#,
+            r"C:\Old\tidedesk-host.exe --tray",
+            r#"  "D:\x y\tidedesk-host.exe""#,
+        ] {
+            assert_eq!(super::migrated_autostart(old, exe), one_window, "{old}");
+        }
+        for current in [
+            r#""C:\New\tidedesk.exe" --tray"#,
+            r#""C:\Old\tidedesk.exe" host --tray"#,
+            r#""C:\Old\not-tidedesk-host.exe" --tray"#,
+            r#""C:\tidedesk-host.exe\tidedesk.exe" --tray"#,
+            "",
+        ] {
+            assert_eq!(super::migrated_autostart(current, exe), None, "{current}");
+        }
     }
 }

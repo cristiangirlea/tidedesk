@@ -2,10 +2,9 @@
 //!
 //! Started plain (the Start menu entry, the startup task, autostart) it opens
 //! the one window, with sharing this computer and connecting to another as
-//! tabs. `tidedesk host …` runs the sharing side alone (what `tidedesk-host`
-//! does, headless too) and `tidedesk view …` the connecting side (what
-//! `tidedesk-view` does); a first argument that names a computer connects
-//! to it.
+//! tabs. `tidedesk host …` runs the sharing side alone (headless too) and
+//! `tidedesk view …` the connecting side; a first argument that names a
+//! computer connects to it.
 
 // Release builds are GUI apps with no console window; each side borrows the
 // terminal it was started from.

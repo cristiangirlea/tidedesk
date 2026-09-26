@@ -37,8 +37,6 @@ jobs:
           name: tidedesk-windows-x64
           path: |
             target/release/tidedesk.exe
-            target/release/tidedesk-host.exe
-            target/release/tidedesk-view.exe
 
   # The wire format is what the rendezvous service, a Linux program, builds on.
   proto-linux:

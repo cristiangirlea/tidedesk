@@ -1,8 +1,5 @@
-//! Embeds the application icon, and warns when NASM is missing: openh264 then silently builds without its
-//! assembly and encodes roughly 3-4x slower.
-
-#[path = "../../tools/windows-resource.rs"]
-mod windows_resource;
+//! Warns when NASM is missing: openh264 then silently builds without its assembly and encodes roughly
+//! 3-4x slower.
 
 fn nasm_available() -> bool {
     if std::env::var_os("NASM").is_some() || std::env::var_os("OPENH264_NO_ASM").is_some() {
@@ -15,7 +12,6 @@ fn nasm_available() -> bool {
 }
 
 fn main() {
-    windows_resource::embed();
     println!("cargo::rerun-if-env-changed=PATH");
     println!("cargo::rerun-if-env-changed=NASM");
     let arch = std::env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
