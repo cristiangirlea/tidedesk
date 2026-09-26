@@ -29,8 +29,9 @@ This keeps different hosts separate and retains their positions after an IP chan
 ### Sharing controls
 
 Open Settings in the viewer launcher, or press Ctrl+Alt+S while the remote window is
-focused. Choose the desired options and press Save settings. Changes are picked up
-by open sessions and stored in %APPDATA%\TideDesk\viewer.toml.
+focused. Changes are saved as you make them, picked up by open sessions at once, and
+stored in %APPDATA%\TideDesk\viewer.toml. A shortcut that clashes with another is
+shown with the reason and saved once it is valid.
 
 | Control | Default | Default shortcut |
 | --- | --- | --- |

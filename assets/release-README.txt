@@ -16,6 +16,7 @@ tidedesk-view.exe  The same as "tidedesk view".   for existing shortcuts and
                                                  autostart entries.
 
 Viewer Settings: text clipboard off by default; mouse control on by default.
+Changes save as you make them and apply to open sessions at once.
 In the focused remote window, Ctrl+Alt+C toggles clipboard, Ctrl+Alt+M toggles mouse
 control, Ctrl+Alt+G toggles Game Boost, and Ctrl+Alt+S opens settings.
 Toggle shortcuts are customizable.
