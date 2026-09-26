@@ -33,6 +33,9 @@ pub struct HostConfig {
     pub rendezvous: bool,
     /// `host[:port]` of that service; empty means TideDesk's own.
     pub rendezvous_server: String,
+    /// Answer viewers on the local network that look for this computer's
+    /// device ID, so they find it without the service or the internet.
+    pub lan_discovery: bool,
 }
 
 impl Default for HostConfig {
@@ -51,6 +54,7 @@ impl Default for HostConfig {
             stun_servers: Vec::new(),
             rendezvous: true,
             rendezvous_server: String::new(),
+            lan_discovery: true,
         }
     }
 }
@@ -183,6 +187,15 @@ mod tests {
         // A host.toml from before the setting existed keeps its named service.
         let old: HostConfig = toml::from_str("rendezvous_server = \"rv.example.org\"").unwrap();
         assert_eq!(old.rendezvous_service(), Some("rv.example.org"));
+    }
+
+    #[test]
+    fn lan_discovery_is_on_by_default() {
+        assert!(HostConfig::default().lan_discovery);
+        let old: HostConfig = toml::from_str("fps = 30\nport = 47800").unwrap();
+        assert!(old.lan_discovery, "a host.toml from before the setting");
+        let off: HostConfig = toml::from_str("lan_discovery = false").unwrap();
+        assert!(!off.lan_discovery);
     }
 
     #[test]

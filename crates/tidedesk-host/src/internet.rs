@@ -6,6 +6,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use tidedesk_core::DEFAULT_PORT;
 use tidedesk_core::nat::punch::KEEPALIVE_MAX;
 use tidedesk_core::nat::signal::RendezvousStatus;
 use tidedesk_core::nat::{Agent, NatKind, NotPublic, PunchError, check_public};
@@ -85,6 +86,22 @@ pub fn describe_rendezvous(status: &RendezvousStatus) -> String {
             format!("Connection service unavailable: {reason}")
         }
     }
+}
+
+/// The line about this network under the device ID, while this host answers
+/// viewers on it that look for the ID; `port` is the one it listens on.
+pub fn describe_lan_discovery(on: bool, port: u16) -> Option<String> {
+    if !on {
+        return None;
+    }
+    Some(if port == DEFAULT_PORT {
+        "Viewers on this network find it by this ID too, even without the internet.".into()
+    } else {
+        format!(
+            "Viewers on this network look for device IDs on UDP port {DEFAULT_PORT} only, so \
+             on port {port} they find this computer through the connection service."
+        )
+    })
 }
 
 /// Reads the viewer's internet address as its window shows it. `own` is this
@@ -204,6 +221,21 @@ mod tests {
         let own = Some("203.0.113.5".parse().unwrap());
         let err = parse_expected_viewer("203.0.113.5:40000", own).unwrap_err();
         assert!(err.contains("same network"), "{err}");
+    }
+
+    #[test]
+    fn lan_discovery_status_lines() {
+        let found = describe_lan_discovery(true, DEFAULT_PORT).unwrap();
+        assert!(found.contains("without the internet"), "{found}");
+        let other_port = describe_lan_discovery(true, 50000).unwrap();
+        assert!(
+            other_port.contains("47800") && other_port.contains("50000"),
+            "{other_port}"
+        );
+        assert_eq!(describe_lan_discovery(false, DEFAULT_PORT), None);
+        for line in [found, other_port] {
+            assert!(!line.contains("rendezvous"), "{line}");
+        }
     }
 
     #[test]
