@@ -119,7 +119,11 @@ fn start_sharing(hidden: bool) -> (Sharing, bool, bool) {
 /// the Store package.
 fn third_party_notices() -> Option<PathBuf> {
     let exe = std::env::current_exe().ok()?;
-    let index = exe.parent()?.join("licenses/third-party/INDEX.txt");
+    let index = exe
+        .parent()?
+        .join("licenses")
+        .join("third-party")
+        .join("INDEX.txt");
     index.is_file().then_some(index)
 }
 

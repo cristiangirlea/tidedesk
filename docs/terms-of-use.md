@@ -56,10 +56,10 @@ here limits rights you have by law that cannot be excluded.
 ## 6. Reporting misuse
 
 If someone used TideDesk to reach your computer without your permission, or asked you
-to install it and read out the access code: quit TideDesk from its icon in the
-notification area, and report the device ID shown under "Share this computer" to
-cristiangirlea@gmail.com. If money or accounts are involved, also contact your bank
-and the police.
+to install it and read out the access code: note the device ID shown under "Share this
+computer", quit TideDesk from its icon in the notification area, and report the device
+ID to cristiangirlea@gmail.com. If money or accounts are involved, also contact your
+bank and the police.
 
 ## 7. Changes to these terms
 
