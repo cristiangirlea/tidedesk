@@ -220,9 +220,11 @@ the same shared socket, told apart by their magic like punches:
   second, each exactly as large as its query: no amplification, and nothing for the
   internet. On by default, independent of the service setting; `lan_discovery` in
   `host.toml` or Settings, Network turns it off.
-- **Identity.** Nothing in the answer is trusted: the viewer checks that the host's
-  certificate hashes to the ID, as for the service, so a computer answering in the
-  host's place is refused before the access code is used.
+- **Identity.** Nothing in the answer is trusted. Before an answer counts as found,
+  the viewer completes a handshake with its sender and checks that the certificate
+  hashes to the ID, as for the service. A computer answering in the host's place is
+  refused without stopping the service's way to the real host, and the access code is
+  never used towards it.
 - **Limits.** Viewers only look on port 47800 (a host on another port is found through
   the service), IPv4 only, and broadcasts stop at routers (other subnets and VLANs use
   the service or the address).

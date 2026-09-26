@@ -230,6 +230,39 @@ fn directed_broadcast(ip: Ipv4Addr, prefix: u8) -> Option<Ipv4Addr> {
         .then(|| Ipv4Addr::from(u32::from(ip) | (u32::MAX >> prefix)))
 }
 
+/// How long a host found on this network has to complete a handshake.
+const LAN_CHECK_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// The way to a host by device ID on this computer's own networks: asks
+/// `lan` (their broadcast addresses), then checks the certificate of the
+/// computer that answered, since an answer alone proves nothing. Checked
+/// here, so a computer answering in the host's place cannot end the
+/// service's way to the real one.
+async fn on_this_network(
+    agent: &Agent,
+    endpoint: &quinn::Endpoint,
+    device_id: DeviceId,
+    lan: Vec<SocketAddr>,
+) -> Result<SocketAddr> {
+    let peer = agent
+        .find_on_lan(device_id, lan)
+        .await
+        .with_context(|| format!("{device_id} was not found on this network"))?;
+    let connecting = endpoint.connect(peer, "tidedesk-host")?;
+    let Ok(Ok(conn)) = tokio::time::timeout(LAN_CHECK_TIMEOUT, connecting).await else {
+        bail!("{device_id} answered on this network at {peer} but could not be reached there");
+    };
+    let fingerprint = net::peer_fingerprint(&conn).unwrap_or_default();
+    conn.close(0u32.into(), b"checked");
+    verify_device_id(device_id, &fingerprint).map_err(|_| {
+        anyhow!(
+            "the computer that answered for {device_id} on this network ({peer}) is not it: its \
+             certificate does not match the device ID, so someone may be pretending to be it"
+        )
+    })?;
+    Ok(peer)
+}
+
 /// The service's way to a host by device ID: it introduces this computer to
 /// the host, then both punch.
 async fn through_service(
@@ -445,14 +478,14 @@ impl Dialer {
         )));
         // In a block, so the search that lost stops before the host is dialled.
         let route = {
-            let on_lan = agent.find_on_lan(device_id, lan);
+            let on_lan = on_this_network(&agent, &endpoint, device_id, lan);
             let through_service = through_service(&agent, device_id, service, &progress);
             tokio::pin!(on_lan, through_service);
-            let (mut lan_done, mut service_failed) = (false, None);
+            let (mut lan_failed, mut service_failed) = (None, None);
             loop {
                 tokio::select! {
-                    found = &mut on_lan, if !lan_done => match found {
-                        Some(peer) => {
+                    found = &mut on_lan, if lan_failed.is_none() => match found {
+                        Ok(peer) => {
                             progress(Progress::Status(format!(
                                 "Found {device_id} on this network at {peer}."
                             )));
@@ -462,7 +495,7 @@ impl Dialer {
                                 observed_self: None,
                             };
                         }
-                        None => lan_done = true,
+                        Err(e) => lan_failed = Some(e),
                     },
                     opened = &mut through_service, if service_failed.is_none() => match opened {
                         Ok(route) => break route,
@@ -470,8 +503,8 @@ impl Dialer {
                     },
                 }
                 // A failure only counts once the other way has failed too.
-                if lan_done && let Some(e) = &service_failed {
-                    bail!("{device_id} was not found on this network, and {e:#}");
+                if let (Some(lan), Some(service)) = (&lan_failed, &service_failed) {
+                    bail!("{lan:#}, and {service:#}");
                 }
             }
         };
@@ -993,20 +1026,20 @@ mod tests {
         let (_impostor, addr) = host_on_this_network(&impostor, victim.device_id());
         let id = victim.device_id().to_string();
 
-        let dialer = Dialer::by_device_id(&id, OFFLINE_SERVICE, vec![addr], |_| {})
+        // Checked before it counts as found, so the service's way stays open;
+        // here the service is unreachable too, and both are named.
+        let refused = Dialer::by_device_id(&id, OFFLINE_SERVICE, vec![addr], |_| {})
             .await
-            .expect("the impostor answers")
-            .with_config_dir(dir);
-        let refused = dialer.probe().await.err().expect("refused").to_string();
-        assert!(refused.contains(&format!("is not {id}")), "{refused}");
-        let route = Route::Rendezvous {
-            service: OFFLINE_SERVICE.into(),
-        };
-        let refused = dialer.connect(&options(addr, route)).await.err();
-        let refused = refused
-            .expect("refused before the code is used")
+            .err()
+            .expect("the impostor is not taken for the host")
             .to_string();
-        assert!(refused.contains(&format!("is not {id}")), "{refused}");
+        assert!(
+            refused.contains(&format!(
+                "answered for {id} on this network ({addr}) is not it"
+            )),
+            "{refused}"
+        );
+        assert!(refused.contains("connection service"), "{refused}");
     }
 
     #[tokio::test]

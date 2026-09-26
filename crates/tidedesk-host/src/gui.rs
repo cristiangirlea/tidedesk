@@ -13,7 +13,7 @@ use anyhow::{Result, anyhow};
 use egui::{Color32, RichText};
 use egui_software_backend::{SoftwareBackend, SoftwareBackendAppConfiguration};
 use tidedesk_core::nat::signal::Credentials;
-use tidedesk_core::nat::signal::DEFAULT_RENDEZVOUS;
+use tidedesk_core::nat::signal::{DEFAULT_RENDEZVOUS, RendezvousStatus};
 use tidedesk_core::nat::stun::{DEFAULT_STUN_SERVERS, STUN_REFRESH};
 use tidedesk_core::nat::{Agent, NatKind, PublicStatus};
 
@@ -306,9 +306,12 @@ impl HostApp {
             copy_button(ui, &device_id);
         });
         ui.small(internet::describe_rendezvous(&self.info.agent.rendezvous()));
-        if let Some(line) =
-            internet::describe_lan_discovery(self.info.config.lan_discovery, self.info.port)
-        {
+        let registers = self.info.agent.rendezvous() != RendezvousStatus::Off;
+        if let Some(line) = internet::describe_lan_discovery(
+            self.info.config.lan_discovery,
+            self.info.port,
+            registers,
+        ) {
             ui.small(line);
         }
         ui.add_space(6.0);

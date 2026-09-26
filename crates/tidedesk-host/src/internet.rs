@@ -89,18 +89,20 @@ pub fn describe_rendezvous(status: &RendezvousStatus) -> String {
 }
 
 /// The line about this network under the device ID, while this host answers
-/// viewers on it that look for the ID; `port` is the one it listens on.
-pub fn describe_lan_discovery(on: bool, port: u16) -> Option<String> {
+/// viewers on it that look for the ID; `port` is the one it listens on, and
+/// `service` whether it registers with the connection service.
+pub fn describe_lan_discovery(on: bool, port: u16, service: bool) -> Option<String> {
     if !on {
         return None;
     }
+    let only =
+        format!("Viewers on this network look for device IDs on UDP port {DEFAULT_PORT} only");
     Some(if port == DEFAULT_PORT {
         "Viewers on this network find it by this ID too, even without the internet.".into()
+    } else if service {
+        format!("{only}, so on port {port} they find this computer through the connection service.")
     } else {
-        format!(
-            "Viewers on this network look for device IDs on UDP port {DEFAULT_PORT} only, so \
-             on port {port} they find this computer through the connection service."
-        )
+        format!("{only}, so on port {port} they cannot find this computer by ID.")
     })
 }
 
@@ -225,15 +227,20 @@ mod tests {
 
     #[test]
     fn lan_discovery_status_lines() {
-        let found = describe_lan_discovery(true, DEFAULT_PORT).unwrap();
+        let found = describe_lan_discovery(true, DEFAULT_PORT, false).unwrap();
         assert!(found.contains("without the internet"), "{found}");
-        let other_port = describe_lan_discovery(true, 50000).unwrap();
+        let other_port = describe_lan_discovery(true, 50000, true).unwrap();
         assert!(
             other_port.contains("47800") && other_port.contains("50000"),
             "{other_port}"
         );
-        assert_eq!(describe_lan_discovery(false, DEFAULT_PORT), None);
-        for line in [found, other_port] {
+        assert!(other_port.contains("through the connection service"));
+        // Without the service nothing finds it by ID on another port.
+        let unfindable = describe_lan_discovery(true, 50000, false).unwrap();
+        assert!(unfindable.contains("cannot find"), "{unfindable}");
+        assert!(!unfindable.contains("connection service"), "{unfindable}");
+        assert_eq!(describe_lan_discovery(false, DEFAULT_PORT, true), None);
+        for line in [found, other_port, unfindable] {
             assert!(!line.contains("rendezvous"), "{line}");
         }
     }
