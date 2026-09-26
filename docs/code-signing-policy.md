@@ -63,7 +63,7 @@ Settings, Internet (or with `rendezvous = false` or `rendezvous_server` in `host
 `--no-rendezvous` for a headless host). A viewer connecting by device ID asks the same
 service (or the one in Viewer Settings) for that ID, which tells the service the
 viewer's public address and which ID it asked for; a viewer that never connects by ID
-never contacts it.
+never contacts it. Using the service is subject to the [terms of use](terms-of-use.md).
 
 A viewer connecting by device ID also broadcasts a 24-byte query for that ID on its
 local network (UDP port 47800), so other computers on that network can see which ID

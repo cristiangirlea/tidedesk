@@ -57,6 +57,10 @@ implemented video encoder. Hardware encoding and lower 4K memory use remain plan
 
 ## Quick start
 
+The first time, TideDesk asks you to accept its [terms of use](docs/terms-of-use.md), which
+include the rules for its connection service, and the license; nothing is shared before that.
+Settings, About shows both at any time.
+
 **On the computer you want to reach**, run `tidedesk`. The **Share this computer** tab shows
 the **access code**, this computer's addresses and its **device ID**; TideDesk also sits in the
 notification area (tray). Closing the window keeps it sharing there — quit from the tray menu.

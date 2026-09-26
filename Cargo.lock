@@ -3537,6 +3537,7 @@ dependencies = [
  "egui",
  "egui_software_backend",
  "embed-resource",
+ "tidedesk-core",
  "tidedesk-host",
  "tidedesk-view",
  "tokio",

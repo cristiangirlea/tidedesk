@@ -99,6 +99,9 @@ try {
         if ($text -notmatch 'same local network') {
             throw 'Release text must say device IDs work on the same local network.'
         }
+        if ($text -notmatch 'terms-of-use\.md') {
+            throw 'Release text must link the terms of use.'
+        }
     }
     if ($releaseNotes -notmatch 'Business use requires separate written permission' -or
         $releaseNotes -match 'free, open-source') {

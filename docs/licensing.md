@@ -15,6 +15,14 @@ not AGPL and not an OSI-approved open-source license.
 - The LICENSE text is authoritative. No paid feature, subscription, commercial
   agreement or future feature is included merely by downloading the source.
 
+## Terms of use
+
+The [terms of use](terms-of-use.md) add rules for using TideDesk with other people and
+for TideDesk's connection service (rendezvous.tidedesk.app), such as connecting only to
+computers you may use and the operator's right to block misuse. They do not change the
+license. A new installation asks for both to be accepted before it shares anything;
+an installation used before the terms says that they exist and keeps working.
+
 ## Previously published releases
 
 Versions v0.1.0-alpha, v0.1.0-alpha.1 and v0.1.0-alpha.2 and their corresponding
