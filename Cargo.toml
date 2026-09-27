@@ -17,6 +17,8 @@ license-file = "LICENSE"
 authors = ["Cristian Girlea"]
 repository = "https://github.com/cristiangirlea/tidedesk"
 rust-version = "1.88"
+# Under TideDesk's own license: never published to crates.io.
+publish = false
 
 [workspace.dependencies]
 tidedesk-codec = { path = "crates/tidedesk-codec" }
