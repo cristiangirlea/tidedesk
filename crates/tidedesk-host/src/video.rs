@@ -10,11 +10,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
-use openh264::encoder::{
-    BitRate, Complexity, Encoder, EncoderConfig, FrameRate, FrameType, RateControlMode, UsageType,
-};
-use openh264::formats::{BgraSliceU8, YUVBuffer, YUVSource};
-use openh264::{OpenH264API, Timestamp};
+use tidedesk_codec::Encoder;
 use tidedesk_core::protocol::VideoFrameHeader;
 use tidedesk_core::streaming::StreamingStatus;
 use tokio::sync::mpsc::error::TrySendError;
@@ -51,23 +47,11 @@ pub struct VideoControl {
 }
 
 fn encoder_for(status: StreamingStatus) -> Result<Encoder> {
-    let config = EncoderConfig::new()
-        .usage_type(if status.game_boost {
-            UsageType::CameraVideoRealTime
-        } else {
-            UsageType::ScreenContentRealTime
-        })
-        .rate_control_mode(RateControlMode::Bitrate)
-        .bitrate(BitRate::from_bps(status.bitrate_bps))
-        .max_frame_rate(FrameRate::from_hz(status.fps as f32))
-        .complexity(Complexity::Low)
-        // Let the encoder omit frames to respect the host's bandwidth budget.
-        .skip_frames(status.game_boost)
-        .num_threads(if status.game_boost { 4 } else { 2 });
-    Ok(Encoder::with_api_config(
-        OpenH264API::from_source(),
-        config,
-    )?)
+    Encoder::best(tidedesk_codec::Settings {
+        fps: status.fps,
+        bitrate_bps: status.bitrate_bps,
+        motion: status.game_boost,
+    })
 }
 
 /// Starts capture and encoding, returning once the display is open.
@@ -114,9 +98,10 @@ fn run(
 
     let mut status = StreamingStatus::requested(0, false, settings.fps, settings.bitrate_bps);
     let mut encoder = encoder_for(status)?;
+    tracing::info!("video encoder: {}", encoder.implementation());
     let mut reported_request = 0;
     let mut last_reconfigure: Option<Instant> = None;
-    let mut yuv: Option<YUVBuffer> = None;
+    let mut captured = false;
     let mut bitstream = Vec::new();
 
     let mut interval = Duration::from_secs_f64(1.0 / status.fps as f64);
@@ -139,16 +124,16 @@ fn run(
                 encoder = encoder_for(next)?;
                 interval = Duration::from_secs_f64(1.0 / next.fps as f64);
                 next_due = now;
-            } else if yuv.is_some() {
+            } else if captured {
                 // A repeated request must also complete on a static screen,
                 // even if rate control would otherwise skip the refresh.
-                encoder.force_intra_frame();
+                encoder.force_keyframe();
             }
             last_reconfigure = Some(now);
             status = next;
             // Re-encode the current picture even on an idle desktop so the
             // viewer gets a real frame and acknowledgement of this preset.
-            pending |= yuv.is_some();
+            pending |= captured;
         }
         if now < next_due {
             std::thread::sleep(next_due - now);
@@ -181,20 +166,13 @@ fn run(
         let work_start = Instant::now();
         let frame = capturer.frame();
         let (w, h) = (frame.width, frame.height);
-        let buf = match &mut yuv {
-            Some(b) if b.dimensions() == (w, h) => b,
-            slot => slot.insert(YUVBuffer::new(w, h)),
-        };
-        buf.read_bgra8(BgraSliceU8::new(&frame.bgra, (w, h)));
+        captured = true;
 
         if control.keyframe.swap(false, Ordering::Relaxed) {
-            encoder.force_intra_frame();
+            encoder.force_keyframe();
         }
         let capture_us = epoch.elapsed().as_micros() as u64;
-        let encoded = encoder.encode_at(buf, Timestamp::from_millis(capture_us / 1000))?;
-        let keyframe = matches!(encoded.frame_type(), FrameType::IDR | FrameType::I);
-        bitstream.clear();
-        encoded.write_vec(&mut bitstream);
+        let keyframe = encoder.encode(&frame.bgra, (w, h), capture_us / 1000, &mut bitstream)?;
         pending = false;
         next_due = next_due.max(now) + interval;
 
@@ -227,7 +205,7 @@ fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use openh264::decoder::Decoder;
+    use tidedesk_codec::Decoder;
 
     /// Exercises the production capture/encode loop without capturing the user's
     /// desktop. Switching must also work when the captured desktop is static.
@@ -294,7 +272,7 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!((info.width, info.height, info.rect.left), (128, 96, -128));
-        let mut decoder = Decoder::new().unwrap();
+        let mut decoder = Decoder::openh264().unwrap();
         let first = tokio::time::timeout(Duration::from_secs(5), rx.recv())
             .await
             .unwrap()
@@ -340,20 +318,13 @@ mod tests {
 
     #[test]
     fn live_preset_changes_produce_decodable_keyframes_without_resizing() {
-        let mut decoder = Decoder::new().unwrap();
+        let mut decoder = Decoder::openh264().unwrap();
         let pixels = vec![90; 128 * 96 * 4];
-        let mut yuv = YUVBuffer::new(128, 96);
-        yuv.read_bgra8(BgraSliceU8::new(&pixels, (128, 96)));
+        let mut bytes = Vec::new();
         for enabled in [false, true, false] {
             let mut encoder =
                 encoder_for(StreamingStatus::requested(1, enabled, 30, 4_000_000)).unwrap();
-            let encoded = encoder.encode(&yuv).unwrap();
-            assert!(matches!(
-                encoded.frame_type(),
-                FrameType::IDR | FrameType::I
-            ));
-            let mut bytes = Vec::new();
-            encoded.write_vec(&mut bytes);
+            assert!(encoder.encode(&pixels, (128, 96), 0, &mut bytes).unwrap());
             let decoded = decoder.decode(&bytes).unwrap().unwrap();
             assert_eq!(decoded.dimensions(), (128, 96));
         }
