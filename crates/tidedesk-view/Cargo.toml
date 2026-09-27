@@ -9,12 +9,12 @@ repository.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+tidedesk-codec.workspace = true
 tidedesk-core.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 cpal.workspace = true
 if-addrs = "0.15"
-openh264.workspace = true
 opus.workspace = true
 quinn.workspace = true
 tokio.workspace = true

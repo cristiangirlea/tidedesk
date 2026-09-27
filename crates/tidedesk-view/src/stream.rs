@@ -4,9 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result, bail};
-use openh264::OpenH264API;
-use openh264::decoder::{Decoder, DecoderConfig};
-use openh264::formats::YUVSource;
+use tidedesk_codec::Decoder;
 use tidedesk_core::protocol::{
     self, ClientMessage, MAX_VIDEO_FRAME, ServerMessage, VideoFrameHeader,
 };
@@ -113,17 +111,16 @@ fn decode_thread(
     stats: bool,
     game_boost: Arc<AtomicBool>,
 ) {
-    let mut decoder =
-        match Decoder::with_api_config(OpenH264API::from_source(), DecoderConfig::new()) {
-            Ok(d) => d,
-            Err(e) => {
-                ui.notify(UiEvent::Disconnected(format!(
-                    "cannot start video decoder: {e}"
-                )));
-                return;
-            }
-        };
-    let mut rgb = Vec::new();
+    let mut decoder = match Decoder::best() {
+        Ok(d) => d,
+        Err(e) => {
+            ui.notify(UiEvent::Disconnected(format!(
+                "cannot start video decoder: {e:#}"
+            )));
+            return;
+        }
+    };
+    tracing::info!("video decoder: {}", decoder.implementation());
     let mut spare: Vec<u32> = Vec::new();
     let mut awaiting_keyframe = false;
     let mut skipped_conversions = 0;
@@ -139,7 +136,7 @@ fn decode_thread(
             Ok(Some(yuv)) => yuv,
             Ok(None) => continue,
             Err(e) => {
-                tracing::warn!("video decode error, requesting keyframe: {e}");
+                tracing::warn!("video decode error, requesting keyframe: {e:#}");
                 awaiting_keyframe = true;
                 let _ = control.send(ClientMessage::RequestKeyframe);
                 continue;
@@ -158,15 +155,7 @@ fn decode_thread(
             }
             continue;
         }
-        rgb.resize(w * h * 3, 0);
-        decoded.write_rgb8(&mut rgb);
-        spare.clear();
-        spare.extend(
-            rgb.as_chunks::<3>()
-                .0
-                .iter()
-                .map(|p| (p[0] as u32) << 16 | (p[1] as u32) << 8 | p[2] as u32),
-        );
+        decoded.write_xrgb(&mut spare);
         let notify = {
             let mut pic = picture.lock().unwrap();
             pic.width = w as u32;

@@ -3546,6 +3546,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidedesk-codec"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "openh264",
+ "tracing",
+ "windows",
+]
+
+[[package]]
 name = "tidedesk-core"
 version = "0.1.0"
 dependencies = [
@@ -3608,11 +3618,11 @@ dependencies = [
  "egui-winit",
  "egui_software_backend",
  "if-addrs",
- "openh264",
  "opus",
  "quinn",
  "serde",
  "softbuffer",
+ "tidedesk-codec",
  "tidedesk-core",
  "tokio",
  "toml 1.1.6+spec-1.1.0",
