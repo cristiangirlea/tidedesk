@@ -5,15 +5,16 @@
 
 use std::mem::ManuallyDrop;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
+use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use windows::Win32::Foundation::HMODULE;
 use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_HARDWARE;
 use windows::Win32::Graphics::Direct3D11::{
-    D3D11_BIND_RENDER_TARGET, D3D11_BIND_SHADER_RESOURCE, D3D11_CREATE_DEVICE_VIDEO_SUPPORT,
-    D3D11_SDK_VERSION, D3D11_SUBRESOURCE_DATA, D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT,
-    D3D11CreateDevice, ID3D11Device, ID3D11Multithread, ID3D11Texture2D,
+    D3D11_CREATE_DEVICE_VIDEO_SUPPORT, D3D11_SDK_VERSION, D3D11_SUBRESOURCE_DATA,
+    D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT, D3D11CreateDevice, ID3D11Device, ID3D11Multithread,
+    ID3D11Texture2D,
 };
 use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_NV12, DXGI_SAMPLE_DESC};
 use windows::Win32::Media::MediaFoundation::{
@@ -37,7 +38,8 @@ use windows::Win32::Media::MediaFoundation::{
     eAVScenarioInfo_DisplayRemoting,
 };
 use windows::Win32::System::Com::{
-    CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx, CoTaskMemFree,
+    APTTYPE, APTTYPE_MTA, APTTYPEQUALIFIER, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
+    CoCreateInstance, CoGetApartmentType, CoInitializeEx, CoTaskMemFree,
 };
 use windows::Win32::System::Variant::{VARIANT, VT_BOOL, VT_UI4};
 use windows::core::{GUID, HRESULT, Interface};
@@ -79,7 +81,8 @@ pub struct Encoder {
 struct Hardware {
     activate: IMFActivate,
     /// The encoder's events (type and status), read on their own thread.
-    events: Receiver<windows::core::Result<(u32, HRESULT)>>,
+    events: Receiver<Event>,
+    reader: JoinHandle<()>,
     device: ID3D11Device,
     /// Hands the device to the encoder; kept alive with it.
     _manager: IMFDXGIDeviceManager,
@@ -94,11 +97,22 @@ struct Hardware {
 impl Drop for Encoder {
     fn drop(&mut self) {
         if let Some(hardware) = &self.hardware {
-            // An asynchronous transform runs its own threads until shut down.
+            // An asynchronous transform runs its own threads until shut down,
+            // and shutting it down ends the one reading its events.
             let _ = unsafe { hardware.activate.ShutdownObject() };
+            let deadline = Instant::now() + Duration::from_millis(200);
+            while !hardware.reader.is_finished() && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            if !hardware.reader.is_finished() {
+                tracing::warn!("the hardware H.264 encoder's events did not stop");
+            }
         }
     }
 }
+
+/// An event from the encoder: its type and status.
+type Event = windows::core::Result<(u32, HRESULT)>;
 
 enum Output {
     Data,
@@ -155,16 +169,14 @@ fn hardware_encoders() -> Result<Vec<IMFActivate>> {
 /// Reads the encoder's events on a thread of their own until it shuts down.
 /// Waiting on them there costs the encoder nothing; asking for them over and
 /// over without waiting slows it down, from 3.5 ms a picture to 20 or more.
-fn read_events(
-    events: IMFMediaEventGenerator,
-) -> Result<Receiver<windows::core::Result<(u32, HRESULT)>>> {
+fn read_events(events: IMFMediaEventGenerator) -> Result<(Receiver<Event>, JoinHandle<()>)> {
     struct Events(IMFMediaEventGenerator);
     // SAFETY: the encoder lives in the multithreaded apartment (see `start`),
     // whose objects any of its threads may use; the reader joins it.
     unsafe impl Send for Events {}
     let events = Events(events);
     let (sender, receiver) = mpsc::channel();
-    std::thread::Builder::new()
+    let reader = std::thread::Builder::new()
         .name("h264 encoder events".into())
         .spawn(move || {
             let events = events;
@@ -179,7 +191,15 @@ fn read_events(
                 }
             }
         })?;
-    Ok(receiver)
+    Ok((receiver, reader))
+}
+
+/// Whether this thread is in COM's multithreaded apartment, whose objects
+/// other threads of it may use: the hardware encoder's events are read on one.
+fn multithreaded() -> bool {
+    let (mut apartment, mut qualifier) = (APTTYPE::default(), APTTYPEQUALIFIER::default());
+    unsafe { CoGetApartmentType(&mut apartment, &mut qualifier) }.is_ok()
+        && apartment == APTTYPE_MTA
 }
 
 fn friendly_name(activate: &IMFActivate) -> String {
@@ -286,8 +306,12 @@ impl Encoder {
         if !hardware {
             return Self::with(create()?, size, settings, None);
         }
+        let encoders = hardware_encoders()?;
+        if !multithreaded() {
+            bail!("the hardware H.264 encoder needs COM's multithreaded apartment");
+        }
         let mut refused = Vec::new();
-        for activate in hardware_encoders()? {
+        for activate in encoders {
             let name = friendly_name(&activate);
             match Self::on_graphics_card(&activate, size, settings) {
                 Ok(encoder) => {
@@ -319,9 +343,11 @@ impl Encoder {
         let (device, manager) = direct3d()?;
         unsafe { transform.ProcessMessage(MFT_MESSAGE_SET_D3D_MANAGER, manager.as_raw() as usize) }
             .context("the encoder does not take a Direct3D 11 device")?;
+        let (events, reader) = read_events(transform.cast()?)?;
         let hardware = Hardware {
             activate: activate.clone(),
-            events: read_events(transform.cast()?)?,
+            events,
+            reader,
             device,
             _manager: manager,
             wanted: 0,
@@ -535,7 +561,7 @@ impl Encoder {
             self.wait_for(|hardware| hardware.announced > 0, "encode the picture")?;
             self.hardware_mut().announced -= 1;
             match self.take_output(out)? {
-                Output::Data => return Ok(()),
+                Output::Data => return self.take_announced(out),
                 Output::NeedMoreInput => {}
                 Output::StreamChanged if changes < 3 => {
                     changes += 1;
@@ -544,6 +570,24 @@ impl Encoder {
                 Output::StreamChanged => {
                     bail!("the hardware H.264 encoder keeps changing its output")
                 }
+            }
+        }
+    }
+
+    /// Takes whatever else the encoder has already announced: it belongs to
+    /// this picture, as the next one is not in yet.
+    fn take_announced(&mut self, out: &mut Vec<u8>) -> Result<()> {
+        loop {
+            let hardware = self.hardware_mut();
+            while let Ok(event) = hardware.events.try_recv() {
+                hardware.count(event)?;
+            }
+            if hardware.announced == 0 {
+                return Ok(());
+            }
+            hardware.announced -= 1;
+            if let Output::StreamChanged = self.take_output(out)? {
+                self.renegotiate()?;
             }
         }
     }
@@ -559,21 +603,12 @@ impl Encoder {
         let deadline = Instant::now() + HARDWARE_TIMEOUT;
         while !done(hardware) {
             let left = deadline.saturating_duration_since(Instant::now());
-            let (kind, status) = match hardware.events.recv_timeout(left) {
-                Ok(event) => event.context("the hardware H.264 encoder failed")?,
+            match hardware.events.recv_timeout(left) {
+                Ok(event) => hardware.count(event)?,
                 Err(RecvTimeoutError::Timeout) => {
                     bail!("the hardware H.264 encoder did not {what} in time")
                 }
                 Err(RecvTimeoutError::Disconnected) => bail!("the hardware H.264 encoder stopped"),
-            };
-            if status.is_err() || kind == MEError.0 as u32 {
-                let error = windows::core::Error::from(status);
-                bail!("the hardware H.264 encoder failed: {error}");
-            }
-            if kind == METransformNeedInput.0 as u32 {
-                hardware.wanted += 1;
-            } else if kind == METransformHaveOutput.0 as u32 {
-                hardware.announced += 1;
             }
         }
         Ok(())
@@ -662,6 +697,22 @@ impl Encoder {
 }
 
 impl Hardware {
+    /// Counts a request for a picture or an announced output; an error if the
+    /// encoder reports a failure.
+    fn count(&mut self, event: Event) -> Result<()> {
+        let (kind, status) = event.context("the hardware H.264 encoder failed")?;
+        if status.is_err() || kind == MEError.0 as u32 {
+            let error = windows::core::Error::from(status);
+            bail!("the hardware H.264 encoder failed: {error}");
+        }
+        if kind == METransformNeedInput.0 as u32 {
+            self.wanted += 1;
+        } else if kind == METransformHaveOutput.0 as u32 {
+            self.announced += 1;
+        }
+        Ok(())
+    }
+
     /// The picture as a sample holding an NV12 texture on the encoder's device.
     fn texture_sample(
         &mut self,
@@ -681,7 +732,8 @@ impl Hardware {
                 Quality: 0,
             },
             Usage: D3D11_USAGE_DEFAULT,
-            BindFlags: (D3D11_BIND_RENDER_TARGET.0 | D3D11_BIND_SHADER_RESOURCE.0) as u32,
+            // Only the encoder reads it: no binding, which every card allows.
+            BindFlags: 0,
             CPUAccessFlags: 0,
             MiscFlags: 0,
         };

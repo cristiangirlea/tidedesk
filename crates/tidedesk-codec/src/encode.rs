@@ -180,7 +180,13 @@ impl Encoder {
                 encoded.or_else(|e| {
                     *self = if hardware {
                         tracing::warn!("using Windows' software encoder from here on: {e:#}");
-                        Self::media_foundation(settings).or_else(|_| Self::openh264(settings))?
+                        match Self::media_foundation(settings) {
+                            Ok(encoder) => encoder,
+                            Err(e) => {
+                                tracing::warn!("using OpenH264 from here on: {e:#}");
+                                Self::openh264(settings)?
+                            }
+                        }
                     } else {
                         tracing::warn!("using OpenH264 from here on: {e:#}");
                         Self::openh264(settings)?

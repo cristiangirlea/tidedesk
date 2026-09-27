@@ -230,8 +230,8 @@ mod tests {
                 DisplayRect {
                     left: -128,
                     top: 0,
-                    width: 128,
-                    height: 96,
+                    width: 256,
+                    height: 144,
                 }
             }
         }
@@ -250,9 +250,9 @@ mod tests {
             run(
                 Box::new(StaticCapture {
                     frame: capture::Frame {
-                        width: 128,
-                        height: 96,
-                        bgra: vec![90; 128 * 96 * 4],
+                        width: 256,
+                        height: 144,
+                        bgra: vec![90; 256 * 144 * 4],
                     },
                     first: true,
                 }),
@@ -271,7 +271,7 @@ mod tests {
             .recv_timeout(Duration::from_secs(5))
             .unwrap()
             .unwrap();
-        assert_eq!((info.width, info.height, info.rect.left), (128, 96, -128));
+        assert_eq!((info.width, info.height, info.rect.left), (256, 144, -128));
         let mut decoder = Decoder::openh264().unwrap();
         let first = tokio::time::timeout(Duration::from_secs(5), rx.recv())
             .await
@@ -286,11 +286,11 @@ mod tests {
                 .await
                 .unwrap()
                 .unwrap();
-            assert_eq!((frame.header.width, frame.header.height), (128, 96));
+            assert_eq!((frame.header.width, frame.header.height), (256, 144));
             assert!(frame.header.keyframe);
             assert_eq!(
                 decoder.decode(&frame.data).unwrap().unwrap().dimensions(),
-                (128, 96)
+                (256, 144)
             );
             tokio::time::timeout(Duration::from_secs(5), async {
                 loop {
@@ -319,14 +319,14 @@ mod tests {
     #[test]
     fn live_preset_changes_produce_decodable_keyframes_without_resizing() {
         let mut decoder = Decoder::openh264().unwrap();
-        let pixels = vec![90; 128 * 96 * 4];
+        let pixels = vec![90; 256 * 144 * 4];
         let mut bytes = Vec::new();
         for enabled in [false, true, false] {
             let mut encoder =
                 encoder_for(StreamingStatus::requested(1, enabled, 30, 4_000_000)).unwrap();
-            assert!(encoder.encode(&pixels, (128, 96), 0, &mut bytes).unwrap());
+            assert!(encoder.encode(&pixels, (256, 144), 0, &mut bytes).unwrap());
             let decoded = decoder.decode(&bytes).unwrap().unwrap();
-            assert_eq!(decoded.dimensions(), (128, 96));
+            assert_eq!(decoded.dimensions(), (256, 144));
         }
     }
 }

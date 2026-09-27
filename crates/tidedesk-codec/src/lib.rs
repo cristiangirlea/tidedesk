@@ -20,7 +20,8 @@ use openh264::OpenH264API;
 use openh264::decoder::{DecodedYUV, DecoderConfig};
 use openh264::formats::{YUVSlices, YUVSource};
 
-/// Set to `openh264` to use OpenH264 even where Windows has its own codecs.
+/// Leaves codecs out: `software` skips the graphics card's encoder, and
+/// `openh264` uses OpenH264 only, even where Windows has its own codecs.
 pub const CHOICE_ENV: &str = "TIDEDESK_CODEC";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
