@@ -323,8 +323,9 @@ mod tests {
         };
         assert_eq!(windows.implementation(), Implementation::MediaFoundation);
         let mut reference = Decoder::openh264().unwrap();
-        // A size change, and a height that is not a multiple of 16 (cropped).
-        let units = stream(&[(128, 96, 6), (176, 120, 4)]);
+        // Size changes, a height and then a width that are not multiples of
+        // 16 (cropped, as on a 1366x768 laptop screen).
+        let units = stream(&[(128, 96, 6), (176, 120, 4), (180, 120, 4)]);
         for (i, unit) in units.iter().enumerate() {
             let expected = reference.decode(unit).unwrap().map(|p| planes(&p));
             let actual = windows.decode(unit).unwrap().map(|p| planes(&p));

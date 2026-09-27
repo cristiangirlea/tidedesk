@@ -136,12 +136,20 @@ impl Decoder {
     /// Takes every picture the decoder has ready, keeping the last; whether
     /// there was one.
     fn drain(&mut self) -> Result<bool> {
-        let mut picture = false;
+        let (mut picture, mut changes) = (false, 0);
         loop {
             match self.take_output()? {
                 Output::Picture => picture = true,
                 Output::NeedMoreInput => return Ok(picture),
-                Output::StreamChanged => self.choose_output()?,
+                // One change per new size is normal; more means the decoder
+                // does not take the output it asked for.
+                Output::StreamChanged if changes < 3 => {
+                    changes += 1;
+                    self.choose_output()?;
+                }
+                Output::StreamChanged => {
+                    bail!("the Windows H.264 decoder keeps changing its output")
+                }
             }
         }
     }
