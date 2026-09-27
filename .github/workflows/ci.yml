@@ -41,6 +41,15 @@ jobs:
           path: |
             target/release/tidedesk.exe
 
+  # Every dependency's license must be one TideDesk may ship: see deny.toml.
+  licenses:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check licenses
+
   # The wire format is what the rendezvous service, a Linux program, builds on.
   proto-linux:
     runs-on: ubuntu-latest

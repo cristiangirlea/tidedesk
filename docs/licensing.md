@@ -38,10 +38,18 @@ assuming that the license on the development branch applies to every release.
 
 Third-party components keep their own licenses; the personal-use restriction is
 not a relicensing of their code. The vendored egui_software_backend retains its
-MIT and Apache-2.0 notices. Dependencies include MIT, Apache, BSD and other
-licenses; option-ext uses MPL-2.0, and the bundled fonts have separate notices.
-Their notice, source-availability and other obligations must be met when
-distributing a build. A Cargo metadata inventory is not a complete legal audit.
+MIT and Apache-2.0 notices. Their notice, source-availability and other
+obligations must be met when distributing a build. A Cargo metadata inventory
+is not a complete legal audit.
+
+Rust crates are checked in CI against [deny.toml](../deny.toml), which lists
+the licenses TideDesk may ship: permissive ones, the egui fonts' licenses
+(OFL-1.1, Ubuntu Font Licence), and MPL-2.0 for option-ext only, which Linux
+builds use unmodified (its source is on crates.io). GPL, LGPL and AGPL code is
+not allowed. Where a crate offers a choice, TideDesk uses the permissive one,
+such as self_cell under Apache-2.0. Every ZIP and MSIX carries the crates'
+license texts in `licenses/third-party`, generated from `Cargo.lock`; the app
+opens them from Settings, About, **Third-party notices**.
 
 OpenH264's copyright license and H.264 patent permissions are separate questions.
 This license does not grant third-party codec patent rights.

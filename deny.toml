@@ -1,0 +1,38 @@
+# The licenses TideDesk may ship, checked in CI with `cargo deny check licenses`.
+#
+# TideDesk's builds are not open source (see LICENSE), so GPL, LGPL and AGPL
+# code cannot go into them; MPL-2.0 is allowed only for the crate named below.
+# Before allowing anything new, read its terms and what distributing it
+# requires. Where a crate offers a choice ("A OR B"), TideDesk uses it under
+# the permissive one, such as self_cell under Apache-2.0.
+
+[graph]
+# What TideDesk builds for: Windows today, Linux next.
+targets = ["x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu"]
+
+[licenses]
+confidence-threshold = 0.93
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "ISC",
+    "MIT",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+exceptions = [
+    # egui's fonts; their license texts ship with every build.
+    { allow = ["OFL-1.1", "Ubuntu-font-1.0"], crate = "epaint_default_fonts" },
+    # Linux only, used unmodified. MPL-2.0 files must stay available in source
+    # form, which crates.io provides; the notice must say where.
+    { allow = ["MPL-2.0"], crate = "option-ext" },
+]
+
+# TideDesk's own crates carry TideDesk's license.
+[licenses.private]
+ignore = true
