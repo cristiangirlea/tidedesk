@@ -81,11 +81,6 @@ are separate from GitHub releases; portable ZIP users still update manually.
   graph, the vendored backend, native OpenH264/Opus and embedded font notices
   under licenses/third-party. Review this generated inventory before each
   submission; a successful script run is not a legal clearance of all rights.
-- Resolve H.264 patent rights before Store submission. TideDesk currently builds
-  OpenH264 from source into its executable. Cisco's OpenH264 FAQ says its
-  MPEG LA royalty coverage applies to the Cisco-distributed binary module,
-  not independently built binaries. Including the BSD copyright notice does
-  not extend that separate patent coverage. See https://www.openh264.org/faq.html.
 - Use an isolated test machine/VM for development signing and installation.
   Do not install a test certificate into a production trust store. The unsigned
   candidate is not a double-click installer for end users.
