@@ -81,6 +81,7 @@ are separate from GitHub releases; portable ZIP users still update manually.
   graph, the vendored backend, native OpenH264/Opus and embedded font notices
   under licenses/third-party. Review this generated inventory before each
   submission; a successful script run is not a legal clearance of all rights.
+- Complete the owner's review of third-party components and their terms.
 - Use an isolated test machine/VM for development signing and installation.
   Do not install a test certificate into a production trust store. The unsigned
   candidate is not a double-click installer for end users.
