@@ -51,11 +51,13 @@ On an AMD Ryzen 9 9950X (16 cores), streaming a 3840×2160 display over loopback
 | Host, streaming 4K | ~13% of **one** core | ~270 MB |
 | Viewer, showing 4K | ~5% of one core | ~210 MB |
 
-The table was measured with OpenH264. Encoding time per frame with Windows' own (software)
-H.264 encoder, now the default: 3 ms at 1080p, 5 ms at 1440p, 9 ms at 4K (OpenH264: 10, 19
-and 44 ms). It spreads the work over several cores and uses 20–40% more CPU time in total.
-These figures are not performance guarantees. Hardware encoding and lower 4K memory use
-remain planned.
+The table was measured with OpenH264. The host now encodes on the graphics card where it has
+an H.264 encoder (here an AMD Radeon RX 7900 XT): CPU time per frame at 30 fps is 3 ms at
+1080p, 4 ms at 1440p and 7 ms at 4K, against 13, 27 and 55 ms with Windows' own software
+encoder and 11, 18 and 45 ms with OpenH264. Each picture takes 9–16 ms from capture to
+encoded, a few milliseconds more than with the software encoder on this 16-core CPU. These
+figures are not performance guarantees. Encoding straight from the captured screen, without
+the copy through system memory, and lower 4K memory use remain planned.
 
 ## Quick start
 
@@ -119,9 +121,10 @@ Host options override the saved settings for that run only.
 
 The access code can also be supplied through the `TIDEDESK_CODE` environment variable.
 
-Video is encoded and decoded with Windows' own H.264 codecs where Windows has them, and with
-the bundled OpenH264 otherwise. `TIDEDESK_CODEC=openh264` makes the host and the viewer use
-OpenH264 anyway.
+The host encodes video with the graphics card's H.264 encoder where there is one, else with
+Windows' own, else with the bundled OpenH264; the viewer decodes with Windows' own decoder or
+OpenH264. `TIDEDESK_CODEC=software` leaves the graphics card out, and `TIDEDESK_CODEC=openh264`
+makes the host and the viewer use OpenH264 only.
 
 ### Clipboard and mouse controls
 
@@ -201,7 +204,7 @@ The program lands in `target/release/tidedesk.exe` (both sides).
 | `tidedesk-core` | Platform-independent: wire protocol, auth, identity pinning, QUIC setup, audio helpers |
 | `tidedesk-host` | Library: screen capture, H.264 encoding, audio capture, input injection |
 | `tidedesk-view` | Library: window, audio playback, input capture |
-| `tidedesk-codec` | H.264: Windows' own codecs (Media Foundation), OpenH264 as the fallback |
+| `tidedesk-codec` | H.264: graphics card and Windows codecs (Media Foundation), OpenH264 as the fallback |
 | `third_party/egui_software_backend` | Vendored CPU renderer for the small app windows, with a repaint fix |
 
 The app windows are drawn on the CPU with [egui](https://github.com/emilk/egui): an OpenGL or
