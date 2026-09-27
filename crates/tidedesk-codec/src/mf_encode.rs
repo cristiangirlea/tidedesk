@@ -28,17 +28,18 @@ use windows::Win32::Media::MediaFoundation::{
     CODECAPI_AVScenarioInfo, ICodecAPI, IMF2DBuffer, IMFActivate, IMFDXGIDeviceManager,
     IMFMediaBuffer, IMFMediaEventGenerator, IMFSample, IMFTransform,
     MEDIA_EVENT_GENERATOR_GET_EVENT_FLAGS, MEError, METransformHaveOutput, METransformNeedInput,
-    MF_E_NOTACCEPTING, MF_E_TRANSFORM_NEED_MORE_INPUT, MF_E_TRANSFORM_STREAM_CHANGE,
-    MF_LOW_LATENCY, MF_MT_AVG_BITRATE, MF_MT_FRAME_RATE, MF_MT_FRAME_SIZE, MF_MT_INTERLACE_MODE,
-    MF_MT_MAJOR_TYPE, MF_MT_MPEG_SEQUENCE_HEADER, MF_MT_MPEG2_PROFILE, MF_MT_PIXEL_ASPECT_RATIO,
-    MF_MT_SUBTYPE, MF_TRANSFORM_ASYNC_UNLOCK, MFCreateAttributes, MFCreateDXGIDeviceManager,
-    MFCreateDXGISurfaceBuffer, MFCreateMediaType, MFCreateMemoryBuffer, MFCreateSample,
-    MFMediaType_Video, MFT_CATEGORY_VIDEO_ENCODER, MFT_ENUM_ADAPTER_LUID, MFT_ENUM_FLAG,
-    MFT_ENUM_FLAG_HARDWARE, MFT_ENUM_FLAG_SORTANDFILTER, MFT_ENUM_HARDWARE_VENDOR_ID_Attribute,
-    MFT_FRIENDLY_NAME_Attribute, MFT_MESSAGE_NOTIFY_BEGIN_STREAMING,
-    MFT_MESSAGE_NOTIFY_START_OF_STREAM, MFT_MESSAGE_SET_D3D_MANAGER, MFT_OUTPUT_DATA_BUFFER,
-    MFT_OUTPUT_STREAM_PROVIDES_SAMPLES, MFT_REGISTER_TYPE_INFO, MFTEnum2, MFVideoFormat_H264,
-    MFVideoFormat_NV12, MFVideoInterlace_Progressive, eAVEncCommonRateControlMode_CBR,
+    MF_E_INVALIDMEDIATYPE, MF_E_NOTACCEPTING, MF_E_TRANSFORM_NEED_MORE_INPUT,
+    MF_E_TRANSFORM_STREAM_CHANGE, MF_LOW_LATENCY, MF_MT_AVG_BITRATE, MF_MT_FRAME_RATE,
+    MF_MT_FRAME_SIZE, MF_MT_INTERLACE_MODE, MF_MT_MAJOR_TYPE, MF_MT_MPEG_SEQUENCE_HEADER,
+    MF_MT_MPEG2_PROFILE, MF_MT_PIXEL_ASPECT_RATIO, MF_MT_SUBTYPE, MF_TRANSFORM_ASYNC_UNLOCK,
+    MFCreateAttributes, MFCreateDXGIDeviceManager, MFCreateDXGISurfaceBuffer, MFCreateMediaType,
+    MFCreateMemoryBuffer, MFCreateSample, MFMediaType_Video, MFT_CATEGORY_VIDEO_ENCODER,
+    MFT_ENUM_ADAPTER_LUID, MFT_ENUM_FLAG, MFT_ENUM_FLAG_HARDWARE, MFT_ENUM_FLAG_SORTANDFILTER,
+    MFT_ENUM_HARDWARE_VENDOR_ID_Attribute, MFT_FRIENDLY_NAME_Attribute,
+    MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, MFT_MESSAGE_NOTIFY_START_OF_STREAM,
+    MFT_MESSAGE_SET_D3D_MANAGER, MFT_OUTPUT_DATA_BUFFER, MFT_OUTPUT_STREAM_PROVIDES_SAMPLES,
+    MFT_REGISTER_TYPE_INFO, MFTEnum2, MFVideoFormat_H264, MFVideoFormat_NV12,
+    MFVideoInterlace_Progressive, eAVEncCommonRateControlMode_CBR,
     eAVEncCommonRateControlMode_PeakConstrainedVBR, eAVEncH264VProfile_ConstrainedBase,
     eAVScenarioInfo_DisplayRemoting,
 };
@@ -272,6 +273,38 @@ fn vendor_id(attribute: &str) -> Option<u32> {
     u32::from_str_radix(digits, 16).ok()
 }
 
+/// Microsoft's PCI vendor ID, as its Direct3D 12 encoder wrapper names it:
+/// that encoder runs on whichever card's device it is given.
+const MICROSOFT: u32 = 0x1414;
+
+/// Whether an encoder from `encoder` (as it names itself, if it does) may be
+/// tried on a card from `card`.
+fn fits(encoder: Option<u32>, card: u32) -> bool {
+    encoder.is_none_or(|vendor| vendor == card || vendor == MICROSOFT)
+}
+
+/// An encoder turning down a card's Direct3D device: it belongs to another
+/// card, which retrying will not change.
+#[derive(Debug)]
+struct OtherCard;
+
+impl std::fmt::Display for OtherCard {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("the encoder does not take this card's Direct3D 11 device")
+    }
+}
+
+/// Whether `error` will not pass: the encoder refused the picture's size or
+/// the card, rather than, say, all its sessions being in use or the device
+/// being lost.
+fn lasting(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<OtherCard>().is_some()
+        || error
+            .chain()
+            .filter_map(|cause| cause.downcast_ref::<windows::core::Error>())
+            .any(|cause| cause.code() == MF_E_INVALIDMEDIATYPE)
+}
+
 /// The vendor an encoder says it is from, if it says.
 fn encoder_vendor(activate: &IMFActivate) -> Option<u32> {
     let mut text = [0u16; 64];
@@ -281,8 +314,9 @@ fn encoder_vendor(activate: &IMFActivate) -> Option<u32> {
     vendor_id(&String::from_utf16_lossy(&text[..length as usize]))
 }
 
-/// Sizes no graphics card took, not to be tried again: a new encoder is
-/// made for every Game Boost change, and trying every card takes a while.
+/// Sizes every graphics card's encoder turned down for good (see
+/// [`lasting`]), not to be tried again in this process: a new encoder is made
+/// for every Game Boost change, and trying every card takes a while.
 fn refused(size: (usize, usize)) -> bool {
     REFUSED.lock().is_ok_and(|sizes| sizes.contains(&size))
 }
@@ -399,8 +433,10 @@ impl Encoder {
     }
 
     /// Windows' own encoder, or with `hardware` a graphics card's encoder
-    /// that takes this size, on a card of its own vendor, cards showing a
-    /// screen first.
+    /// that takes this size: cards showing a screen first, and on each card
+    /// its own vendor's encoders (and those naming no vendor, or Microsoft's
+    /// wrapper). A size every encoder turned down for good is not tried again
+    /// in this process.
     pub fn new(size: (usize, usize), settings: Settings, hardware: bool) -> Result<Self> {
         if !hardware {
             return Self::with(create()?, size, settings, None);
@@ -415,17 +451,21 @@ impl Encoder {
         }
         let cards = cards()?;
         let listed: Vec<Card> = cards.iter().map(|(card, ..)| card.clone()).collect();
-        let mut tried = Vec::new();
+        let (mut tried, mut lasting_only) = (Vec::new(), true);
         for index in in_order(&listed) {
             let (card, adapter, card_name) = &cards[index];
             let luid = unsafe { adapter.GetDesc1() }?.AdapterLuid;
             // Drivers list the same encoder several times; one refusal is
             // theirs all.
             let mut refused_here = Vec::new();
-            for activate in hardware_encoders(Some(luid))? {
+            let mut encoders = hardware_encoders(Some(luid))?;
+            if encoders.is_empty() {
+                // The card filter may not match how a vendor registers.
+                encoders = hardware_encoders(None)?;
+            }
+            for activate in encoders {
                 let name = friendly_name(&activate);
-                let other_vendor = encoder_vendor(&activate).is_some_and(|v| v != card.vendor);
-                if other_vendor || refused_here.contains(&name) {
+                if !fits(encoder_vendor(&activate), card.vendor) || refused_here.contains(&name) {
                     continue;
                 }
                 match Self::on_graphics_card(&activate, adapter, size, settings) {
@@ -435,15 +475,18 @@ impl Encoder {
                     }
                     Err(e) => {
                         let _ = unsafe { activate.ShutdownObject() };
+                        lasting_only &= lasting(&e);
                         tried.push(format!("{name} on {card_name}: {e:#}"));
                         refused_here.push(name);
                     }
                 }
             }
         }
-        refuse(size);
         if tried.is_empty() {
             bail!("no graphics card here has an H.264 encoder of its own vendor");
+        }
+        if lasting_only {
+            refuse(size);
         }
         bail!(
             "no graphics card took {width}x{height} ({})",
@@ -462,7 +505,7 @@ impl Encoder {
         unsafe { attributes.SetUINT32(&MF_TRANSFORM_ASYNC_UNLOCK, 1) }?;
         let (device, manager) = direct3d(card)?;
         unsafe { transform.ProcessMessage(MFT_MESSAGE_SET_D3D_MANAGER, manager.as_raw() as usize) }
-            .context("the encoder does not take a Direct3D 11 device")?;
+            .map_err(|e| anyhow::Error::from(e).context(OtherCard))?;
         let (events, reader) = read_events(transform.cast()?)?;
         let hardware = Hardware {
             activate: activate.clone(),
@@ -884,6 +927,7 @@ impl Hardware {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use windows::Win32::Foundation::{E_INVALIDARG, E_OUTOFMEMORY};
 
     #[test]
     fn keyframes_get_parameter_sets_once() {
@@ -907,6 +951,31 @@ mod tests {
         assert_eq!(vendor_id(""), None);
         assert_eq!(vendor_id("VEN_"), None);
         assert_eq!(vendor_id("NVIDIA"), None);
+    }
+
+    #[test]
+    fn encoders_are_tried_on_cards_of_their_own_vendor() {
+        let (amd, nvidia, intel) = (0x1002, 0x10DE, 0x8086);
+        assert!(fits(Some(nvidia), nvidia));
+        assert!(!fits(Some(nvidia), intel));
+        assert!(!fits(Some(intel), amd));
+        // Naming no vendor, or Microsoft's wrapper: any card.
+        assert!(fits(None, intel));
+        assert!(fits(Some(MICROSOFT), amd));
+    }
+
+    #[test]
+    fn only_lasting_refusals_are_remembered() {
+        let error = |code| anyhow::Error::from(windows::core::Error::from(code));
+        assert!(lasting(
+            &error(MF_E_INVALIDMEDIATYPE).context("refused 5120x1440")
+        ));
+        assert!(lasting(&error(E_INVALIDARG).context(OtherCard)));
+        // All of an encoder's sessions in use: try again next time.
+        assert!(!lasting(&error(E_OUTOFMEMORY).context("refused 1920x1080")));
+        assert!(!lasting(&anyhow::anyhow!(
+            "did not ask for a picture in time"
+        )));
     }
 
     #[test]
