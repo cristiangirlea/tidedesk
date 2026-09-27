@@ -4,19 +4,23 @@
 //! 11 textures.
 
 use std::mem::ManuallyDrop;
+use std::sync::Mutex;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
-use windows::Win32::Foundation::HMODULE;
-use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_HARDWARE;
+use windows::Win32::Foundation::{HMODULE, LUID};
+use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_UNKNOWN;
 use windows::Win32::Graphics::Direct3D11::{
     D3D11_CREATE_DEVICE_VIDEO_SUPPORT, D3D11_SDK_VERSION, D3D11_SUBRESOURCE_DATA,
     D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT, D3D11CreateDevice, ID3D11Device, ID3D11Multithread,
     ID3D11Texture2D,
 };
 use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_NV12, DXGI_SAMPLE_DESC};
+use windows::Win32::Graphics::Dxgi::{
+    CreateDXGIFactory1, DXGI_ADAPTER_FLAG_SOFTWARE, IDXGIAdapter1, IDXGIFactory1,
+};
 use windows::Win32::Media::MediaFoundation::{
     CLSID_MSH264EncoderMFT, CODECAPI_AVEncCommonMaxBitRate, CODECAPI_AVEncCommonMeanBitRate,
     CODECAPI_AVEncCommonRateControlMode, CODECAPI_AVEncMPVDefaultBPictureCount,
@@ -27,12 +31,13 @@ use windows::Win32::Media::MediaFoundation::{
     MF_E_NOTACCEPTING, MF_E_TRANSFORM_NEED_MORE_INPUT, MF_E_TRANSFORM_STREAM_CHANGE,
     MF_LOW_LATENCY, MF_MT_AVG_BITRATE, MF_MT_FRAME_RATE, MF_MT_FRAME_SIZE, MF_MT_INTERLACE_MODE,
     MF_MT_MAJOR_TYPE, MF_MT_MPEG_SEQUENCE_HEADER, MF_MT_MPEG2_PROFILE, MF_MT_PIXEL_ASPECT_RATIO,
-    MF_MT_SUBTYPE, MF_TRANSFORM_ASYNC_UNLOCK, MFCreateDXGIDeviceManager, MFCreateDXGISurfaceBuffer,
-    MFCreateMediaType, MFCreateMemoryBuffer, MFCreateSample, MFMediaType_Video,
-    MFT_CATEGORY_VIDEO_ENCODER, MFT_ENUM_FLAG, MFT_ENUM_FLAG_HARDWARE, MFT_ENUM_FLAG_SORTANDFILTER,
+    MF_MT_SUBTYPE, MF_TRANSFORM_ASYNC_UNLOCK, MFCreateAttributes, MFCreateDXGIDeviceManager,
+    MFCreateDXGISurfaceBuffer, MFCreateMediaType, MFCreateMemoryBuffer, MFCreateSample,
+    MFMediaType_Video, MFT_CATEGORY_VIDEO_ENCODER, MFT_ENUM_ADAPTER_LUID, MFT_ENUM_FLAG,
+    MFT_ENUM_FLAG_HARDWARE, MFT_ENUM_FLAG_SORTANDFILTER, MFT_ENUM_HARDWARE_VENDOR_ID_Attribute,
     MFT_FRIENDLY_NAME_Attribute, MFT_MESSAGE_NOTIFY_BEGIN_STREAMING,
     MFT_MESSAGE_NOTIFY_START_OF_STREAM, MFT_MESSAGE_SET_D3D_MANAGER, MFT_OUTPUT_DATA_BUFFER,
-    MFT_OUTPUT_STREAM_PROVIDES_SAMPLES, MFT_REGISTER_TYPE_INFO, MFTEnumEx, MFVideoFormat_H264,
+    MFT_OUTPUT_STREAM_PROVIDES_SAMPLES, MFT_REGISTER_TYPE_INFO, MFTEnum2, MFVideoFormat_H264,
     MFVideoFormat_NV12, MFVideoInterlace_Progressive, eAVEncCommonRateControlMode_CBR,
     eAVEncCommonRateControlMode_PeakConstrainedVBR, eAVEncH264VProfile_ConstrainedBase,
     eAVScenarioInfo_DisplayRemoting,
@@ -132,8 +137,9 @@ fn create() -> Result<IMFTransform> {
         .context("Windows has no H.264 encoder (Windows N editions need the Media Feature Pack)")
 }
 
-/// The graphics cards' H.264 encoders, best first.
-fn hardware_encoders() -> Result<Vec<IMFActivate>> {
+/// The graphics cards' H.264 encoders, best first; with `card`, those Windows
+/// lists for that card (vendors that do not say list theirs for every card).
+fn hardware_encoders(card: Option<LUID>) -> Result<Vec<IMFActivate>> {
     start()?;
     let input = MFT_REGISTER_TYPE_INFO {
         guidMajorType: MFMediaType_Video,
@@ -144,26 +150,57 @@ fn hardware_encoders() -> Result<Vec<IMFActivate>> {
         guidSubtype: MFVideoFormat_H264,
     };
     let flags = MFT_ENUM_FLAG(MFT_ENUM_FLAG_HARDWARE.0 | MFT_ENUM_FLAG_SORTANDFILTER.0);
+    let mut filter = None;
+    if let Some(luid) = card {
+        unsafe { MFCreateAttributes(&mut filter, 1) }?;
+        let bytes = unsafe {
+            std::slice::from_raw_parts((&raw const luid).cast::<u8>(), size_of::<LUID>())
+        };
+        let attributes = filter.as_ref().context("no attributes")?;
+        unsafe { attributes.SetBlob(&MFT_ENUM_ADAPTER_LUID, bytes) }?;
+    }
     let mut list: *mut Option<IMFActivate> = std::ptr::null_mut();
     let mut count = 0;
     unsafe {
-        MFTEnumEx(
+        MFTEnum2(
             MFT_CATEGORY_VIDEO_ENCODER,
             flags,
             Some(&input),
             Some(&output),
+            filter.as_ref(),
             &mut list,
             &mut count,
         )
     }?;
-    let found: Vec<IMFActivate> = (0..count as usize)
+    let found = (0..count as usize)
         .filter_map(|i| unsafe { (*list.add(i)).take() })
         .collect();
     unsafe { CoTaskMemFree(Some(list.cast_const().cast())) };
-    if found.is_empty() {
-        bail!("no graphics card here has an H.264 encoder");
-    }
     Ok(found)
+}
+
+/// The graphics cards Windows lists: what choosing needs, the card itself,
+/// and its name.
+fn cards() -> Result<Vec<(Card, IDXGIAdapter1, String)>> {
+    let factory: IDXGIFactory1 = unsafe { CreateDXGIFactory1() }?;
+    let mut cards = Vec::new();
+    for index in 0.. {
+        let Ok(adapter) = (unsafe { factory.EnumAdapters1(index) }) else {
+            break;
+        };
+        let description = unsafe { adapter.GetDesc1() }?;
+        let screens = (0..)
+            .take_while(|&output| unsafe { adapter.EnumOutputs(output) }.is_ok())
+            .count();
+        let card = Card {
+            vendor: description.VendorId,
+            screens,
+            software: description.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32 != 0,
+        };
+        let name = String::from_utf16_lossy(&description.Description);
+        cards.push((card, adapter, name.trim_end_matches('\0').to_string()));
+    }
+    Ok(cards)
 }
 
 /// Reads the encoder's events on a thread of their own until it shuts down.
@@ -202,6 +239,64 @@ fn multithreaded() -> bool {
         && apartment == APTTYPE_MTA
 }
 
+/// A graphics card, as far as choosing an encoder goes.
+#[derive(Debug, Clone, PartialEq)]
+struct Card {
+    /// PCI vendor ID: 0x1002 AMD, 0x10DE NVIDIA, 0x8086 Intel.
+    vendor: u32,
+    /// Screens it shows; the captured screen is on one of these cards.
+    screens: usize,
+    /// A software renderer, which has no encoder.
+    software: bool,
+}
+
+/// The order to try graphics cards in: those showing a screen first, as the
+/// picture comes from there (and a laptop's integrated graphics, which
+/// usually shows it, spares the battery), then the others; never software.
+fn in_order(cards: &[Card]) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..cards.len()).filter(|&i| !cards[i].software).collect();
+    // A stable sort keeps Windows' order within each group.
+    order.sort_by_key(|&i| cards[i].screens == 0);
+    order
+}
+
+/// The PCI vendor ID in an encoder's vendor attribute, "VEN_10DE".
+fn vendor_id(attribute: &str) -> Option<u32> {
+    let prefix = attribute.get(..4)?;
+    if !prefix.eq_ignore_ascii_case("VEN_") {
+        return None;
+    }
+    let digits = attribute[4..]
+        .split(|c: char| !c.is_ascii_hexdigit())
+        .next()?;
+    u32::from_str_radix(digits, 16).ok()
+}
+
+/// The vendor an encoder says it is from, if it says.
+fn encoder_vendor(activate: &IMFActivate) -> Option<u32> {
+    let mut text = [0u16; 64];
+    let mut length = 0;
+    let attribute = &MFT_ENUM_HARDWARE_VENDOR_ID_Attribute;
+    unsafe { activate.GetString(attribute, &mut text, Some(&mut length)) }.ok()?;
+    vendor_id(&String::from_utf16_lossy(&text[..length as usize]))
+}
+
+/// Sizes no graphics card took, not to be tried again: a new encoder is
+/// made for every Game Boost change, and trying every card takes a while.
+fn refused(size: (usize, usize)) -> bool {
+    REFUSED.lock().is_ok_and(|sizes| sizes.contains(&size))
+}
+
+fn refuse(size: (usize, usize)) {
+    if let Ok(mut sizes) = REFUSED.lock()
+        && !sizes.contains(&size)
+    {
+        sizes.push(size);
+    }
+}
+
+static REFUSED: Mutex<Vec<(usize, usize)>> = Mutex::new(Vec::new());
+
 fn friendly_name(activate: &IMFActivate) -> String {
     let mut name = [0u16; 128];
     let mut length = 0;
@@ -212,14 +307,14 @@ fn friendly_name(activate: &IMFActivate) -> String {
     }
 }
 
-/// A Direct3D 11 device on the default graphics card, and the manager that
-/// hands it to a Media Foundation transform.
-fn direct3d() -> Result<(ID3D11Device, IMFDXGIDeviceManager)> {
+/// A Direct3D 11 device on `card`, and the manager that hands it to a Media
+/// Foundation transform.
+fn direct3d(card: &IDXGIAdapter1) -> Result<(ID3D11Device, IMFDXGIDeviceManager)> {
     let mut device = None;
     unsafe {
         D3D11CreateDevice(
-            None,
-            D3D_DRIVER_TYPE_HARDWARE,
+            card,
+            D3D_DRIVER_TYPE_UNKNOWN,
             HMODULE::default(),
             D3D11_CREATE_DEVICE_VIDEO_SUPPORT,
             None,
@@ -297,50 +392,75 @@ impl Encoder {
     }
 
     pub fn check_hardware_available() -> Result<()> {
-        hardware_encoders().map(drop)
+        if hardware_encoders(None)?.is_empty() {
+            bail!("no graphics card here has an H.264 encoder");
+        }
+        Ok(())
     }
 
-    /// Windows' own encoder, or with `hardware` the first graphics card
-    /// encoder that takes this size.
+    /// Windows' own encoder, or with `hardware` a graphics card's encoder
+    /// that takes this size, on a card of its own vendor, cards showing a
+    /// screen first.
     pub fn new(size: (usize, usize), settings: Settings, hardware: bool) -> Result<Self> {
         if !hardware {
             return Self::with(create()?, size, settings, None);
         }
-        let encoders = hardware_encoders()?;
+        let (width, height) = size;
+        if refused(size) {
+            bail!("no graphics card took {width}x{height} before");
+        }
+        start()?;
         if !multithreaded() {
             bail!("the hardware H.264 encoder needs COM's multithreaded apartment");
         }
-        let mut refused = Vec::new();
-        for activate in encoders {
-            let name = friendly_name(&activate);
-            match Self::on_graphics_card(&activate, size, settings) {
-                Ok(encoder) => {
-                    tracing::info!("hardware H.264 encoder: {name}");
-                    return Ok(encoder);
+        let cards = cards()?;
+        let listed: Vec<Card> = cards.iter().map(|(card, ..)| card.clone()).collect();
+        let mut tried = Vec::new();
+        for index in in_order(&listed) {
+            let (card, adapter, card_name) = &cards[index];
+            let luid = unsafe { adapter.GetDesc1() }?.AdapterLuid;
+            // Drivers list the same encoder several times; one refusal is
+            // theirs all.
+            let mut refused_here = Vec::new();
+            for activate in hardware_encoders(Some(luid))? {
+                let name = friendly_name(&activate);
+                let other_vendor = encoder_vendor(&activate).is_some_and(|v| v != card.vendor);
+                if other_vendor || refused_here.contains(&name) {
+                    continue;
                 }
-                Err(e) => {
-                    let _ = unsafe { activate.ShutdownObject() };
-                    refused.push(format!("{name}: {e:#}"));
+                match Self::on_graphics_card(&activate, adapter, size, settings) {
+                    Ok(encoder) => {
+                        tracing::info!("hardware H.264 encoder: {name} on {card_name}");
+                        return Ok(encoder);
+                    }
+                    Err(e) => {
+                        let _ = unsafe { activate.ShutdownObject() };
+                        tried.push(format!("{name} on {card_name}: {e:#}"));
+                        refused_here.push(name);
+                    }
                 }
             }
         }
+        refuse(size);
+        if tried.is_empty() {
+            bail!("no graphics card here has an H.264 encoder of its own vendor");
+        }
         bail!(
-            "no hardware H.264 encoder took {}x{} ({})",
-            size.0,
-            size.1,
-            refused.join("; ")
+            "no graphics card took {width}x{height} ({})",
+            tried.join("; ")
         )
     }
 
     fn on_graphics_card(
         activate: &IMFActivate,
+        card: &IDXGIAdapter1,
         size: (usize, usize),
         settings: Settings,
     ) -> Result<Self> {
         let transform: IMFTransform = unsafe { activate.ActivateObject() }?;
         let attributes = unsafe { transform.GetAttributes() }?;
         unsafe { attributes.SetUINT32(&MF_TRANSFORM_ASYNC_UNLOCK, 1) }?;
-        let (device, manager) = direct3d()?;
+        let (device, manager) = direct3d(card)?;
         unsafe { transform.ProcessMessage(MFT_MESSAGE_SET_D3D_MANAGER, manager.as_raw() as usize) }
             .context("the encoder does not take a Direct3D 11 device")?;
         let (events, reader) = read_events(transform.cast()?)?;
@@ -777,6 +897,70 @@ mod tests {
         let complete = idr.clone();
         with_parameter_sets(&mut idr, &sets);
         assert_eq!(idr, complete);
+    }
+
+    #[test]
+    fn encoder_vendors_are_read_from_their_attribute() {
+        assert_eq!(vendor_id("VEN_10DE"), Some(0x10DE));
+        assert_eq!(vendor_id("VEN_8086"), Some(0x8086));
+        assert_eq!(vendor_id("ven_1002"), Some(0x1002));
+        assert_eq!(vendor_id(""), None);
+        assert_eq!(vendor_id("VEN_"), None);
+        assert_eq!(vendor_id("NVIDIA"), None);
+    }
+
+    #[test]
+    fn cards_showing_a_screen_come_first() {
+        let card = |vendor, screens, software| Card {
+            vendor,
+            screens,
+            software,
+        };
+        // A hybrid laptop: NVIDIA listed first, Intel showing the screen.
+        let laptop = [
+            card(0x10DE, 0, false),
+            card(0x8086, 1, false),
+            card(0x1414, 0, true),
+        ];
+        assert_eq!(in_order(&laptop), [1, 0]);
+        // A desktop with its card showing the screen and integrated graphics
+        // unused: listed order kept within each group.
+        let desktop = [
+            card(0x1002, 1, false),
+            card(0x1002, 0, false),
+            card(0x1002, 2, false),
+        ];
+        assert_eq!(in_order(&desktop), [0, 2, 1]);
+        assert!(in_order(&[card(0x1414, 0, true)]).is_empty());
+    }
+
+    #[test]
+    fn sizes_no_card_takes_are_remembered() {
+        let settings = Settings {
+            fps: 30,
+            bitrate_bps: 4_000_000,
+            motion: false,
+        };
+        // Wider than any H.264 hardware encoder goes (4096 columns).
+        let size = (5120, 1440);
+        if crate::or_skip(
+            "hardware H.264 encoder",
+            "TIDEDESK_REQUIRE_HW",
+            Encoder::check_hardware_available(),
+        )
+        .is_none()
+        {
+            return;
+        }
+        assert!(Encoder::new(size, settings, true).is_err());
+        assert!(refused(size));
+        let again = Instant::now();
+        assert!(Encoder::new(size, settings, true).is_err());
+        assert!(
+            again.elapsed() < Duration::from_millis(5),
+            "{:?}",
+            again.elapsed()
+        );
     }
 
     #[test]
