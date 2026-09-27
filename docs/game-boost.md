@@ -20,10 +20,12 @@ Settings are shared by viewer sessions on this Windows account.
 
 ## Implemented behavior
 
-- Host encoding targets 60 FPS with OpenH264's real-time camera/video preset,
-  low complexity, four encoding threads and frame skipping for bitrate control.
-  Desktop mode restores the connection's original FPS, screen-content preset
-  and two encoding threads. Rapid changes are coalesced with a 250 ms minimum
+- Host encoding targets 60 FPS. Windows' own encoder keeps its single
+  low-latency, constant-bitrate setup; where OpenH264 is used instead, it
+  switches to its real-time camera/video preset, low complexity, four encoding
+  threads and frame skipping for bitrate control. Desktop mode restores the
+  connection's original FPS (and OpenH264's screen-content preset with two
+  encoding threads). Rapid changes are coalesced with a 250 ms minimum
   between encoder reconfigurations.
 - A new encoder starts each profile change with a keyframe and codec headers.
   No display mode switch, fixed resolution, scaling change or reconnection is used.
