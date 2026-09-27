@@ -1,4 +1,5 @@
-//! Encoding time (colour conversion included), size and quality per frame on a
+//! Encoding time (colour conversion included, median of all but the first
+//! picture, which also sets the encoder up), size and quality per frame on a
 //! synthetic desktop, for each encoder:
 //! `cargo run --release -p tidedesk-codec --example encode_bench -- 2560 1440`
 
@@ -58,9 +59,14 @@ fn main() {
 
     let mut encoders = vec![Encoder::openh264(settings).unwrap()];
     #[cfg(windows)]
-    match Encoder::media_foundation(settings) {
-        Ok(encoder) => encoders.push(encoder),
-        Err(e) => println!("Windows encoder unavailable: {e:#}"),
+    for encoder in [
+        Encoder::media_foundation(settings),
+        Encoder::hardware(settings),
+    ] {
+        match encoder {
+            Ok(encoder) => encoders.push(encoder),
+            Err(e) => println!("unavailable: {e:#}"),
+        }
     }
     println!(
         "{width}x{height}, {frames} frames at {} Mbit/s",
@@ -70,8 +76,7 @@ fn main() {
         let name = encoder.implementation().to_string();
         let mut bgra = desktop(width, height);
         let mut decoder = Decoder::openh264().unwrap();
-        let (mut time, mut worst, mut bytes, mut keyframes) =
-            (Duration::ZERO, Duration::ZERO, 0, 0);
+        let (mut times, mut bytes, mut keyframes) = (Vec::new(), 0, 0);
         let (mut quality, mut decoded) = (0.0, 0);
         let (mut out, mut shown) = (Vec::new(), Vec::new());
         for frame in 0..frames {
@@ -87,13 +92,11 @@ fn main() {
             {
                 Ok(keyframe) => keyframe,
                 Err(e) => {
-                    println!("{name:>28}: {e:#}");
+                    println!("{name:>36}: {e:#}");
                     continue 'encoders;
                 }
             };
-            let spent = start.elapsed();
-            time += spent;
-            worst = worst.max(spent);
+            times.push(start.elapsed());
             bytes += out.len();
             keyframes += usize::from(keyframe);
             if let Some(db) = psnr(&mut decoder, &out, &bgra, &mut shown) {
@@ -101,15 +104,20 @@ fn main() {
                 decoded += 1;
             }
         }
-        if encoder.implementation().to_string() != name {
-            println!("{name:>28}: failed during the run and handed over to OpenH264");
+        let now = encoder.implementation();
+        if now.to_string() != name {
+            println!("{name:>36}: failed during the run and handed over to {now}");
             continue;
         }
+        // The first picture also sets the encoder up; the rest are steady.
+        let ms = |time: Duration| time.as_secs_f64() * 1000.0;
+        let first = ms(times[0]);
+        let mut steady: Vec<f64> = times[1..].iter().map(|&t| ms(t)).collect();
+        steady.sort_by(f64::total_cmp);
         println!(
-            "{:>28}: {:5.1} ms/frame (worst {:5.1}), {:5.1} kB/frame, {keyframes} keyframe(s), {:4.1} dB over {decoded} frames",
-            name,
-            time.as_secs_f64() * 1000.0 / frames as f64,
-            worst.as_secs_f64() * 1000.0,
+            "{name:>36}: {:5.1} ms/frame median, {:5.1} worst, {first:5.1} first; {:5.1} kB/frame, {keyframes} keyframe(s), {:4.1} dB over {decoded} frames",
+            steady[steady.len() / 2],
+            steady.last().copied().unwrap_or(first),
             bytes as f64 / frames as f64 / 1000.0,
             quality / decoded.max(1) as f64,
         );

@@ -27,6 +27,8 @@ pub const CHOICE_ENV: &str = "TIDEDESK_CODEC";
 pub enum Implementation {
     /// Windows' own codec, through Media Foundation.
     MediaFoundation,
+    /// The graphics card's encoder, through Media Foundation.
+    Hardware,
     OpenH264,
 }
 
@@ -34,14 +36,30 @@ impl fmt::Display for Implementation {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             Self::MediaFoundation => "Windows (Media Foundation)",
+            Self::Hardware => "Windows hardware (Media Foundation)",
             Self::OpenH264 => "OpenH264",
         })
     }
 }
 
-/// Whether `choice` (the value of [`CHOICE_ENV`]) asks for OpenH264.
-fn prefers_openh264(choice: Option<&str>) -> bool {
-    choice.is_some_and(|c| c.trim().eq_ignore_ascii_case("openh264"))
+/// What [`CHOICE_ENV`] asks for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Choice {
+    /// The fastest codec present: the graphics card's, then Windows' own,
+    /// then OpenH264.
+    Best,
+    /// Windows' own software codec (`software`), else OpenH264.
+    Software,
+    /// OpenH264 only (`openh264`).
+    OpenH264,
+}
+
+fn choice(value: Option<&str>) -> Choice {
+    match value.map(|v| v.trim().to_ascii_lowercase()).as_deref() {
+        Some("openh264") => Choice::OpenH264,
+        Some("software") => Choice::Software,
+        _ => Choice::Best,
+    }
 }
 
 pub struct Decoder {
@@ -62,7 +80,7 @@ impl Decoder {
     }
 
     fn best_for(choice: Option<&str>) -> Result<Self> {
-        if prefers_openh264(choice) {
+        if self::choice(choice) == Choice::OpenH264 {
             return Self::openh264();
         }
         #[cfg(windows)]
@@ -243,17 +261,18 @@ fn convert_row_portable(ys: &[u8], chroma: &Chroma, target: &mut [u32]) {
     }
 }
 
-/// `made`, or `None` (with a note) where this Windows lacks the codec.
-/// `TIDEDESK_REQUIRE_MF=1` turns its absence into a failure.
+/// `made`, or `None` (with a note) where this computer lacks the codec.
+/// Setting `required` (e.g. `TIDEDESK_REQUIRE_MF=1`) turns its absence into a
+/// failure.
 #[cfg(all(test, windows))]
-pub(crate) fn or_skip<T>(what: &str, made: Result<T>) -> Option<T> {
+pub(crate) fn or_skip<T>(what: &str, required: &str, made: Result<T>) -> Option<T> {
     match made {
         Ok(made) => Some(made),
-        Err(e) if std::env::var_os("TIDEDESK_REQUIRE_MF").is_none() => {
-            eprintln!("skipping: no Windows H.264 {what} here ({e:#})");
+        Err(e) if std::env::var_os(required).is_none() => {
+            eprintln!("skipping: no {what} here ({e:#})");
             None
         }
-        Err(e) => panic!("TIDEDESK_REQUIRE_MF is set, but {e:#}"),
+        Err(e) => panic!("{required} is set, but {e:#}"),
     }
 }
 
@@ -324,7 +343,11 @@ mod tests {
     /// `TIDEDESK_REQUIRE_MF=1` turns its absence into a failure.
     #[cfg(windows)]
     fn media_foundation_or_skip() -> Option<Decoder> {
-        crate::or_skip("decoder", Decoder::media_foundation())
+        crate::or_skip(
+            "Windows H.264 decoder",
+            "TIDEDESK_REQUIRE_MF",
+            Decoder::media_foundation(),
+        )
     }
 
     #[cfg(windows)]
@@ -401,11 +424,12 @@ mod tests {
 
     #[test]
     fn the_choice_can_force_openh264() {
-        assert!(prefers_openh264(Some("openh264")));
-        assert!(prefers_openh264(Some(" OpenH264 ")));
-        assert!(!prefers_openh264(None));
-        assert!(!prefers_openh264(Some("")));
-        assert!(!prefers_openh264(Some("windows")));
+        assert_eq!(choice(Some("openh264")), Choice::OpenH264);
+        assert_eq!(choice(Some(" OpenH264 ")), Choice::OpenH264);
+        assert_eq!(choice(Some("Software")), Choice::Software);
+        assert_eq!(choice(None), Choice::Best);
+        assert_eq!(choice(Some("")), Choice::Best);
+        assert_eq!(choice(Some("windows")), Choice::Best);
         let forced = Decoder::best_for(Some("openh264")).unwrap();
         assert_eq!(forced.implementation(), Implementation::OpenH264);
         #[cfg(windows)]

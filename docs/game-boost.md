@@ -20,8 +20,8 @@ Settings are shared by viewer sessions on this Windows account.
 
 ## Implemented behavior
 
-- Host encoding targets 60 FPS. Windows' own encoder keeps its single
-  low-latency, constant-bitrate setup; where OpenH264 is used instead, it
+- Host encoding targets 60 FPS. The graphics card's encoder and Windows' own
+  keep their single low-latency setup; where OpenH264 is used instead, it
   switches to its real-time camera/video preset, low complexity, four encoding
   threads and frame skipping for bitrate control. Desktop mode restores the
   connection's original FPS (and OpenH264's screen-content preset with two
