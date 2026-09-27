@@ -51,8 +51,7 @@ such as self_cell under Apache-2.0. Every ZIP and MSIX carries the crates'
 license texts in `licenses/third-party`, generated from `Cargo.lock`; the app
 opens them from Settings, About, **Third-party notices**.
 
-OpenH264's copyright license and H.264 patent permissions are separate questions.
-This license does not grant third-party codec patent rights.
+The license grants no rights in third-party patents (LICENSE, section 5).
 
 ## Roadmap
 
