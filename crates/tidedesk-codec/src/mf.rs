@@ -20,7 +20,7 @@ use windows::Win32::System::Com::{
 };
 
 /// Starts Media Foundation once for the process.
-fn startup() -> Result<()> {
+pub(crate) fn startup() -> Result<()> {
     static STARTED: OnceLock<Result<(), String>> = OnceLock::new();
     STARTED
         .get_or_init(|| {

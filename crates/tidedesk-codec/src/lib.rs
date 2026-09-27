@@ -5,8 +5,13 @@
 //! every decoder here reads every encoder's output, including TideDesk
 //! releases that only had OpenH264.
 
+mod encode;
 #[cfg(windows)]
 mod mf;
+#[cfg(windows)]
+mod mf_encode;
+
+pub use encode::{Encoder, Settings};
 
 use std::fmt;
 
@@ -238,6 +243,20 @@ fn convert_row_portable(ys: &[u8], chroma: &Chroma, target: &mut [u32]) {
     }
 }
 
+/// `made`, or `None` (with a note) where this Windows lacks the codec.
+/// `TIDEDESK_REQUIRE_MF=1` turns its absence into a failure.
+#[cfg(all(test, windows))]
+pub(crate) fn or_skip<T>(what: &str, made: Result<T>) -> Option<T> {
+    match made {
+        Ok(made) => Some(made),
+        Err(e) if std::env::var_os("TIDEDESK_REQUIRE_MF").is_none() => {
+            eprintln!("skipping: no Windows H.264 {what} here ({e:#})");
+            None
+        }
+        Err(e) => panic!("TIDEDESK_REQUIRE_MF is set, but {e:#}"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use openh264::encoder::Encoder;
@@ -283,7 +302,7 @@ mod tests {
     }
 
     /// The visible planes of a picture, without row padding.
-    fn planes(picture: &Picture<'_>) -> ((usize, usize), Vec<u8>, Vec<u8>, Vec<u8>) {
+    pub(crate) fn planes(picture: &Picture<'_>) -> ((usize, usize), Vec<u8>, Vec<u8>, Vec<u8>) {
         let source = picture.source();
         let (width, height) = source.dimensions();
         let (sy, su, sv) = source.strides();
@@ -305,14 +324,7 @@ mod tests {
     /// `TIDEDESK_REQUIRE_MF=1` turns its absence into a failure.
     #[cfg(windows)]
     fn media_foundation_or_skip() -> Option<Decoder> {
-        match Decoder::media_foundation() {
-            Ok(decoder) => Some(decoder),
-            Err(e) if std::env::var_os("TIDEDESK_REQUIRE_MF").is_none() => {
-                eprintln!("skipping: no Windows H.264 decoder here ({e:#})");
-                None
-            }
-            Err(e) => panic!("TIDEDESK_REQUIRE_MF is set, but {e:#}"),
-        }
+        crate::or_skip("decoder", Decoder::media_foundation())
     }
 
     #[cfg(windows)]
