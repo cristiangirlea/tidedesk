@@ -14,7 +14,7 @@ use windows::Win32::Media::MediaFoundation::{
     MFCreateMediaType, MFCreateMemoryBuffer, MFCreateSample, MFMediaType_Video,
     MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, MFT_MESSAGE_NOTIFY_START_OF_STREAM, MFT_OUTPUT_DATA_BUFFER,
     MFT_OUTPUT_STREAM_PROVIDES_SAMPLES, MFVideoFormat_H264, MFVideoFormat_NV12,
-    MFVideoInterlace_Progressive, eAVEncCommonRateControlMode_CBR, eAVEncH264VProfile_Base,
+    MFVideoInterlace_Progressive, eAVEncCommonRateControlMode_CBR,
     eAVEncH264VProfile_ConstrainedBase, eAVScenarioInfo_DisplayRemoting,
 };
 use windows::Win32::System::Com::{
@@ -25,9 +25,9 @@ use windows::core::{GUID, Interface};
 
 use openh264::formats::{BgraSliceU8, YUVBuffer, YUVSource};
 
-use crate::encode::{Settings, nal_type, nal_units, start_codes};
+use crate::encode::{Settings, is_keyframe, nal_type, nal_units, start_codes};
 
-/// Pictures between the keyframes the encoder adds on its own. The host asks
+/// Seconds between the keyframes the encoder adds on its own. The host asks
 /// for one whenever a viewer needs it, so these are only a backstop.
 const KEYFRAME_INTERVAL_S: u32 = 3600;
 
@@ -68,15 +68,15 @@ fn pair(high: usize, low: usize) -> u64 {
 
 /// Puts SPS and PPS in front of a keyframe written without them, as some
 /// encoders do, so that a viewer can start decoding there.
-fn with_parameter_sets(out: &mut Vec<u8>, parameter_sets: &[u8]) {
-    let has = |kind| nal_units(out).any(|unit| nal_type(unit) == kind);
-    if has(5) && !has(7) {
-        // After the access unit delimiter, which comes first.
-        let at = start_codes(out)
-            .find(|&(_, unit)| nal_type(&out[unit..]) != 9)
-            .map_or(out.len(), |(code, _)| code);
-        out.splice(at..at, parameter_sets.iter().copied());
+fn with_parameter_sets(keyframe: &mut Vec<u8>, parameter_sets: &[u8]) {
+    if nal_units(keyframe).any(|unit| nal_type(unit) == 7) {
+        return;
     }
+    // After the access unit delimiter, which comes first.
+    let at = start_codes(keyframe)
+        .find(|&(_, unit)| nal_type(&keyframe[unit..]) != 9)
+        .map_or(keyframe.len(), |(code, _)| code);
+    keyframe.splice(at..at, parameter_sets.iter().copied());
 }
 
 fn number(value: u32) -> VARIANT {
@@ -155,68 +155,72 @@ impl Encoder {
             // The output type comes first; the input type must then match it.
             let output = video(&MFVideoFormat_H264)?;
             output.SetUINT32(&MF_MT_AVG_BITRATE, settings.bitrate_bps)?;
-            // Constrained baseline, which every H.264 decoder takes; older
-            // encoders only name plain baseline.
+            // Constrained baseline, which every H.264 decoder takes.
             output.SetUINT32(
                 &MF_MT_MPEG2_PROFILE,
                 eAVEncH264VProfile_ConstrainedBase.0 as u32,
             )?;
-            if transform.SetOutputType(0, &output, 0).is_err() {
-                output.SetUINT32(&MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_Base.0 as u32)?;
-                transform.SetOutputType(0, &output, 0).with_context(|| {
-                    format!("the Windows H.264 encoder refused {width}x{height}")
-                })?;
-            }
+            transform
+                .SetOutputType(0, &output, 0)
+                .with_context(|| format!("the Windows H.264 encoder refused {width}x{height}"))?;
             transform
                 .SetInputType(0, &video(&MFVideoFormat_NV12)?, 0)
                 .context("the Windows H.264 encoder refused NV12 input")?;
         }
-        let parameter_sets = unsafe {
-            let current = transform.GetOutputCurrentType(0)?;
-            let mut blob = vec![
-                0;
-                current
-                    .GetBlobSize(&MF_MT_MPEG_SEQUENCE_HEADER)
-                    .unwrap_or(0) as usize
-            ];
-            if current
-                .GetBlob(&MF_MT_MPEG_SEQUENCE_HEADER, &mut blob, None)
-                .is_err()
-            {
-                blob.clear();
-            }
-            blob
-        };
-        let info = unsafe { transform.GetOutputStreamInfo(0) }?;
         unsafe {
             transform.ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0)?;
             transform.ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0)?;
         }
-        Ok(Self {
+        let mut encoder = Self {
             transform,
             codec,
             size,
             yuv: YUVBuffer::new(width, height),
-            parameter_sets,
+            parameter_sets: Vec::new(),
             output: None,
-            output_size: info.cbSize.max((width * height * 3 / 2) as u32),
-            provides_samples: info.dwFlags & MFT_OUTPUT_STREAM_PROVIDES_SAMPLES.0 as u32 != 0,
+            output_size: 0,
+            provides_samples: false,
             frame_duration: 10_000_000 / i64::from(settings.fps.max(1)),
-        })
+        };
+        encoder.read_output()?;
+        Ok(encoder)
+    }
+
+    /// Reads how the encoder hands out its data, and its parameter sets: at
+    /// the start, and again whenever it changes its output.
+    fn read_output(&mut self) -> Result<()> {
+        let (width, height) = self.size;
+        let info = unsafe { self.transform.GetOutputStreamInfo(0) }?;
+        let output_size = info.cbSize.max((width * height * 3 / 2) as u32);
+        if output_size != self.output_size {
+            self.output_size = output_size;
+            self.output = None;
+        }
+        self.provides_samples = info.dwFlags & MFT_OUTPUT_STREAM_PROVIDES_SAMPLES.0 as u32 != 0;
+        let current = unsafe { self.transform.GetOutputCurrentType(0) }?;
+        let length = unsafe { current.GetBlobSize(&MF_MT_MPEG_SEQUENCE_HEADER) }.unwrap_or(0);
+        self.parameter_sets.resize(length as usize, 0);
+        let read =
+            unsafe { current.GetBlob(&MF_MT_MPEG_SEQUENCE_HEADER, &mut self.parameter_sets, None) };
+        if read.is_err() {
+            self.parameter_sets.clear();
+        }
+        Ok(())
     }
 
     pub fn size(&self) -> (usize, usize) {
         self.size
     }
 
-    /// Encodes one BGRA picture of this encoder's size into `out`.
+    /// Encodes one BGRA picture of this encoder's size into `out`; whether
+    /// it is a keyframe.
     pub fn encode(
         &mut self,
         bgra: &[u8],
         timestamp_ms: u64,
         keyframe: bool,
         out: &mut Vec<u8>,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         let sample = self.input_sample(bgra)?;
         unsafe {
             sample.SetSampleTime(timestamp_ms as i64 * 10_000)?;
@@ -239,8 +243,11 @@ impl Encoder {
                 .context("the Windows H.264 encoder refused the picture")?;
         }
         self.drain(out)?;
-        with_parameter_sets(out, &self.parameter_sets);
-        Ok(())
+        let keyframe = is_keyframe(out);
+        if keyframe {
+            with_parameter_sets(out, &self.parameter_sets);
+        }
+        Ok(keyframe)
     }
 
     fn input_sample(&mut self, bgra: &[u8]) -> Result<IMFSample> {
@@ -281,6 +288,7 @@ impl Encoder {
                         let offered = self.transform.GetOutputAvailableType(0, 0)?;
                         self.transform.SetOutputType(0, &offered, 0)?;
                     }
+                    self.read_output()?;
                 }
                 Output::StreamChanged => {
                     bail!("the Windows H.264 encoder keeps changing its output")
@@ -351,9 +359,6 @@ mod tests {
         let complete = idr.clone();
         with_parameter_sets(&mut idr, &sets);
         assert_eq!(idr, complete);
-        let mut predicted = vec![0, 0, 1, 0x41, 7];
-        with_parameter_sets(&mut predicted, &sets);
-        assert_eq!(predicted, [0, 0, 1, 0x41, 7]);
     }
 
     #[test]

@@ -3,7 +3,7 @@
 //! parameter sets in front of every keyframe, which every TideDesk viewer
 //! decodes.
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use openh264::encoder::{
     BitRate, Complexity, EncoderConfig, FrameRate, FrameType, RateControlMode, UsageType,
 };
@@ -11,6 +11,10 @@ use openh264::formats::{BgraSliceU8, YUVBuffer, YUVSource};
 use openh264::{OpenH264API, Timestamp};
 
 use crate::{CHOICE_ENV, Implementation, prefers_openh264};
+
+/// The most macroblocks in a picture that H.264 decoders must take (level
+/// 5.2): 4096x2304 or 5120x1440, for example.
+const MAX_MACROBLOCKS: usize = 36_864;
 
 /// How a stream is encoded.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,14 +28,16 @@ pub struct Settings {
 
 pub struct Encoder {
     inner: Inner,
-    settings: Settings,
     keyframe: bool,
 }
 
 enum Inner {
-    /// Created for the first picture's size, and again when it changes.
     #[cfg(windows)]
-    MediaFoundation(Option<crate::mf_encode::Encoder>),
+    MediaFoundation {
+        /// Created for the first picture's size, and again when it changes.
+        current: Option<crate::mf_encode::Encoder>,
+        settings: Settings,
+    },
     OpenH264 {
         // Boxed: its parameters are large.
         encoder: Box<openh264::encoder::Encoder>,
@@ -79,7 +85,6 @@ impl Encoder {
                 encoder: Box::new(encoder),
                 yuv: None,
             },
-            settings,
             keyframe: false,
         })
     }
@@ -89,8 +94,10 @@ impl Encoder {
     pub fn media_foundation(settings: Settings) -> Result<Self> {
         crate::mf_encode::Encoder::check_available()?;
         Ok(Self {
-            inner: Inner::MediaFoundation(None),
-            settings,
+            inner: Inner::MediaFoundation {
+                current: None,
+                settings,
+            },
             keyframe: false,
         })
     }
@@ -98,7 +105,7 @@ impl Encoder {
     pub fn implementation(&self) -> Implementation {
         match self.inner {
             #[cfg(windows)]
-            Inner::MediaFoundation(_) => Implementation::MediaFoundation,
+            Inner::MediaFoundation { .. } => Implementation::MediaFoundation,
             Inner::OpenH264 { .. } => Implementation::OpenH264,
         }
     }
@@ -111,7 +118,8 @@ impl Encoder {
     /// Encodes one BGRA picture of `size` (even width and height) into `out`,
     /// which stays empty when the encoder skips the picture; whether it is a
     /// keyframe. Should Windows' encoder fail, OpenH264 takes over from this
-    /// picture on, starting with a keyframe.
+    /// picture on, starting with a keyframe. Pictures larger than H.264
+    /// decoders take are refused.
     pub fn encode(
         &mut self,
         bgra: &[u8],
@@ -120,23 +128,30 @@ impl Encoder {
         out: &mut Vec<u8>,
     ) -> Result<bool> {
         out.clear();
+        if size.0.div_ceil(16) * size.1.div_ceil(16) > MAX_MACROBLOCKS {
+            bail!(
+                "a {}x{} picture is larger than H.264 decoders take (4096x2304 or 5120x1440 at most)",
+                size.0,
+                size.1
+            );
+        }
         let keyframe = std::mem::take(&mut self.keyframe);
         match &mut self.inner {
             #[cfg(windows)]
-            Inner::MediaFoundation(slot) => {
-                let encoded = match slot {
+            Inner::MediaFoundation { current, settings } => {
+                let settings = *settings;
+                let encoded = match current {
                     Some(encoder) if encoder.size() == size => Ok(encoder),
                     // A new encoder for a new size starts with a keyframe.
-                    slot => crate::mf_encode::Encoder::new(size, self.settings)
+                    slot => crate::mf_encode::Encoder::new(size, settings)
                         .map(|encoder| slot.insert(encoder)),
                 }
                 .and_then(|encoder| encoder.encode(bgra, timestamp_ms, keyframe, out));
-                if let Err(e) = encoded {
+                encoded.or_else(|e| {
                     tracing::warn!("using OpenH264 from here on: {e:#}");
-                    *self = Self::openh264(self.settings)?;
-                    return self.encode(bgra, size, timestamp_ms, out);
-                }
-                Ok(is_keyframe(out))
+                    *self = Self::openh264(settings)?;
+                    self.encode(bgra, size, timestamp_ms, out)
+                })
             }
             Inner::OpenH264 { encoder, yuv } => {
                 let buffer = match yuv {
@@ -199,7 +214,7 @@ pub(crate) fn nal_type(unit: &[u8]) -> u8 {
 }
 
 /// Whether an access unit holds an IDR picture.
-fn is_keyframe(annex_b: &[u8]) -> bool {
+pub(crate) fn is_keyframe(annex_b: &[u8]) -> bool {
     nal_units(annex_b).any(|unit| nal_type(unit) == 5)
 }
 
@@ -266,6 +281,7 @@ mod tests {
     /// Encodes `frames` pictures, forcing a keyframe at `force` if given, and
     /// checks what every viewer needs from the result.
     fn check_encoder(mut encoder: Encoder, sizes: &[(usize, usize)], force: Option<usize>) {
+        let implementation = encoder.implementation();
         let mut openh264 = Decoder::openh264().unwrap();
         #[cfg(windows)]
         let mut windows = Decoder::media_foundation().ok();
@@ -278,6 +294,8 @@ mod tests {
             let keyframe = encoder
                 .encode(&pixels, size, i as u64 * 33, &mut out)
                 .unwrap();
+            // Still the encoder under test, not OpenH264 standing in.
+            assert_eq!(encoder.implementation(), implementation, "frame {i}");
             // A picture in, its access unit out: no added latency.
             assert!(!out.is_empty(), "frame {i} gave no data");
             let first_of_size = i == 0 || sizes[i - 1] != size;
@@ -363,17 +381,71 @@ mod tests {
         #[cfg(windows)]
         encoders.extend(windows_or_skip(SETTINGS));
         for mut encoder in encoders {
+            let name = encoder.implementation();
             let mut out = Vec::new();
             encoder
                 .encode(&scene(128, 96, 0), (128, 96), 0, &mut out)
                 .unwrap();
-            let name = encoder.implementation();
+            assert_eq!(encoder.implementation(), name);
             let sps = nal_units(&out)
                 .find(|unit| nal_type(unit) == 7)
                 .expect("parameter sets in front of the keyframe");
             // profile_idc 66 (baseline) with constraint_set1 (constrained).
             assert_eq!(sps[1], 66, "{name}: profile {}", sps[1]);
             assert_ne!(sps[2] & 0x40, 0, "{name}: constraint flags {:#04x}", sps[2]);
+        }
+    }
+
+    /// The host refreshes a viewer by forcing a keyframe of an unchanged
+    /// picture; Game Boost's frame skipping must not swallow it.
+    #[test]
+    fn keyframes_come_on_request_even_on_a_still_screen() {
+        let mut encoders = Vec::new();
+        for motion in [false, true] {
+            let settings = Settings { motion, ..SETTINGS };
+            encoders.push((motion, Encoder::openh264(settings).unwrap()));
+            #[cfg(windows)]
+            encoders.extend(windows_or_skip(settings).map(|encoder| (motion, encoder)));
+        }
+        let still = scene(128, 96, 0);
+        for (motion, mut encoder) in encoders {
+            let name = encoder.implementation();
+            let mut out = Vec::new();
+            for i in 0..6 {
+                if i == 4 {
+                    encoder.force_keyframe();
+                }
+                let keyframe = encoder.encode(&still, (128, 96), i * 33, &mut out).unwrap();
+                assert_eq!(
+                    keyframe,
+                    i == 0 || i == 4,
+                    "{name}, motion {motion}, frame {i}"
+                );
+                if keyframe {
+                    // A viewer that just connected starts here.
+                    let mut fresh = Decoder::openh264().unwrap();
+                    assert!(decode(&mut fresh, &out).is_some(), "{name}, frame {i}");
+                }
+            }
+            assert_eq!(encoder.implementation(), name);
+        }
+    }
+
+    #[test]
+    fn pictures_larger_than_decoders_take_are_refused() {
+        let mut encoders = vec![Encoder::openh264(SETTINGS).unwrap()];
+        #[cfg(windows)]
+        encoders.extend(windows_or_skip(SETTINGS));
+        for mut encoder in encoders {
+            let name = encoder.implementation();
+            // 5K: 57,600 macroblocks. Refused before the pixels are read.
+            let error = encoder.encode(&[], (5120, 2880), 0, &mut Vec::new());
+            let error = error.unwrap_err().to_string();
+            assert!(
+                error.contains("larger than H.264 decoders take"),
+                "{name}: {error}"
+            );
+            assert_eq!(encoder.implementation(), name);
         }
     }
 

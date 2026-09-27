@@ -101,6 +101,10 @@ fn main() {
                 decoded += 1;
             }
         }
+        if encoder.implementation().to_string() != name {
+            println!("{name:>28}: failed during the run and handed over to OpenH264");
+            continue;
+        }
         println!(
             "{:>28}: {:5.1} ms/frame (worst {:5.1}), {:5.1} kB/frame, {keyframes} keyframe(s), {:4.1} dB over {decoded} frames",
             name,
