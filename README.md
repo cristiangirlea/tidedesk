@@ -117,6 +117,9 @@ Host options override the saved settings for that run only.
 
 The access code can also be supplied through the `TIDEDESK_CODE` environment variable.
 
+The viewer decodes video with Windows' own H.264 decoder where Windows has one, and with
+the bundled OpenH264 otherwise. `TIDEDESK_CODEC=openh264` makes it use OpenH264 anyway.
+
 ### Clipboard and mouse controls
 
 Viewer **Settings** includes text clipboard sharing (off by default) and host mouse
@@ -193,7 +196,8 @@ The program lands in `target/release/tidedesk.exe` (both sides).
 | `tidedesk` | The one program: `tidedesk host …` and `tidedesk view …` |
 | `tidedesk-core` | Platform-independent: wire protocol, auth, identity pinning, QUIC setup, audio helpers |
 | `tidedesk-host` | Library: screen capture, H.264 encoding, audio capture, input injection |
-| `tidedesk-view` | Library: window, H.264 decoding, audio playback, input capture |
+| `tidedesk-view` | Library: window, audio playback, input capture |
+| `tidedesk-codec` | H.264: Windows' own codecs (Media Foundation), OpenH264 as the fallback |
 | `third_party/egui_software_backend` | Vendored CPU renderer for the small app windows, with a repaint fix |
 
 The app windows are drawn on the CPU with [egui](https://github.com/emilk/egui): an OpenGL or
