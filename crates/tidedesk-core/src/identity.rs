@@ -50,13 +50,15 @@ impl HostIdentity {
         tidedesk_rendezvous_proto::DeviceId::from_cert(&self.cert)
     }
 
-    /// What registering with a rendezvous service needs.
+    /// What registering with a rendezvous service needs, without sealed
+    /// local addresses (the host adds those; see `nat::candidates`).
     /// Shared, so the private key is copied once however many users it has.
     pub fn rendezvous_credentials(&self) -> std::sync::Arc<crate::nat::signal::Credentials> {
         std::sync::Arc::new(crate::nat::signal::Credentials {
             device_id: self.device_id(),
             cert_der: self.cert.to_vec(),
             pkcs8: self.pkcs8().to_vec(),
+            candidates: Vec::new(),
         })
     }
 

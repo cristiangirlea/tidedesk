@@ -7,6 +7,7 @@
 //! QUIC listens on, because a router's mapping belongs to that socket's port.
 
 pub mod agent;
+pub mod candidates;
 pub mod lan;
 pub mod punch;
 pub mod signal;

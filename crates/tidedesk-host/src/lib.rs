@@ -14,7 +14,7 @@ mod tray;
 mod video;
 
 use std::ffi::OsString;
-use std::net::SocketAddr;
+use std::net::{SocketAddr, SocketAddrV4};
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
@@ -22,9 +22,9 @@ use std::time::Duration;
 use anyhow::{Context, Result};
 use clap::{CommandFactory, FromArgMatches, Parser};
 use tidedesk_core::identity::HostIdentity;
-use tidedesk_core::nat::signal::RendezvousStatus;
+use tidedesk_core::nat::signal::{Credentials, RendezvousStatus};
 use tidedesk_core::nat::stun::STUN_REFRESH;
-use tidedesk_core::nat::{Agent, PublicStatus, SharedSocket};
+use tidedesk_core::nat::{Agent, PublicStatus, SharedSocket, candidates};
 use tidedesk_core::{auth, net, paths, stats};
 
 #[derive(Parser, Debug)]
@@ -126,6 +126,26 @@ pub fn load_code(regenerate: bool) -> Result<String> {
     Ok(code)
 }
 
+/// What this host registers with a connection service: its credentials and
+/// its local addresses sealed with the access `code`, so a viewer on the
+/// same network that knows the code reaches it directly when the router
+/// cannot loop a path back (see `tidedesk_core::nat::candidates`). The
+/// addresses are those the window lists, real adapters first.
+pub(crate) fn registration_credentials(
+    identity: &Credentials,
+    code: &str,
+    port: u16,
+) -> Arc<Credentials> {
+    let addresses: Vec<SocketAddrV4> = gui::local_addresses(port)
+        .iter()
+        .map(|address| SocketAddrV4::new(address.ip, port))
+        .collect();
+    Arc::new(Credentials {
+        candidates: candidates::seal(code, identity.device_id, &addresses),
+        ..identity.clone()
+    })
+}
+
 pub use gui::{HostApp, HostInfo};
 pub use platform::{attach_console, error_box, open_link};
 
@@ -196,9 +216,10 @@ pub fn start(options: &StartOptions) -> Result<Started> {
     let host_name = std::env::var("COMPUTERNAME")
         .or_else(|_| std::env::var("HOSTNAME"))
         .unwrap_or_else(|_| "tidedesk-host".into());
+    let code = load_code(options.new_code)?;
     let state = Arc::new(session::HostState {
         host_name,
-        code: Mutex::new(load_code(options.new_code)?),
+        code: Mutex::new(code.clone()),
         video: Mutex::new(video::VideoSettings {
             display: options.display.unwrap_or(config.display),
             fps: options.fps.unwrap_or(config.fps),
@@ -223,23 +244,27 @@ pub fn start(options: &StartOptions) -> Result<Started> {
         .worker_threads(2)
         .enable_all()
         .build()?;
-    let (endpoint, agent) = {
+    let (endpoint, agent, listen) = {
         let _guard = runtime.enter();
         let (socket, side_channel) =
             SharedSocket::bind(listen).with_context(|| format!("listening on {listen}"))?;
+        // With port 0 asked for, the port the system chose.
+        let bound = socket.local_addr().unwrap_or(listen);
         let agent = Agent::spawn(socket.clone(), side_channel)?;
-        (net::server_endpoint_on(socket, &identity)?, agent)
+        (net::server_endpoint_on(socket, &identity)?, agent, bound)
     };
     if config.discover_public_address {
         agent.start_refresh(config.effective_stun_servers(), STUN_REFRESH);
     }
+    let credentials = identity.rendezvous_credentials();
     let rendezvous = rendezvous_choice(
         options.rendezvous.as_deref(),
         options.no_rendezvous,
         config.rendezvous_service(),
     );
-    if let Some(service) = rendezvous {
-        agent.start_rendezvous(service, identity.rendezvous_credentials());
+    if let Some(service) = &rendezvous {
+        let sealed = registration_credentials(&credentials, &code, listen.port());
+        agent.start_rendezvous(service.clone(), sealed);
     }
     // Needs no service: viewers on this network ask the network itself.
     if config.lan_discovery {
@@ -257,7 +282,8 @@ pub fn start(options: &StartOptions) -> Result<Started> {
     let info = gui::HostInfo {
         state,
         agent,
-        identity: identity.rendezvous_credentials(),
+        identity: credentials,
+        service: rendezvous,
         runtime: runtime.handle().clone(),
         start_hidden: options.tray || config.start_in_tray,
         config,
@@ -387,7 +413,32 @@ async fn accept_loop(endpoint: quinn::Endpoint, state: Arc<session::HostState>) 
 
 #[cfg(test)]
 mod tests {
-    use super::rendezvous_choice;
+    use super::{HostIdentity, candidates, registration_credentials, rendezvous_choice};
+
+    #[test]
+    fn registration_seals_this_computers_local_addresses_for_the_code() {
+        let dir =
+            std::env::temp_dir().join(format!("tidedesk-test-registration-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let identity = HostIdentity::load_or_create(&dir).unwrap();
+        let base = identity.rendezvous_credentials();
+        let code = "K7QM-3XPA-WZ";
+        let credentials = registration_credentials(&base, code, 50000);
+        assert_eq!(credentials.device_id, base.device_id);
+        assert_eq!(credentials.cert_der, base.cert_der);
+        match candidates::unseal(code, base.device_id, &credentials.candidates) {
+            Some(addresses) => {
+                assert!(!addresses.is_empty());
+                assert!(addresses.iter().all(|a| a.port() == 50000), "{addresses:?}");
+            }
+            // A computer with no local network address seals nothing.
+            None => assert!(credentials.candidates.is_empty()),
+        }
+        assert_eq!(
+            candidates::unseal("K7QM-3XPA-WY", base.device_id, &credentials.candidates),
+            None
+        );
+    }
 
     #[test]
     fn the_command_line_decides_the_service_before_the_setting() {

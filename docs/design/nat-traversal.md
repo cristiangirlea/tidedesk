@@ -189,10 +189,28 @@ service's own CI against it (`TIDEDESK_TEST_SERVICE=ip:port`).
   it asked for, so neither the service nor anyone else can impersonate a host. There
   is no fingerprint question: the ID is the fingerprint's start. 64 bits keep forging
   an ID out of reach (about 2^64 work).
+- **Local addresses.** Two computers behind one router share an internet address,
+  and few routers loop a punch back to their own network; the broadcast query below
+  stops at network segments. So a host registers its local addresses too, sealed
+  with its access code: ChaCha20-Poly1305 under a key derived from the code with
+  PBKDF2-HMAC-SHA256 (600,000 iterations) salted with the device ID, at most four
+  IPv4 addresses and 96 bytes (`nat::candidates`). The service stores the bytes
+  unread and passes them only to a viewer at the host's own internet address. That
+  viewer opens them with the code it was given, dials them all at once and takes the
+  first whose certificate hashes to the ID, before it punches; a wrong code opens
+  nothing, and the host refuses it later as always. Guessing the code from the sealed
+  bytes costs a key derivation per guess, and only someone at the host's internet
+  address ever holds them. A new code means a new seal and a new registration.
 - The service never sees the access code or session data and keeps everything in
   memory. A Hello is padded to at least the size of its answer; registrations and
   lookups must return a challenge sent to the sender's own address, and refreshes a
   secret token, so a forged source address gains nothing. Each address is rate-limited.
+- **Compatibility.** Messages are encoded by their position in an enum, so new ones
+  are appended and none is changed: hosts and viewers from before the sealed
+  addresses keep registering and looking up, and get answers without them. The
+  other way round, a host or viewer whose new message goes unanswered for a round
+  sends the earlier one on the next, so a service from before still serves it,
+  without sealed addresses.
 
 ## Device IDs on the local network
 
@@ -250,3 +268,8 @@ Record results before each release that changes this area.
    the host within a second and the viewer's `path:` line says "by device ID on this
    network". With the host's option turned off, the viewer says it was not found on
    this network after about 3 seconds.
+9. Two computers behind one router that cannot hear each other's broadcasts (the
+   host's option turned off, or separate network segments): connecting by device ID
+   reaches the host at a local address within a few seconds, and the `path:` line
+   again says "by device ID on this network". With a wrong access code the viewer
+   punches instead and the host refuses the code.

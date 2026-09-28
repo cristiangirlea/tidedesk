@@ -56,9 +56,11 @@ directly between the two computers: TideDesk never relays it through a server.
 By default, TideDesk Host registers with TideDesk's own rendezvous service,
 `rendezvous.tidedesk.app` (run by the maintainer): the service learns the host's device
 ID, its certificate (which is public) and its public IP address and port, refreshed
-about every 25 seconds, so that it can introduce viewers who ask for that ID. It keeps
-this in memory only, logs counts rather than IDs or addresses, and never carries
-sessions, access codes or anything else. Turn it off, or name another service, under
+about every 25 seconds, so that it can introduce viewers who ask for that ID, and the
+host's local network addresses sealed with the access code, which it cannot read and
+passes only to a viewer at the host's own public address. It keeps this in memory
+only, logs counts rather than IDs or addresses, and never carries sessions, access
+codes or anything else. Turn it off, or name another service, under
 Settings, Internet (or with `rendezvous = false` or `rendezvous_server` in `host.toml`;
 `--no-rendezvous` for a headless host). A viewer connecting by device ID asks the same
 service (or the one in Viewer Settings) for that ID, which tells the service the
