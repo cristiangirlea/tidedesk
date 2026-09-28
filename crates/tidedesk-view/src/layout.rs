@@ -61,9 +61,9 @@ impl Placement {
 }
 
 /// Blit of a `src_w`×`src_h` 0RGB image into `dst` (`dst_w` wide) at `p`,
-/// painting the letterbox bars black. Enlarging repeats pixels, which keeps
-/// text crisp; shrinking blends neighbouring pixels, so thin strokes are
-/// never dropped.
+/// painting the letterbox bars black. Enlarging by a whole number repeats
+/// pixels, which keeps text crisp; any other size blends neighbouring
+/// pixels, so thin strokes are neither dropped nor drawn at uneven widths.
 pub fn blit(src: &[u32], src_w: u32, src_h: u32, dst: &mut [u32], dst_w: u32, p: Placement) {
     dst.fill(0);
     if p.width == 0 || src_w == 0 || src_h == 0 {
@@ -78,8 +78,8 @@ pub fn blit(src: &[u32], src_w: u32, src_h: u32, dst: &mut [u32], dst_w: u32, p:
         }
         return;
     }
-    if p.width <= src_w && p.height <= src_h {
-        return shrink(src, sw, sh, dst, dst_w, p);
+    if !p.width.is_multiple_of(src_w) || !p.height.is_multiple_of(src_h) {
+        return blend(src, sw, sh, dst, dst_w, p);
     }
     let xs: Vec<usize> = (0..p.width as usize)
         .map(|x| (x * sw / p.width as usize).min(sw - 1))
@@ -94,16 +94,16 @@ pub fn blit(src: &[u32], src_w: u32, src_h: u32, dst: &mut [u32], dst_w: u32, p:
     }
 }
 
-/// Shrinks into `dst` at `p`: halves the picture (2x2 averages) while it is
+/// Scales into `dst` at `p`: halves the picture (2x2 averages) while it is
 /// still over twice the size, then blends the two source pixels around each
 /// shown pixel's centre, first down the rows and then along them. Bands of
 /// rows go to up to four threads, as this runs for every frame.
-fn shrink(src: &[u32], sw: usize, sh: usize, dst: &mut [u32], dst_w: usize, p: Placement) {
+fn blend(src: &[u32], sw: usize, sh: usize, dst: &mut [u32], dst_w: usize, p: Placement) {
     let (pw, ph) = (p.width as usize, p.height as usize);
     let (mut sw, mut sh, mut halved) = (sw, sh, None::<Vec<u32>>);
     while pw * 2 <= sw && ph * 2 <= sh {
         let next = halve(halved.as_deref().unwrap_or(src), sw, sh);
-        (sw, sh, halved) = (sw / 2, sh / 2, Some(next));
+        (sw, sh, halved) = (sw.div_ceil(2), sh.div_ceil(2), Some(next));
     }
     let src = halved.as_deref().unwrap_or(src);
     let (xs, ys) = (taps(sw, pw), taps(sh, ph));
@@ -130,9 +130,10 @@ fn shrink(src: &[u32], sw: usize, sh: usize, dst: &mut [u32], dst_w: usize, p: P
     });
 }
 
-/// Threads for work on every frame.
+/// Threads for work on every frame, worked out once.
 fn threads() -> usize {
-    std::thread::available_parallelism().map_or(1, |n| n.get().min(4))
+    static THREADS: std::sync::OnceLock<usize> = std::sync::OnceLock::new();
+    *THREADS.get_or_init(|| std::thread::available_parallelism().map_or(1, |n| n.get().min(4)))
 }
 
 /// For each of `dst` pixels along one axis, the source pixel at or before
@@ -157,10 +158,11 @@ fn mix(a: u32, b: u32, weight: u32) -> u32 {
     (red_blue & 0x00ff_00ff) | (green & 0x0000_ff00)
 }
 
-/// The picture at half the size (`w` and `h` at least 2), each pixel the
-/// average of a 2x2 block, in bands of rows like [`shrink`].
+/// The picture at half the size, rounded up, each pixel the average of a
+/// 2x2 block (an odd last row or column is paired with itself), in bands of
+/// rows like [`blend`].
 fn halve(src: &[u32], w: usize, h: usize) -> Vec<u32> {
-    let (half_w, half_h) = (w / 2, h / 2);
+    let (half_w, half_h) = (w.div_ceil(2), h.div_ceil(2));
     let mut out = vec![0; half_w * half_h];
     let band = half_h.div_ceil(threads());
     std::thread::scope(|scope| {
@@ -169,9 +171,10 @@ fn halve(src: &[u32], w: usize, h: usize) -> Vec<u32> {
                 for (i, line) in rows.chunks_mut(half_w).enumerate() {
                     let y = first * band + i;
                     let top = &src[2 * y * w..][..w];
-                    let bottom = &src[(2 * y + 1) * w..][..w];
+                    let bottom = &src[(2 * y + 1).min(h - 1) * w..][..w];
                     for (x, pixel) in line.iter_mut().enumerate() {
-                        let four = [top[2 * x], top[2 * x + 1], bottom[2 * x], bottom[2 * x + 1]];
+                        let right = (2 * x + 1).min(w - 1);
+                        let four = [top[2 * x], top[right], bottom[2 * x], bottom[right]];
                         let red_blue: u32 = four.iter().map(|p| p & 0x00ff_00ff).sum();
                         let green: u32 = four.iter().map(|p| p & 0x0000_ff00).sum();
                         *pixel = ((red_blue + 0x0002_0002) >> 2 & 0x00ff_00ff)
@@ -375,27 +378,57 @@ mod tests {
                 let mut shown = vec![0; dst * dst];
                 blit(&pixels, src as u32, src as u32, &mut shown, dst as u32, p);
                 for line in (0..src).step_by(every) {
-                    // The shown row (or column) the stroke's centre falls in.
+                    // The shown row (or column) the stroke's centre falls in,
+                    // read across the picture, as bands of rows join there.
                     let at = ((line as f64 + 0.5) * dst as f64 / src as f64) as usize;
-                    let index = if rows {
-                        at * dst + dst / 2
-                    } else {
-                        (dst / 2) * dst + at
-                    };
-                    let shade = shown[index] & 0xff;
-                    assert!(
-                        shade >= 24,
-                        "{src}->{dst}: the stroke at {} {line} shows {shade}",
-                        if rows { "row" } else { "column" }
-                    );
+                    for across in [dst / 10, dst / 2, dst - 1 - dst / 10] {
+                        let index = if rows {
+                            at * dst + across
+                        } else {
+                            across * dst + at
+                        };
+                        let shade = shown[index] & 0xff;
+                        assert!(
+                            shade >= 24,
+                            "{src}->{dst}: the stroke at {} {line} shows {shade} at {across}",
+                            if rows { "row" } else { "column" }
+                        );
+                    }
                 }
             }
         }
     }
 
+    /// Enlarging by a fraction must not draw some strokes twice as wide as
+    /// others, as repeating pixels does (a 1080p screen shown at 1440p).
     #[test]
-    fn shrinking_keeps_flat_colours_exact() {
-        for (src, dst) in [(120, 100), (300, 100), (1000, 999)] {
+    fn enlarging_by_a_fraction_keeps_strokes_even() {
+        let (src, dst, every) = (60, 80, 5);
+        let pixels = strokes(src, every, false);
+        let p = Placement::fit(src as u32, src as u32, dst as u32, dst as u32);
+        let mut shown = vec![0; dst * dst];
+        blit(&pixels, src as u32, src as u32, &mut shown, dst as u32, p);
+        let row = &shown[(dst / 2) * dst..][..dst];
+        // Each stroke's brightness, summed over the pixels around it.
+        let weights: Vec<u32> = (every..src - every)
+            .step_by(every)
+            .map(|line| {
+                let centre = (line as f64 + 0.5) * dst as f64 / src as f64;
+                let first = (centre - 2.5).max(0.0) as usize;
+                row[first..(first + 5).min(dst)]
+                    .iter()
+                    .map(|&c| c & 0xff)
+                    .sum()
+            })
+            .collect();
+        let (least, most) = (weights.iter().min().unwrap(), weights.iter().max().unwrap());
+        assert!(most * 10 <= least * 13, "strokes weigh {weights:?}");
+    }
+
+    #[test]
+    fn scaling_keeps_flat_colours_exact() {
+        // Shrinking, halving an odd size, and enlarging by a fraction.
+        for (src, dst) in [(120, 100), (300, 100), (1000, 999), (301, 100), (60, 80)] {
             let pixels = vec![0x0033_6699; src * src];
             let p = Placement::fit(src as u32, src as u32, dst as u32, dst as u32);
             let mut shown = vec![0; dst * dst];
