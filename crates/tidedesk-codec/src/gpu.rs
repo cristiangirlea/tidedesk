@@ -379,6 +379,15 @@ pub(crate) mod tests {
         crate::or_skip("Direct3D 11 video device", "TIDEDESK_REQUIRE_HW", made)
     }
 
+    /// A device that can convert pictures on the card, or `None` where there
+    /// is none: CI's software renderer makes devices, but without a video
+    /// processor.
+    pub(crate) fn video_device() -> Option<ID3D11Device> {
+        let device = device()?;
+        let made = Converter::new(&device, (64, 32)).map(|_| device);
+        crate::or_skip("Direct3D 11 video processor", "TIDEDESK_REQUIRE_HW", made)
+    }
+
     fn texture(
         device: &ID3D11Device,
         desc: &D3D11_TEXTURE2D_DESC,
@@ -534,7 +543,7 @@ pub(crate) mod tests {
 
     #[test]
     fn the_card_converts_colours_like_openh264() {
-        let Some(device) = device() else {
+        let Some(device) = video_device() else {
             return;
         };
         let size = (64, 32);
@@ -568,7 +577,7 @@ pub(crate) mod tests {
 
     #[test]
     fn the_card_crops_larger_pictures_without_scaling() {
-        let Some(device) = device() else {
+        let Some(device) = video_device() else {
             return;
         };
         let size = (256, 144);
@@ -600,7 +609,7 @@ pub(crate) mod tests {
 
     #[test]
     fn only_bgra_textures_are_taken() {
-        let Some(device) = device() else {
+        let Some(device) = video_device() else {
             return;
         };
         let nv12 = texture(&device, &desc(DXGI_FORMAT_NV12, (64, 32), false), None);
