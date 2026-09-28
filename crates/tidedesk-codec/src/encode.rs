@@ -190,6 +190,11 @@ impl Encoder {
     ) -> Result<bool> {
         let image = image.into();
         out.clear();
+        if let Image::Bgra(bgra) = image
+            && bgra.len() != size.0 * size.1 * 4
+        {
+            bail!("{} bytes for a {}x{} picture", bgra.len(), size.0, size.1);
+        }
         if size.0.div_ceil(16) * size.1.div_ceil(16) > MAX_MACROBLOCKS {
             bail!(
                 "a {}x{} picture is larger than H.264 decoders take (4096x2304 or 5120x1440 at most)",
@@ -710,13 +715,28 @@ mod tests {
         for mut encoder in encoders(SETTINGS) {
             let name = encoder.implementation();
             // 5K: 57,600 macroblocks. Refused before the pixels are read.
-            let error = encoder.encode(Image::Bgra(&[]), (5120, 2880), 0, &mut Vec::new());
+            let pixels = vec![0; 5120 * 2880 * 4];
+            let error = encoder.encode(&pixels, (5120, 2880), 0, &mut Vec::new());
             let error = error.unwrap_err().to_string();
             assert!(
                 error.contains("larger than H.264 decoders take"),
                 "{name}: {error}"
             );
             assert_eq!(encoder.implementation(), name);
+        }
+    }
+
+    #[test]
+    fn a_picture_of_the_wrong_size_is_an_error() {
+        for mut encoder in encoders(SETTINGS) {
+            let name = encoder.implementation();
+            let error = encoder
+                .encode(Image::Bgra(&[]), SIZE, 0, &mut Vec::new())
+                .unwrap_err();
+            assert!(
+                error.to_string().contains("0 bytes for a 256x144"),
+                "{name}: {error}"
+            );
         }
     }
 
