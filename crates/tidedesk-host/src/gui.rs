@@ -444,12 +444,20 @@ impl HostApp {
                             "Sets the bitrate by the screen's size: about 6 Mbit/s at \
                              1920x1080, 12 Mbit/s at 2560x1600, up to 20 Mbit/s.",
                         );
-                    ui.add_enabled(
-                        !cfg.automatic_bitrate,
-                        egui::Slider::new(&mut cfg.bitrate_kbps, HostConfig::BITRATE_RANGE)
-                            .suffix(" kbit/s")
-                            .logarithmic(true),
-                    );
+                    if !cfg.automatic_bitrate {
+                        ui.add(
+                            egui::Slider::new(&mut cfg.bitrate_kbps, HostConfig::BITRATE_RANGE)
+                                .suffix(" kbit/s")
+                                .logarithmic(true),
+                        );
+                    } else if let Some(d) = self.displays.iter().find(|d| d.index == cfg.display) {
+                        let size = ((d.rect.width as usize) & !1, (d.rect.height as usize) & !1);
+                        let bps = crate::video::automatic_bitrate(size);
+                        ui.label(format!(
+                            "{:.1} Mbit/s for this display",
+                            f64::from(bps) / 1e6
+                        ));
+                    }
                 });
                 ui.end_row();
             });

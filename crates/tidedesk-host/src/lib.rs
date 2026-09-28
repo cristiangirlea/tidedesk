@@ -54,8 +54,8 @@ struct Args {
     #[arg(long, value_parser = clap::value_parser!(u32).range(1..=120))]
     fps: Option<u32>,
 
-    /// Target video bitrate in kbit/s [default: the one in Settings, else set
-    /// by the screen's size, 4000-20000].
+    /// Target video bitrate in kbit/s [default: set by the screen's size,
+    /// 4000-20000, unless Settings chooses one].
     #[arg(long, value_parser = clap::value_parser!(u32).range(250..=100_000))]
     bitrate: Option<u32>,
 

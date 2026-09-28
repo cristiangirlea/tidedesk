@@ -35,9 +35,9 @@ pub struct VideoSettings {
 /// 30 frames a second (6.2 Mbit/s at 1080p, 12.3 at 2560x1600), never below
 /// the earlier fixed 4 Mbit/s nor above the settings' most. It depends on the
 /// size alone, so Game Boost keeps it: the viewer cannot raise the budget.
-fn automatic_bitrate((width, height): (usize, usize)) -> u32 {
+pub(crate) fn automatic_bitrate((width, height): (usize, usize)) -> u32 {
     let most = *crate::config::HostConfig::BITRATE_RANGE.end() as usize * 1000;
-    (width * height * 3).clamp(4_000_000, most) as u32
+    (width * height * 3).max(4_000_000).min(most) as u32
 }
 
 /// Size and position of the display being streamed, reported once at start-up.
@@ -100,9 +100,10 @@ fn run(
     ready: std::sync::mpsc::SyncSender<Result<StreamInfo>>,
 ) -> Result<()> {
     let rect = capturer.rect();
+    let screen = ((rect.width as usize) & !1, (rect.height as usize) & !1);
     let _ = ready.send(Ok(StreamInfo {
-        width: (rect.width as u32) & !1,
-        height: (rect.height as u32) & !1,
+        width: screen.0 as u32,
+        height: screen.1 as u32,
         rect,
     }));
 
@@ -111,7 +112,6 @@ fn run(
             .bitrate_bps
             .unwrap_or_else(|| automatic_bitrate(size))
     };
-    let screen = ((rect.width as usize) & !1, (rect.height as usize) & !1);
     let mut status = StreamingStatus::requested(0, false, settings.fps, bitrate(screen));
     let mut encoder = encoder_for(status)?;
     tracing::info!("video encoder: {}", encoder.implementation());
