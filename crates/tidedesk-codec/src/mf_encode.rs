@@ -19,7 +19,8 @@ use windows::Win32::Graphics::Direct3D11::{
 };
 use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_NV12, DXGI_SAMPLE_DESC};
 use windows::Win32::Graphics::Dxgi::{
-    CreateDXGIFactory1, DXGI_ADAPTER_FLAG_SOFTWARE, IDXGIAdapter1, IDXGIFactory1,
+    CreateDXGIFactory1, DXGI_ADAPTER_DESC1, DXGI_ADAPTER_FLAG_SOFTWARE, IDXGIAdapter1, IDXGIDevice,
+    IDXGIFactory1,
 };
 use windows::Win32::Media::MediaFoundation::{
     CLSID_MSH264EncoderMFT, CODECAPI_AVEncCommonMaxBitRate, CODECAPI_AVEncCommonMeanBitRate,
@@ -98,6 +99,9 @@ struct Hardware {
     announced: u32,
     /// The picture in NV12, uploaded into a texture.
     nv12: Vec<u8>,
+    /// Set when the encoder shares capture's device: pictures are converted
+    /// to NV12 on the card and never leave it.
+    converter: Option<crate::gpu::Converter>,
 }
 
 impl Drop for Encoder {
@@ -198,10 +202,14 @@ fn cards() -> Result<Vec<(Card, IDXGIAdapter1, String)>> {
             screens,
             software: description.Flags & DXGI_ADAPTER_FLAG_SOFTWARE.0 as u32 != 0,
         };
-        let name = String::from_utf16_lossy(&description.Description);
-        cards.push((card, adapter, name.trim_end_matches('\0').to_string()));
+        cards.push((card, adapter, card_name(&description)));
     }
     Ok(cards)
+}
+
+fn card_name(description: &DXGI_ADAPTER_DESC1) -> String {
+    let name = String::from_utf16_lossy(&description.Description);
+    name.trim_end_matches('\0').to_string()
 }
 
 /// Reads the encoder's events on a thread of their own until it shuts down.
@@ -331,6 +339,14 @@ fn refuse(size: (usize, usize)) {
 
 static REFUSED: Mutex<Vec<(usize, usize)>> = Mutex::new(Vec::new());
 
+/// Cards (by LUID) that turned down encoding their own pictures of a size for
+/// good, not to be tried again in this process.
+static NOT_ON_CARD: Mutex<Vec<(u64, (usize, usize))>> = Mutex::new(Vec::new());
+
+fn luid_key(luid: LUID) -> u64 {
+    (u64::from(luid.HighPart as u32) << 32) | u64::from(luid.LowPart)
+}
+
 fn friendly_name(activate: &IMFActivate) -> String {
     let mut name = [0u16; 128];
     let mut length = 0;
@@ -341,9 +357,8 @@ fn friendly_name(activate: &IMFActivate) -> String {
     }
 }
 
-/// A Direct3D 11 device on `card`, and the manager that hands it to a Media
-/// Foundation transform.
-fn direct3d(card: &IDXGIAdapter1) -> Result<(ID3D11Device, IMFDXGIDeviceManager)> {
+/// A Direct3D 11 device on `card`, for an encoder of its own.
+fn direct3d(card: &IDXGIAdapter1) -> Result<ID3D11Device> {
     let mut device = None;
     unsafe {
         D3D11CreateDevice(
@@ -359,7 +374,11 @@ fn direct3d(card: &IDXGIAdapter1) -> Result<(ID3D11Device, IMFDXGIDeviceManager)
         )
     }
     .context("no Direct3D 11 device for video")?;
-    let device = device.context("no Direct3D 11 device for video")?;
+    device.context("no Direct3D 11 device for video")
+}
+
+/// The manager that hands `device` to a Media Foundation transform.
+fn manager(device: &ID3D11Device) -> Result<IMFDXGIDeviceManager> {
     // The encoder uses the device from its own threads.
     let multithread: ID3D11Multithread = device.cast()?;
     let _ = unsafe { multithread.SetMultithreadProtected(true) };
@@ -367,8 +386,8 @@ fn direct3d(card: &IDXGIAdapter1) -> Result<(ID3D11Device, IMFDXGIDeviceManager)
     let mut manager = None;
     unsafe { MFCreateDXGIDeviceManager(&mut token, &mut manager) }?;
     let manager = manager.context("no Direct3D device manager")?;
-    unsafe { manager.ResetDevice(&device, token) }?;
-    Ok((device, manager))
+    unsafe { manager.ResetDevice(device, token) }?;
+    Ok(manager)
 }
 
 /// Width and height, or numerator and denominator, as Media Foundation packs them.
@@ -468,7 +487,10 @@ impl Encoder {
                 if !fits(encoder_vendor(&activate), card.vendor) || refused_here.contains(&name) {
                     continue;
                 }
-                match Self::on_graphics_card(&activate, adapter, size, settings) {
+                let made = direct3d(adapter).and_then(|device| {
+                    Self::on_graphics_card(&activate, device, None, size, settings)
+                });
+                match made {
                     Ok(encoder) => {
                         tracing::info!("hardware H.264 encoder: {name} on {card_name}");
                         return Ok(encoder);
@@ -494,16 +516,119 @@ impl Encoder {
         )
     }
 
+    /// The graphics card's encoder on the card holding `texture`, taking its
+    /// pictures there: converted to NV12 on the card, they never leave it.
+    pub fn on_texture_card(
+        texture: &ID3D11Texture2D,
+        size: (usize, usize),
+        settings: Settings,
+    ) -> Result<Self> {
+        let (width, height) = size;
+        if refused(size) {
+            bail!("no graphics card took {width}x{height} before");
+        }
+        start()?;
+        if !multithreaded() {
+            bail!("the hardware H.264 encoder needs COM's multithreaded apartment");
+        }
+        let device = unsafe { texture.GetDevice() }?;
+        let adapter: IDXGIAdapter1 =
+            unsafe { device.cast::<IDXGIDevice>()?.GetAdapter() }?.cast()?;
+        let description = unsafe { adapter.GetDesc1() }?;
+        let name_of_card = card_name(&description);
+        let key = (luid_key(description.AdapterLuid), size);
+        if NOT_ON_CARD.lock().is_ok_and(|cards| cards.contains(&key)) {
+            bail!("{name_of_card} did not take its own pictures of {width}x{height} before");
+        }
+        let mut encoders = hardware_encoders(Some(description.AdapterLuid))?;
+        if encoders.is_empty() {
+            encoders = hardware_encoders(None)?;
+        }
+        let (mut tried, mut refused_here, mut lasting_only) = (Vec::new(), Vec::new(), true);
+        for activate in encoders {
+            let name = friendly_name(&activate);
+            if !fits(encoder_vendor(&activate), description.VendorId)
+                || refused_here.contains(&name)
+            {
+                continue;
+            }
+            let made = crate::gpu::Converter::new(&device, size).and_then(|converter| {
+                Self::on_graphics_card(&activate, device.clone(), Some(converter), size, settings)
+            });
+            match made {
+                Ok(encoder) => {
+                    tracing::info!(
+                        "hardware H.264 encoder: {name} on {name_of_card}, encoding the screen there"
+                    );
+                    return Ok(encoder);
+                }
+                Err(e) => {
+                    let _ = unsafe { activate.ShutdownObject() };
+                    lasting_only &= lasting(&e);
+                    tried.push(format!("{name}: {e:#}"));
+                    refused_here.push(name);
+                }
+            }
+        }
+        if lasting_only && let Ok(mut cards) = NOT_ON_CARD.lock() {
+            cards.push(key);
+        }
+        if tried.is_empty() {
+            bail!("{name_of_card} has no H.264 encoder of its own vendor");
+        }
+        bail!(
+            "no encoder on {name_of_card} took its pictures ({})",
+            tried.join("; ")
+        )
+    }
+
+    /// Whether this encoder takes textures without them leaving the card.
+    pub fn zero_copy(&self) -> bool {
+        self.hardware
+            .as_ref()
+            .is_some_and(|hardware| hardware.converter.is_some())
+    }
+
+    /// Whether `texture` is on this encoder's device.
+    pub fn same_device(&self, texture: &ID3D11Texture2D) -> bool {
+        self.hardware.as_ref().is_some_and(|hardware| {
+            unsafe { texture.GetDevice() }
+                .is_ok_and(|device| device.as_raw() == hardware.device.as_raw())
+        })
+    }
+
+    /// Encodes a texture on this encoder's device into `out`; whether it is
+    /// a keyframe.
+    pub fn encode_texture(
+        &mut self,
+        texture: &ID3D11Texture2D,
+        timestamp_ms: u64,
+        keyframe: bool,
+        out: &mut Vec<u8>,
+    ) -> Result<bool> {
+        let hardware = self
+            .hardware
+            .as_mut()
+            .context("not a graphics card's encoder")?;
+        let converter = hardware
+            .converter
+            .as_mut()
+            .context("the encoder does not share the picture's device")?;
+        let sample = surface_sample(converter.convert(texture)?)?;
+        self.encode_sample(sample, timestamp_ms, keyframe, out)
+    }
+
     fn on_graphics_card(
         activate: &IMFActivate,
-        card: &IDXGIAdapter1,
+        device: ID3D11Device,
+        converter: Option<crate::gpu::Converter>,
         size: (usize, usize),
         settings: Settings,
     ) -> Result<Self> {
         let transform: IMFTransform = unsafe { activate.ActivateObject() }?;
         let attributes = unsafe { transform.GetAttributes() }?;
         unsafe { attributes.SetUINT32(&MF_TRANSFORM_ASYNC_UNLOCK, 1) }?;
-        let (device, manager) = direct3d(card)?;
+        let manager = manager(&device)?;
         unsafe { transform.ProcessMessage(MFT_MESSAGE_SET_D3D_MANAGER, manager.as_raw() as usize) }
             .map_err(|e| anyhow::Error::from(e).context(OtherCard))?;
         let (events, reader) = read_events(transform.cast()?)?;
@@ -516,6 +641,7 @@ impl Encoder {
             wanted: 0,
             announced: 0,
             nv12: Vec::new(),
+            converter,
         };
         Self::with(transform, size, settings, Some(hardware))
     }
@@ -676,6 +802,16 @@ impl Encoder {
             Some(hardware) => hardware.texture_sample(&self.yuv, self.size)?,
             None => self.memory_sample()?,
         };
+        self.encode_sample(sample, timestamp_ms, keyframe, out)
+    }
+
+    fn encode_sample(
+        &mut self,
+        sample: IMFSample,
+        timestamp_ms: u64,
+        keyframe: bool,
+        out: &mut Vec<u8>,
+    ) -> Result<bool> {
         unsafe {
             sample.SetSampleTime(timestamp_ms as i64 * 10_000)?;
             sample.SetSampleDuration(self.frame_duration)?;
@@ -912,15 +1048,19 @@ impl Hardware {
                 .CreateTexture2D(&desc, Some(&data), Some(&mut texture))
         }
         .context("no texture for the picture")?;
-        let texture: ID3D11Texture2D = texture.context("no texture for the picture")?;
-        unsafe {
-            let buffer = MFCreateDXGISurfaceBuffer(&ID3D11Texture2D::IID, &texture, 0, false)?;
-            let length = buffer.cast::<IMF2DBuffer>()?.GetContiguousLength()?;
-            buffer.SetCurrentLength(length)?;
-            let sample = MFCreateSample()?;
-            sample.AddBuffer(&buffer)?;
-            Ok(sample)
-        }
+        surface_sample(&texture.context("no texture for the picture")?)
+    }
+}
+
+/// A sample holding an NV12 texture, for the graphics card's encoder.
+fn surface_sample(texture: &ID3D11Texture2D) -> Result<IMFSample> {
+    unsafe {
+        let buffer = MFCreateDXGISurfaceBuffer(&ID3D11Texture2D::IID, texture, 0, false)?;
+        let length = buffer.cast::<IMF2DBuffer>()?.GetContiguousLength()?;
+        buffer.SetCurrentLength(length)?;
+        let sample = MFCreateSample()?;
+        sample.AddBuffer(&buffer)?;
+        Ok(sample)
     }
 }
 

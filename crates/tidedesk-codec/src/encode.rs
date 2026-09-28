@@ -12,6 +12,32 @@ use openh264::{OpenH264API, Timestamp};
 
 use crate::{CHOICE_ENV, Choice, Implementation, choice};
 
+/// A picture to encode: BGRA pixels, row after row, or on Windows a BGRA
+/// (`DXGI_FORMAT_B8G8R8A8_UNORM`) Direct3D 11 texture, as screen capture hands
+/// it over. The graphics card's encoder takes a texture without it leaving the
+/// card; the others get its pixels copied back. For that, the texture's device
+/// must be made with `D3D11_CREATE_DEVICE_VIDEO_SUPPORT`, and the encoder
+/// turns on the device's multithread protection, as it uses the device from
+/// its own threads too.
+#[derive(Clone, Copy)]
+pub enum Image<'a> {
+    Bgra(&'a [u8]),
+    #[cfg(windows)]
+    Texture(&'a windows::Win32::Graphics::Direct3D11::ID3D11Texture2D),
+}
+
+impl<'a> From<&'a [u8]> for Image<'a> {
+    fn from(bgra: &'a [u8]) -> Self {
+        Self::Bgra(bgra)
+    }
+}
+
+impl<'a> From<&'a Vec<u8>> for Image<'a> {
+    fn from(bgra: &'a Vec<u8>) -> Self {
+        Self::Bgra(bgra)
+    }
+}
+
 /// The most macroblocks in a picture that H.264 decoders must take (level
 /// 5.2): 4096x2304 or 5120x1440, for example.
 const MAX_MACROBLOCKS: usize = 36_864;
@@ -29,13 +55,17 @@ pub struct Settings {
 pub struct Encoder {
     inner: Inner,
     keyframe: bool,
+    /// Pixels of textures, for encoders that need them in system memory.
+    #[cfg(windows)]
+    readback: crate::gpu::Readback,
 }
 
 enum Inner {
     #[cfg(windows)]
     MediaFoundation {
         /// Created for the first picture's size, and again when it changes.
-        current: Option<crate::mf_encode::Encoder>,
+        /// Boxed: it holds the card's converter.
+        current: Option<Box<crate::mf_encode::Encoder>>,
         settings: Settings,
         /// The graphics card's encoder rather than Windows' software one.
         hardware: bool,
@@ -97,6 +127,8 @@ impl Encoder {
                 yuv: None,
             },
             keyframe: false,
+            #[cfg(windows)]
+            readback: Default::default(),
         })
     }
 
@@ -123,6 +155,8 @@ impl Encoder {
                 hardware,
             },
             keyframe: false,
+            #[cfg(windows)]
+            readback: Default::default(),
         }
     }
 
@@ -140,19 +174,21 @@ impl Encoder {
         self.keyframe = true;
     }
 
-    /// Encodes one BGRA picture of `size` (even width and height) into `out`,
+    /// Encodes one picture, the top-left `size` of `image` (even width and
+    /// height), into `out`,
     /// which stays empty when the encoder skips the picture; whether it is a
     /// keyframe. Should the graphics card's encoder fail, Windows' software
     /// encoder takes over from this picture on, starting with a keyframe;
     /// should that fail, OpenH264 does. Pictures larger than H.264 decoders
     /// take are refused.
-    pub fn encode(
+    pub fn encode<'a>(
         &mut self,
-        bgra: &[u8],
+        image: impl Into<Image<'a>>,
         size: (usize, usize),
         timestamp_ms: u64,
         out: &mut Vec<u8>,
     ) -> Result<bool> {
+        let image = image.into();
         out.clear();
         if size.0.div_ceil(16) * size.1.div_ceil(16) > MAX_MACROBLOCKS {
             bail!(
@@ -170,13 +206,15 @@ impl Encoder {
                 hardware,
             } => {
                 let (settings, hardware) = (*settings, *hardware);
-                let encoded = match current {
-                    Some(encoder) if encoder.size() == size => Ok(encoder),
-                    // A new encoder for a new size starts with a keyframe.
-                    slot => crate::mf_encode::Encoder::new(size, settings, hardware)
-                        .map(|encoder| slot.insert(encoder)),
-                }
-                .and_then(|encoder| encoder.encode(bgra, timestamp_ms, keyframe, out));
+                let encoded = Self::encode_in_windows(
+                    current,
+                    &mut self.readback,
+                    image,
+                    size,
+                    (settings, hardware),
+                    (timestamp_ms, keyframe),
+                    out,
+                );
                 encoded.or_else(|e| {
                     *self = if hardware {
                         tracing::warn!("using Windows' software encoder from here on: {e:#}");
@@ -191,10 +229,15 @@ impl Encoder {
                         tracing::warn!("using OpenH264 from here on: {e:#}");
                         Self::openh264(settings)?
                     };
-                    self.encode(bgra, size, timestamp_ms, out)
+                    self.encode(image, size, timestamp_ms, out)
                 })
             }
             Inner::OpenH264 { encoder, yuv } => {
+                let bgra = match image {
+                    Image::Bgra(bgra) => bgra,
+                    #[cfg(windows)]
+                    Image::Texture(texture) => self.readback.read(texture, size)?,
+                };
                 let buffer = match yuv {
                     Some(buffer) if buffer.dimensions() == size => buffer,
                     slot => slot.insert(YUVBuffer::new(size.0, size.1)),
@@ -209,6 +252,58 @@ impl Encoder {
                 Ok(keyframe)
             }
         }
+    }
+
+    /// Encodes with Windows' encoders. A texture stays on its card when that
+    /// card's encoder takes it; otherwise its pixels are copied back.
+    #[cfg(windows)]
+    fn encode_in_windows(
+        current: &mut Option<Box<crate::mf_encode::Encoder>>,
+        readback: &mut crate::gpu::Readback,
+        image: Image<'_>,
+        size: (usize, usize),
+        (settings, hardware): (Settings, bool),
+        (timestamp_ms, keyframe): (u64, bool),
+        out: &mut Vec<u8>,
+    ) -> Result<bool> {
+        use crate::mf_encode::Encoder as Windows;
+        let texture = match image {
+            Image::Texture(texture) if hardware => Some(texture),
+            _ => None,
+        };
+        let fits = current.as_ref().is_some_and(|encoder| {
+            encoder.size() == size
+                && texture.is_none_or(|t| !encoder.zero_copy() || encoder.same_device(t))
+        });
+        if !fits {
+            // A new encoder, for a new size or card, starts with a keyframe.
+            *current = None;
+            let made = match texture {
+                Some(texture) => Windows::on_texture_card(texture, size, settings).or_else(|e| {
+                    tracing::debug!("the picture leaves the graphics card to be encoded: {e:#}");
+                    Windows::new(size, settings, hardware)
+                }),
+                None => Windows::new(size, settings, hardware),
+            };
+            *current = Some(Box::new(made?));
+        }
+        let encoder = current.as_mut().expect("made above");
+        match image {
+            Image::Texture(texture) if encoder.zero_copy() => {
+                encoder.encode_texture(texture, timestamp_ms, keyframe, out)
+            }
+            Image::Texture(texture) => {
+                let bgra = readback.read(texture, size)?;
+                encoder.encode(bgra, timestamp_ms, keyframe, out)
+            }
+            Image::Bgra(bgra) => encoder.encode(bgra, timestamp_ms, keyframe, out),
+        }
+    }
+
+    /// Whether the last picture was encoded without leaving the card.
+    #[cfg(all(test, windows))]
+    pub(crate) fn on_card(&self) -> bool {
+        matches!(&self.inner, Inner::MediaFoundation { current: Some(encoder), .. } if encoder.zero_copy())
     }
 }
 
@@ -319,9 +414,29 @@ mod tests {
         Some((size, [y, u, v]))
     }
 
+    /// How check_encoder hands pictures over.
+    #[derive(Clone, Copy)]
+    enum Input<'a> {
+        Pixels,
+        #[cfg(windows)]
+        Textures(&'a windows::Win32::Graphics::Direct3D11::ID3D11Device),
+        #[cfg(not(windows))]
+        #[allow(dead_code)]
+        Never(std::marker::PhantomData<&'a ()>),
+    }
+
+    fn check_encoder(encoder: Encoder, sizes: &[(usize, usize)], force: Option<usize>) {
+        check_encoder_with(Input::Pixels, encoder, sizes, force)
+    }
+
     /// Encodes `frames` pictures, forcing a keyframe at `force` if given, and
     /// checks what every viewer needs from the result.
-    fn check_encoder(mut encoder: Encoder, sizes: &[(usize, usize)], force: Option<usize>) {
+    fn check_encoder_with(
+        input: Input<'_>,
+        mut encoder: Encoder,
+        sizes: &[(usize, usize)],
+        force: Option<usize>,
+    ) {
         let implementation = encoder.implementation();
         let mut openh264 = Decoder::openh264().unwrap();
         #[cfg(windows)]
@@ -332,9 +447,15 @@ mod tests {
             if force == Some(i) {
                 encoder.force_keyframe();
             }
-            let keyframe = encoder
-                .encode(&pixels, size, i as u64 * 33, &mut out)
-                .unwrap();
+            let keyframe = match input {
+                #[cfg(windows)]
+                Input::Textures(device) => {
+                    let texture = crate::gpu::tests::upload(device, &pixels, size);
+                    encoder.encode(Image::Texture(&texture), size, i as u64 * 33, &mut out)
+                }
+                _ => encoder.encode(&pixels, size, i as u64 * 33, &mut out),
+            }
+            .unwrap();
             // Still the encoder under test, not OpenH264 standing in.
             assert_eq!(encoder.implementation(), implementation, "frame {i}");
             // A picture in, its access unit out: no added latency.
@@ -473,6 +594,41 @@ mod tests {
         assert_eq!(decode(&mut fresh, &out).unwrap().0, (5120, 1440));
     }
 
+    /// Screen capture hands pictures over as textures; every encoder takes
+    /// them, the card's own without the picture leaving the card.
+    #[cfg(windows)]
+    #[test]
+    fn every_encoder_takes_textures() {
+        let Some(device) = crate::gpu::tests::device() else {
+            return;
+        };
+        for encoder in encoders(SETTINGS) {
+            check_encoder_with(Input::Textures(&device), encoder, &[SIZE; 4], Some(2));
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn the_cards_encoder_keeps_textures_on_the_card() {
+        let (Some(device), Some(mut encoder)) =
+            (crate::gpu::tests::device(), hardware_or_skip(SETTINGS))
+        else {
+            return;
+        };
+        let texture = crate::gpu::tests::upload(&device, &scene(SIZE.0, SIZE.1, 0), SIZE);
+        let mut out = Vec::new();
+        assert!(
+            encoder
+                .encode(Image::Texture(&texture), SIZE, 0, &mut out)
+                .unwrap()
+        );
+        assert!(encoder.on_card());
+        // Pixels in system memory still work, uploaded to the card.
+        let pixels = scene(SIZE.0, SIZE.1, 1);
+        encoder.encode(&pixels, SIZE, 33, &mut out).unwrap();
+        assert_eq!(encoder.implementation(), Implementation::Hardware);
+    }
+
     #[test]
     fn every_encoder_writes_constrained_baseline() {
         for mut encoder in encoders(SETTINGS) {
@@ -554,7 +710,7 @@ mod tests {
         for mut encoder in encoders(SETTINGS) {
             let name = encoder.implementation();
             // 5K: 57,600 macroblocks. Refused before the pixels are read.
-            let error = encoder.encode(&[], (5120, 2880), 0, &mut Vec::new());
+            let error = encoder.encode(Image::Bgra(&[]), (5120, 2880), 0, &mut Vec::new());
             let error = error.unwrap_err().to_string();
             assert!(
                 error.contains("larger than H.264 decoders take"),
