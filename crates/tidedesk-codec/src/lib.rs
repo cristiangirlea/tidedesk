@@ -7,11 +7,13 @@
 
 mod encode;
 #[cfg(windows)]
+mod gpu;
+#[cfg(windows)]
 mod mf;
 #[cfg(windows)]
 mod mf_encode;
 
-pub use encode::{Encoder, Settings};
+pub use encode::{Encoder, Image, Settings};
 
 use std::fmt;
 

@@ -2,10 +2,12 @@
 //! picture, which also sets the encoder up), size and quality per frame on a
 //! synthetic desktop, for each encoder:
 //! `cargo run --release -p tidedesk-codec --example encode_bench -- 2560 1440`
+//! With `texture` the pictures come as Direct3D 11 textures, as screen
+//! capture hands them over (the upload is not timed).
 
 use std::time::{Duration, Instant};
 
-use tidedesk_codec::{Decoder, Encoder, Settings};
+use tidedesk_codec::{Decoder, Encoder, Image, Settings};
 
 /// Window-like blocks with "text" stripes.
 fn desktop(width: usize, height: usize) -> Vec<u8> {
@@ -42,9 +44,11 @@ fn psnr(decoder: &mut Decoder, unit: &[u8], bgra: &[u8], shown: &mut Vec<u32>) -
 }
 
 fn main() {
+    let textures = std::env::args().any(|a| a == "texture");
     let args: Vec<usize> = std::env::args()
         .skip(1)
-        .map(|a| a.parse().expect("width height [frames]"))
+        .filter(|a| a != "texture")
+        .map(|a| a.parse().expect("width height [frames] [texture]"))
         .collect();
     let (width, height) = (
         args.first().copied().unwrap_or(1920),
@@ -68,9 +72,14 @@ fn main() {
             Err(e) => println!("unavailable: {e:#}"),
         }
     }
+    #[cfg(windows)]
+    let gpu = textures.then(|| on_the_card::Picture::new((width, height)));
+    #[cfg(not(windows))]
+    assert!(!textures, "textures are Direct3D 11 textures, on Windows");
     println!(
-        "{width}x{height}, {frames} frames at {} Mbit/s",
-        settings.bitrate_bps / 1_000_000
+        "{width}x{height}, {frames} frames at {} Mbit/s{}",
+        settings.bitrate_bps / 1_000_000,
+        if textures { ", as textures" } else { "" }
     );
     'encoders: for mut encoder in encoders {
         let name = encoder.implementation().to_string();
@@ -87,8 +96,17 @@ fn main() {
                     bgra[(y * width + x) * 4] ^= 0x55;
                 }
             }
+            #[cfg(windows)]
+            if let Some(gpu) = &gpu {
+                gpu.update(&bgra);
+            }
+            let image = match () {
+                #[cfg(windows)]
+                () if gpu.is_some() => Image::Texture(&gpu.as_ref().unwrap().texture),
+                () => Image::Bgra(&bgra),
+            };
             let start = Instant::now();
-            let keyframe = match encoder.encode(&bgra, (width, height), frame as u64 * 33, &mut out)
+            let keyframe = match encoder.encode(image, (width, height), frame as u64 * 33, &mut out)
             {
                 Ok(keyframe) => keyframe,
                 Err(e) => {
@@ -121,5 +139,85 @@ fn main() {
             bytes as f64 / frames as f64 / 1000.0,
             quality / decoded.max(1) as f64,
         );
+    }
+}
+
+/// The picture on the default graphics card, as screen capture keeps it.
+#[cfg(windows)]
+mod on_the_card {
+    use windows::Win32::Foundation::HMODULE;
+    use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_HARDWARE;
+    use windows::Win32::Graphics::Direct3D11::{
+        D3D11_BIND_RENDER_TARGET, D3D11_BIND_SHADER_RESOURCE, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+        D3D11_CREATE_DEVICE_VIDEO_SUPPORT, D3D11_SDK_VERSION, D3D11_TEXTURE2D_DESC,
+        D3D11_USAGE_DEFAULT, D3D11CreateDevice, ID3D11DeviceContext, ID3D11Texture2D,
+    };
+    use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC};
+
+    pub struct Picture {
+        pub texture: ID3D11Texture2D,
+        context: ID3D11DeviceContext,
+        width: usize,
+    }
+
+    impl Picture {
+        pub fn new((width, height): (usize, usize)) -> Self {
+            let (mut device, mut context) = (None, None);
+            unsafe {
+                D3D11CreateDevice(
+                    None,
+                    D3D_DRIVER_TYPE_HARDWARE,
+                    HMODULE::default(),
+                    D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_VIDEO_SUPPORT,
+                    None,
+                    D3D11_SDK_VERSION,
+                    Some(&mut device),
+                    None,
+                    Some(&mut context),
+                )
+            }
+            .expect("a Direct3D 11 device");
+            let desc = D3D11_TEXTURE2D_DESC {
+                Width: width as u32,
+                Height: height as u32,
+                MipLevels: 1,
+                ArraySize: 1,
+                Format: DXGI_FORMAT_B8G8R8A8_UNORM,
+                SampleDesc: DXGI_SAMPLE_DESC {
+                    Count: 1,
+                    Quality: 0,
+                },
+                Usage: D3D11_USAGE_DEFAULT,
+                BindFlags: (D3D11_BIND_SHADER_RESOURCE.0 | D3D11_BIND_RENDER_TARGET.0) as u32,
+                CPUAccessFlags: 0,
+                MiscFlags: 0,
+            };
+            let mut texture = None;
+            unsafe {
+                device
+                    .unwrap()
+                    .CreateTexture2D(&desc, None, Some(&mut texture))
+            }
+            .expect("a texture");
+            Self {
+                texture: texture.unwrap(),
+                context: context.unwrap(),
+                width,
+            }
+        }
+
+        pub fn update(&self, bgra: &[u8]) {
+            let pitch = (self.width * 4) as u32;
+            unsafe {
+                self.context.UpdateSubresource(
+                    &self.texture,
+                    0,
+                    None,
+                    bgra.as_ptr().cast(),
+                    pitch,
+                    0,
+                )
+            };
+        }
     }
 }
