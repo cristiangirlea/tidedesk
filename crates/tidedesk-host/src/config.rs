@@ -14,7 +14,11 @@ pub struct HostConfig {
     /// Display index to share.
     pub display: usize,
     pub fps: u32,
+    /// Used when `automatic_bitrate` is off.
     pub bitrate_kbps: u32,
+    /// Set the bitrate by the screen's size. Files from before this setting
+    /// get it on, as they hold the old fixed default.
+    pub automatic_bitrate: bool,
     pub share_audio: bool,
     pub allow_clipboard: bool,
     pub allow_mouse: bool,
@@ -44,6 +48,7 @@ impl Default for HostConfig {
             display: 0,
             fps: 30,
             bitrate_kbps: 4000,
+            automatic_bitrate: true,
             share_audio: true,
             allow_clipboard: false,
             allow_mouse: true,
@@ -95,6 +100,11 @@ impl HostConfig {
             .bitrate_kbps
             .clamp(*Self::BITRATE_RANGE.start(), *Self::BITRATE_RANGE.end());
         self
+    }
+
+    /// The chosen video bitrate in bit/s; `None` when set by the screen.
+    pub fn bitrate_bps(&self) -> Option<u32> {
+        (!self.automatic_bitrate).then_some(self.bitrate_kbps * 1000)
     }
 
     /// The rendezvous service to register with: the configured one, else
@@ -196,6 +206,18 @@ mod tests {
         assert!(old.lan_discovery, "a host.toml from before the setting");
         let off: HostConfig = toml::from_str("lan_discovery = false").unwrap();
         assert!(!off.lan_discovery);
+    }
+
+    #[test]
+    fn the_bitrate_follows_the_screen_unless_chosen() {
+        assert_eq!(HostConfig::default().bitrate_bps(), None);
+        // A host.toml from before the setting holds the old fixed 4000, as
+        // the settings window saved it; it now follows the screen too.
+        let old: HostConfig = toml::from_str("bitrate_kbps = 4000").unwrap();
+        assert_eq!(old.bitrate_bps(), None);
+        let chosen: HostConfig =
+            toml::from_str("bitrate_kbps = 8000\nautomatic_bitrate = false").unwrap();
+        assert_eq!(chosen.bitrate_bps(), Some(8_000_000));
     }
 
     #[test]

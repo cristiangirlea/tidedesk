@@ -26,8 +26,18 @@ pub struct EncodedFrame {
 pub struct VideoSettings {
     pub display: usize,
     pub fps: u32,
-    pub bitrate_bps: u32,
+    /// `None`: set by the screen's size ([`automatic_bitrate`]).
+    pub bitrate_bps: Option<u32>,
     pub stats: bool,
+}
+
+/// The bitrate for a screen when none is chosen: about 0.1 bit per pixel at
+/// 30 frames a second (6.2 Mbit/s at 1080p, 12.3 at 2560x1600), never below
+/// the earlier fixed 4 Mbit/s nor above the settings' most. It depends on the
+/// size alone, so Game Boost keeps it: the viewer cannot raise the budget.
+fn automatic_bitrate((width, height): (usize, usize)) -> u32 {
+    let most = *crate::config::HostConfig::BITRATE_RANGE.end() as usize * 1000;
+    (width * height * 3).clamp(4_000_000, most) as u32
 }
 
 /// Size and position of the display being streamed, reported once at start-up.
@@ -96,9 +106,24 @@ fn run(
         rect,
     }));
 
-    let mut status = StreamingStatus::requested(0, false, settings.fps, settings.bitrate_bps);
+    let bitrate = |size| {
+        settings
+            .bitrate_bps
+            .unwrap_or_else(|| automatic_bitrate(size))
+    };
+    let screen = ((rect.width as usize) & !1, (rect.height as usize) & !1);
+    let mut status = StreamingStatus::requested(0, false, settings.fps, bitrate(screen));
     let mut encoder = encoder_for(status)?;
     tracing::info!("video encoder: {}", encoder.implementation());
+    tracing::info!(
+        "video bitrate: {:.1} Mbit/s, {}",
+        f64::from(status.bitrate_bps) / 1e6,
+        if settings.bitrate_bps.is_some() {
+            "as chosen"
+        } else {
+            "set by the screen's size"
+        }
+    );
     let mut reported_request = 0;
     let mut last_reconfigure: Option<Instant> = None;
     let mut captured = false;
@@ -117,7 +142,7 @@ fn run(
             && last_reconfigure.is_none_or(|t| t.elapsed() >= Duration::from_millis(250))
         {
             let next =
-                StreamingStatus::requested(request, enabled, settings.fps, settings.bitrate_bps);
+                StreamingStatus::requested(request, enabled, settings.fps, status.bitrate_bps);
             if next.game_boost != status.game_boost {
                 // A fresh encoder starts with SPS/PPS + IDR; never splice new
                 // prediction state onto the old stream's dependent frames.
@@ -166,6 +191,16 @@ fn run(
         let work_start = Instant::now();
         let (w, h) = capturer.size();
         captured = true;
+        if bitrate((w, h)) != status.bitrate_bps {
+            // An automatic bitrate follows the screen's size. A fresh encoder
+            // starts with a keyframe, as the new size needs anyway.
+            status.bitrate_bps = bitrate((w, h));
+            encoder = encoder_for(status)?;
+            tracing::info!(
+                "video bitrate: {:.1} Mbit/s, set by the screen's size ({w}x{h})",
+                f64::from(status.bitrate_bps) / 1e6
+            );
+        }
 
         if control.keyframe.swap(false, Ordering::Relaxed) {
             encoder.force_keyframe();
@@ -259,7 +294,7 @@ mod tests {
                 VideoSettings {
                     display: 0,
                     fps: 24,
-                    bitrate_bps: 4_000_000,
+                    bitrate_bps: Some(4_000_000),
                     stats: false,
                 },
                 tx,
@@ -311,6 +346,119 @@ mod tests {
             })
             .await
             .unwrap();
+        }
+        drop(stop);
+        worker.join().unwrap().unwrap();
+    }
+
+    #[test]
+    fn the_automatic_bitrate_follows_the_screen_size() {
+        assert_eq!(automatic_bitrate((1920, 1080)), 6_220_800);
+        assert_eq!(automatic_bitrate((2560, 1600)), 12_288_000);
+        // Never below the earlier fixed default, nor above the settings' most.
+        assert_eq!(automatic_bitrate((1280, 720)), 4_000_000);
+        assert_eq!(automatic_bitrate((3840, 2160)), 20_000_000);
+    }
+
+    /// With no bitrate chosen, the encoder's budget is set by the screen's
+    /// size, and follows it when the size changes during a session.
+    #[tokio::test]
+    async fn an_automatic_bitrate_follows_a_changing_screen() {
+        /// A still desktop whose size the test changes.
+        struct Resizable {
+            size: Arc<Mutex<(usize, usize)>>,
+            shown: (usize, usize),
+            bgra: Vec<u8>,
+        }
+        impl capture::Capturer for Resizable {
+            fn next_frame(&mut self, timeout: Duration) -> Result<bool> {
+                let size = *self.size.lock().unwrap();
+                if size != self.shown {
+                    self.shown = size;
+                    return Ok(true);
+                }
+                std::thread::sleep(timeout);
+                Ok(false)
+            }
+            fn image(&self) -> tidedesk_codec::Image<'_> {
+                self.bgra[..self.shown.0 * self.shown.1 * 4].into()
+            }
+            fn size(&self) -> (usize, usize) {
+                self.shown
+            }
+            fn rect(&self) -> DisplayRect {
+                let (width, height) = *self.size.lock().unwrap();
+                DisplayRect {
+                    left: 0,
+                    top: 0,
+                    width: width as i32,
+                    height: height as i32,
+                }
+            }
+        }
+        let size = Arc::new(Mutex::new((1920, 1080)));
+        let control = Arc::new(VideoControl::default());
+        struct Stop(Arc<VideoControl>);
+        impl Drop for Stop {
+            fn drop(&mut self) {
+                self.0.stop.store(true, Ordering::Relaxed);
+            }
+        }
+        let stop = Stop(control.clone());
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+        let (ready_tx, ready_rx) = std::sync::mpsc::sync_channel(1);
+        let worker_control = control.clone();
+        let capture = Resizable {
+            size: size.clone(),
+            shown: (0, 0),
+            bgra: vec![90; 2560 * 1440 * 4],
+        };
+        let worker = std::thread::spawn(move || {
+            run(
+                Box::new(capture),
+                VideoSettings {
+                    display: 0,
+                    fps: 30,
+                    bitrate_bps: None,
+                    stats: false,
+                },
+                tx,
+                &worker_control,
+                ready_tx,
+            )
+        });
+        ready_rx
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap()
+            .unwrap();
+        for (request, (width, height)) in [(1, (1920, 1080)), (2, (2560, 1440))] {
+            *size.lock().unwrap() = (width, height);
+            let frame = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                (frame.header.width, frame.header.height),
+                (width as u16, height as u16)
+            );
+            // The budget in use is reported with the next preset request.
+            *control.boost_request.lock().unwrap() = (request, false);
+            let status = tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    if let Some(status) = control.streaming_status.lock().unwrap().take() {
+                        return status;
+                    }
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                }
+            })
+            .await
+            .unwrap();
+            assert_eq!(status.bitrate_bps, automatic_bitrate((width, height)));
+            // The picture the request refreshed.
+            tokio::time::timeout(Duration::from_secs(5), rx.recv())
+                .await
+                .unwrap()
+                .unwrap();
         }
         drop(stop);
         worker.join().unwrap().unwrap();

@@ -108,7 +108,7 @@ tidedesk view 192.168.1.50 --code K7QM-3XPA-WZ
 | `--tray` | Start hidden in the tray |
 | `--list-displays` / `--display N` | Choose which monitor to share |
 | `--fps 60` | Frame rate cap |
-| `--bitrate 8000` | Video bitrate in kbit/s |
+| `--bitrate 8000` | Video bitrate in kbit/s (default: set by the screen's size, 4000–20000) |
 | `--no-audio` | Don't share sound |
 | `--new-code` | Replace the access code |
 | `--stats` | Print fps, bitrate and encode time |

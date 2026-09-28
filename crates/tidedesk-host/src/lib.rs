@@ -54,7 +54,8 @@ struct Args {
     #[arg(long, value_parser = clap::value_parser!(u32).range(1..=120))]
     fps: Option<u32>,
 
-    /// Target video bitrate in kbit/s.
+    /// Target video bitrate in kbit/s [default: the one in Settings, else set
+    /// by the screen's size, 4000-20000].
     #[arg(long, value_parser = clap::value_parser!(u32).range(250..=100_000))]
     bitrate: Option<u32>,
 
@@ -201,7 +202,10 @@ pub fn start(options: &StartOptions) -> Result<Started> {
         video: Mutex::new(video::VideoSettings {
             display: options.display.unwrap_or(config.display),
             fps: options.fps.unwrap_or(config.fps),
-            bitrate_bps: options.bitrate.unwrap_or(config.bitrate_kbps) * 1000,
+            bitrate_bps: options
+                .bitrate
+                .map(|kbps| kbps * 1000)
+                .or(config.bitrate_bps()),
             stats: options.stats,
         }),
         audio: AtomicBool::new(config.share_audio && !options.no_audio),
