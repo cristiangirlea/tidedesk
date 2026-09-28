@@ -14,7 +14,11 @@ pub struct HostConfig {
     /// Display index to share.
     pub display: usize,
     pub fps: u32,
+    /// Used when `automatic_bitrate` is off.
     pub bitrate_kbps: u32,
+    /// Set the bitrate by the screen's size. Files from before this setting
+    /// get it on unless they hold a bitrate chosen on purpose ([`Self::parse`]).
+    pub automatic_bitrate: bool,
     pub share_audio: bool,
     pub allow_clipboard: bool,
     pub allow_mouse: bool,
@@ -43,7 +47,8 @@ impl Default for HostConfig {
         Self {
             display: 0,
             fps: 30,
-            bitrate_kbps: 4000,
+            bitrate_kbps: Self::FIXED_BITRATE_KBPS,
+            automatic_bitrate: true,
             share_audio: true,
             allow_clipboard: false,
             allow_mouse: true,
@@ -62,6 +67,8 @@ impl Default for HostConfig {
 impl HostConfig {
     pub const FPS_RANGE: std::ops::RangeInclusive<u32> = 5..=60;
     pub const BITRATE_RANGE: std::ops::RangeInclusive<u32> = 500..=20_000;
+    /// The bitrate every host used before it followed the screen.
+    const FIXED_BITRATE_KBPS: u32 = 4000;
 
     fn path() -> Result<PathBuf> {
         Ok(paths::config_dir()?.join("host.toml"))
@@ -73,13 +80,27 @@ impl HostConfig {
             return Self::default();
         };
         match std::fs::read_to_string(&path) {
-            Ok(text) => toml::from_str(&text).unwrap_or_else(|e| {
+            Ok(text) => Self::parse(&text).unwrap_or_else(|e| {
                 tracing::warn!("ignoring invalid {}: {e}", path.display());
                 Self::default()
             }),
             Err(_) => Self::default(),
         }
         .clamped()
+    }
+
+    /// Reads settings from a file's text. A file from before
+    /// `automatic_bitrate` holds either the old fixed bitrate, as the settings
+    /// window saved it, which now follows the screen, or a bitrate chosen on
+    /// purpose, which stays.
+    fn parse(text: &str) -> Result<Self, toml::de::Error> {
+        let mut cfg: Self = toml::from_str(text)?;
+        let fields: toml::Table = toml::from_str(text)?;
+        if !fields.contains_key("automatic_bitrate") && cfg.bitrate_kbps != Self::FIXED_BITRATE_KBPS
+        {
+            cfg.automatic_bitrate = false;
+        }
+        Ok(cfg)
     }
 
     pub fn save(&self) -> Result<()> {
@@ -95,6 +116,11 @@ impl HostConfig {
             .bitrate_kbps
             .clamp(*Self::BITRATE_RANGE.start(), *Self::BITRATE_RANGE.end());
         self
+    }
+
+    /// The chosen video bitrate in bit/s; `None` when set by the screen.
+    pub fn bitrate_bps(&self) -> Option<u32> {
+        (!self.automatic_bitrate).then_some(self.bitrate_kbps * 1000)
     }
 
     /// The rendezvous service to register with: the configured one, else
@@ -196,6 +222,22 @@ mod tests {
         assert!(old.lan_discovery, "a host.toml from before the setting");
         let off: HostConfig = toml::from_str("lan_discovery = false").unwrap();
         assert!(!off.lan_discovery);
+    }
+
+    #[test]
+    fn the_bitrate_follows_the_screen_unless_chosen() {
+        assert_eq!(HostConfig::default().bitrate_bps(), None);
+        // A host.toml from before the setting holds the old fixed 4000, as
+        // the settings window saved it, which now follows the screen too...
+        let old = HostConfig::parse("bitrate_kbps = 4000").unwrap();
+        assert_eq!(old.bitrate_bps(), None);
+        // ...or a bitrate chosen on purpose, say for a slow upload, which stays.
+        let old_chosen = HostConfig::parse("bitrate_kbps = 2000").unwrap();
+        assert_eq!(old_chosen.bitrate_bps(), Some(2_000_000));
+        let chosen = HostConfig::parse("bitrate_kbps = 8000\nautomatic_bitrate = false").unwrap();
+        assert_eq!(chosen.bitrate_bps(), Some(8_000_000));
+        let automatic = HostConfig::parse("bitrate_kbps = 8000\nautomatic_bitrate = true").unwrap();
+        assert_eq!(automatic.bitrate_bps(), None);
     }
 
     #[test]

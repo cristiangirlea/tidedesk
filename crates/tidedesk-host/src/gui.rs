@@ -438,11 +438,27 @@ impl HostApp {
                 ui.end_row();
 
                 ui.label("Quality");
-                ui.add(
-                    egui::Slider::new(&mut cfg.bitrate_kbps, HostConfig::BITRATE_RANGE)
-                        .suffix(" kbit/s")
-                        .logarithmic(true),
-                );
+                ui.horizontal(|ui| {
+                    ui.checkbox(&mut cfg.automatic_bitrate, "Automatic")
+                        .on_hover_text(
+                            "Sets the bitrate by the screen's size: about 6 Mbit/s at \
+                             1920x1080, 12 Mbit/s at 2560x1600, up to 20 Mbit/s.",
+                        );
+                    if !cfg.automatic_bitrate {
+                        ui.add(
+                            egui::Slider::new(&mut cfg.bitrate_kbps, HostConfig::BITRATE_RANGE)
+                                .suffix(" kbit/s")
+                                .logarithmic(true),
+                        );
+                    } else if let Some(d) = self.displays.iter().find(|d| d.index == cfg.display) {
+                        let size = ((d.rect.width as usize) & !1, (d.rect.height as usize) & !1);
+                        let bps = crate::video::automatic_bitrate(size);
+                        ui.label(format!(
+                            "{:.1} Mbit/s for this display",
+                            f64::from(bps) / 1e6
+                        ));
+                    }
+                });
                 ui.end_row();
             });
         ui.checkbox(&mut cfg.share_audio, "Share sound");
@@ -541,7 +557,7 @@ impl HostApp {
                 let mut video = state.video.lock().unwrap();
                 video.display = cfg.display;
                 video.fps = cfg.fps;
-                video.bitrate_bps = cfg.bitrate_kbps * 1000;
+                video.bitrate_bps = cfg.bitrate_bps();
             }
             state.audio.store(cfg.share_audio, Ordering::SeqCst);
             state.clipboard.store(cfg.allow_clipboard, Ordering::SeqCst);
