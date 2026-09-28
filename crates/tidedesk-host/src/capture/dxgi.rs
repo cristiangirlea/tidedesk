@@ -278,5 +278,21 @@ mod tests {
             device.cast::<ID3D11VideoDevice>().is_ok(),
             "no video support"
         );
+
+        // And on to an encoded picture every viewer decodes.
+        let settings = tidedesk_codec::Settings {
+            fps: 30,
+            bitrate_bps: 8_000_000,
+            motion: false,
+        };
+        let mut encoder = tidedesk_codec::Encoder::best(settings).unwrap();
+        let mut out = Vec::new();
+        let keyframe = encoder
+            .encode(capturer.image(), (width, height), 0, &mut out)
+            .unwrap();
+        assert!(keyframe);
+        let mut decoder = tidedesk_codec::Decoder::openh264().unwrap();
+        let picture = decoder.decode(&out).unwrap().expect("a picture");
+        assert_eq!(picture.dimensions(), (width, height));
     }
 }
