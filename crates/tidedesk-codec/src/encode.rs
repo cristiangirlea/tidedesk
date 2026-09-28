@@ -13,9 +13,12 @@ use openh264::{OpenH264API, Timestamp};
 use crate::{CHOICE_ENV, Choice, Implementation, choice};
 
 /// A picture to encode: BGRA pixels, row after row, or on Windows a BGRA
-/// Direct3D 11 texture, as screen capture hands it over. The graphics card's
-/// encoder takes a texture without it leaving the card; the others get its
-/// pixels copied back.
+/// (`DXGI_FORMAT_B8G8R8A8_UNORM`) Direct3D 11 texture, as screen capture hands
+/// it over. The graphics card's encoder takes a texture without it leaving the
+/// card; the others get its pixels copied back. For that, the texture's device
+/// must be made with `D3D11_CREATE_DEVICE_VIDEO_SUPPORT`, and the encoder
+/// turns on the device's multithread protection, as it uses the device from
+/// its own threads too.
 #[derive(Clone, Copy)]
 pub enum Image<'a> {
     Bgra(&'a [u8]),
@@ -171,7 +174,8 @@ impl Encoder {
         self.keyframe = true;
     }
 
-    /// Encodes one BGRA picture of `size` (even width and height) into `out`,
+    /// Encodes one picture, the top-left `size` of `image` (even width and
+    /// height), into `out`,
     /// which stays empty when the encoder skips the picture; whether it is a
     /// keyframe. Should the graphics card's encoder fail, Windows' software
     /// encoder takes over from this picture on, starting with a keyframe;
@@ -276,7 +280,7 @@ impl Encoder {
             *current = None;
             let made = match texture {
                 Some(texture) => Windows::on_texture_card(texture, size, settings).or_else(|e| {
-                    tracing::info!("the picture leaves the graphics card to be encoded: {e:#}");
+                    tracing::debug!("the picture leaves the graphics card to be encoded: {e:#}");
                     Windows::new(size, settings, hardware)
                 }),
                 None => Windows::new(size, settings, hardware),
@@ -410,8 +414,6 @@ mod tests {
         Some((size, [y, u, v]))
     }
 
-    /// Encodes `frames` pictures, forcing a keyframe at `force` if given, and
-    /// checks what every viewer needs from the result.
     /// How check_encoder hands pictures over.
     #[derive(Clone, Copy)]
     enum Input<'a> {
@@ -427,6 +429,8 @@ mod tests {
         check_encoder_with(Input::Pixels, encoder, sizes, force)
     }
 
+    /// Encodes `frames` pictures, forcing a keyframe at `force` if given, and
+    /// checks what every viewer needs from the result.
     fn check_encoder_with(
         input: Input<'_>,
         mut encoder: Encoder,

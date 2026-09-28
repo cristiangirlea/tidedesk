@@ -20,7 +20,7 @@ use windows::Win32::Graphics::Direct3D11::{
 };
 use windows::Win32::Graphics::Dxgi::Common::{
     DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709, DXGI_COLOR_SPACE_YCBCR_STUDIO_G22_LEFT_P601,
-    DXGI_FORMAT_NV12, DXGI_RATIONAL, DXGI_SAMPLE_DESC,
+    DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_FORMAT_NV12, DXGI_RATIONAL, DXGI_SAMPLE_DESC,
 };
 use windows::core::Interface;
 
@@ -157,8 +157,7 @@ impl Converter {
     /// The top-left `size` of `bgra` as NV12, in a texture the converter
     /// reuses: done with once the encoder has returned its picture.
     pub(crate) fn convert(&mut self, bgra: &ID3D11Texture2D) -> Result<&ID3D11Texture2D> {
-        let mut desc = D3D11_TEXTURE2D_DESC::default();
-        unsafe { bgra.GetDesc(&mut desc) };
+        let desc = bgra_description(bgra)?;
         let (width, height) = (self.size.0 as u32, self.size.1 as u32);
         if desc.Width < width || desc.Height < height {
             bail!(
@@ -264,6 +263,16 @@ impl Converter {
     }
 }
 
+/// A texture's description, if it holds BGRA pixels, the only kind read here.
+fn bgra_description(texture: &ID3D11Texture2D) -> Result<D3D11_TEXTURE2D_DESC> {
+    let mut desc = D3D11_TEXTURE2D_DESC::default();
+    unsafe { texture.GetDesc(&mut desc) };
+    if desc.Format != DXGI_FORMAT_B8G8R8A8_UNORM {
+        bail!("the picture is not BGRA but DXGI format {}", desc.Format.0);
+    }
+    Ok(desc)
+}
+
 /// Copies textures back into system memory.
 #[derive(Default)]
 pub(crate) struct Readback {
@@ -281,8 +290,7 @@ impl Readback {
         (width, height): (usize, usize),
     ) -> Result<&[u8]> {
         let device = unsafe { bgra.GetDevice() }?;
-        let mut desc = D3D11_TEXTURE2D_DESC::default();
-        unsafe { bgra.GetDesc(&mut desc) };
+        let desc = bgra_description(bgra)?;
         if width > desc.Width as usize || height > desc.Height as usize {
             bail!(
                 "a {width}x{height} picture from a {}x{} texture",
@@ -588,6 +596,18 @@ pub(crate) mod tests {
             let quality = psnr(card, cpu);
             assert!(quality > 25.0, "{plane}: {quality:.1} dB");
         }
+    }
+
+    #[test]
+    fn only_bgra_textures_are_taken() {
+        let Some(device) = device() else {
+            return;
+        };
+        let nv12 = texture(&device, &desc(DXGI_FORMAT_NV12, (64, 32), false), None);
+        let error = Readback::default().read(&nv12, (64, 32)).unwrap_err();
+        assert!(error.to_string().contains("not BGRA"), "{error:#}");
+        let mut converter = Converter::new(&device, (64, 32)).unwrap();
+        assert!(converter.convert(&nv12).is_err());
     }
 
     #[test]

@@ -339,6 +339,14 @@ fn refuse(size: (usize, usize)) {
 
 static REFUSED: Mutex<Vec<(usize, usize)>> = Mutex::new(Vec::new());
 
+/// Cards (by LUID) that turned down encoding their own pictures of a size for
+/// good, not to be tried again in this process.
+static NOT_ON_CARD: Mutex<Vec<(u64, (usize, usize))>> = Mutex::new(Vec::new());
+
+fn luid_key(luid: LUID) -> u64 {
+    (u64::from(luid.HighPart as u32) << 32) | u64::from(luid.LowPart)
+}
+
 fn friendly_name(activate: &IMFActivate) -> String {
     let mut name = [0u16; 128];
     let mut length = 0;
@@ -528,11 +536,15 @@ impl Encoder {
             unsafe { device.cast::<IDXGIDevice>()?.GetAdapter() }?.cast()?;
         let description = unsafe { adapter.GetDesc1() }?;
         let name_of_card = card_name(&description);
+        let key = (luid_key(description.AdapterLuid), size);
+        if NOT_ON_CARD.lock().is_ok_and(|cards| cards.contains(&key)) {
+            bail!("{name_of_card} did not take its own pictures of {width}x{height} before");
+        }
         let mut encoders = hardware_encoders(Some(description.AdapterLuid))?;
         if encoders.is_empty() {
             encoders = hardware_encoders(None)?;
         }
-        let (mut tried, mut refused_here) = (Vec::new(), Vec::new());
+        let (mut tried, mut refused_here, mut lasting_only) = (Vec::new(), Vec::new(), true);
         for activate in encoders {
             let name = friendly_name(&activate);
             if !fits(encoder_vendor(&activate), description.VendorId)
@@ -552,10 +564,14 @@ impl Encoder {
                 }
                 Err(e) => {
                     let _ = unsafe { activate.ShutdownObject() };
+                    lasting_only &= lasting(&e);
                     tried.push(format!("{name}: {e:#}"));
                     refused_here.push(name);
                 }
             }
+        }
+        if lasting_only && let Ok(mut cards) = NOT_ON_CARD.lock() {
+            cards.push(key);
         }
         if tried.is_empty() {
             bail!("{name_of_card} has no H.264 encoder of its own vendor");
