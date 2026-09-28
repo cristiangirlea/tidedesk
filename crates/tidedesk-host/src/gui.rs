@@ -5,6 +5,7 @@
 //! window needs a few MB. egui only repaints on input or when the server reports
 //! a change, so an open window costs nothing while nothing happens.
 
+use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
@@ -71,7 +72,8 @@ pub struct HostApp {
     window_hooked: bool,
 }
 
-struct Address {
+pub(crate) struct Address {
+    pub(crate) ip: Ipv4Addr,
     text: String,
     adapter: String,
     /// VM, container and WSL adapters: rarely what a viewer should use.
@@ -79,7 +81,7 @@ struct Address {
 }
 
 /// Local IPv4 addresses a viewer could use, real network adapters first.
-fn local_addresses(port: u16) -> Vec<Address> {
+pub(crate) fn local_addresses(port: u16) -> Vec<Address> {
     const VIRTUAL: &[&str] = &[
         "vethernet",
         "vmware",
@@ -94,11 +96,14 @@ fn local_addresses(port: u16) -> Vec<Address> {
     let mut found: Vec<Address> = if_addrs::get_if_addrs()
         .unwrap_or_default()
         .into_iter()
-        .filter(|i| !i.is_loopback() && i.ip().is_ipv4())
-        .map(|i| {
-            let ip = i.ip();
+        .filter(|i| !i.is_loopback())
+        .filter_map(|i| {
+            let IpAddr::V4(ip) = i.ip() else {
+                return None;
+            };
             let lower = i.name.to_lowercase();
-            Address {
+            Some(Address {
+                ip,
                 text: if port == tidedesk_core::DEFAULT_PORT {
                     ip.to_string()
                 } else {
@@ -106,7 +111,7 @@ fn local_addresses(port: u16) -> Vec<Address> {
                 },
                 virtual_adapter: VIRTUAL.iter().any(|v| lower.contains(v)),
                 adapter: i.name,
-            }
+            })
         })
         .collect();
     found.sort_by(|a, b| (a.virtual_adapter, &a.text).cmp(&(b.virtual_adapter, &b.text)));
@@ -243,7 +248,20 @@ impl HostApp {
                 if ui.small_button("New code").clicked() {
                     match crate::load_code(true) {
                         Ok(new) => {
-                            *state.code.lock().unwrap() = new;
+                            *state.code.lock().unwrap() = new.clone();
+                            // The local addresses sealed with the old code open
+                            // with it: register again with a new seal.
+                            if let Some(service) = self.info.config.rendezvous_service() {
+                                let port = self.info.port;
+                                let credentials = crate::registration_credentials(
+                                    &self.info.identity,
+                                    &new,
+                                    port,
+                                );
+                                self.info
+                                    .agent
+                                    .start_rendezvous(service.to_string(), credentials);
+                            }
                             self.notice =
                                 Some("New code saved. The old one no longer works.".into());
                         }
@@ -570,7 +588,12 @@ impl HostApp {
             {
                 match cfg.rendezvous_service() {
                     Some(service) => {
-                        let credentials = self.info.identity.clone();
+                        let code = state.code.lock().unwrap().clone();
+                        let credentials = crate::registration_credentials(
+                            &self.info.identity,
+                            &code,
+                            self.info.port,
+                        );
                         self.info
                             .agent
                             .start_rendezvous(service.to_string(), credentials);

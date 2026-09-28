@@ -42,7 +42,8 @@ Settings, Internet.
   carrier-grade NAT: the router uses a new port for every destination, so no direct
   path can be opened. TideDesk detects this and says so. Use option 2 or 4 instead.
 - **Same network:** if both computers have the same internet address, connect to one
-  of the host's local addresses (shown in its window) without ticking the box.
+  of the host's local addresses (shown in its window) without ticking the box, or
+  connect by device ID (below), which tries the host's local addresses itself.
 - IPv4 only. Someone must be at the host window to press Open: a host started with
   `--headless` cannot open a path yet. A way to connect by a device ID without that
   step is planned.
@@ -79,8 +80,12 @@ contacts the service when it connects by ID.
 
 What a service sees while a host is registered: the host's device ID and the public
 address and port it registered from, and which public address looked up which ID.
-It never sees access codes, screens, audio, input, clipboard or host names, and
-nothing once the two computers are connected. It cannot impersonate a host: the
+It also holds the host's local addresses, sealed with the access code so that it
+cannot read them, and passes them only to a viewer at the host's own public address:
+that viewer opens them with the code and connects directly, since two computers
+behind one router rarely reach each other through it. It never sees access codes,
+screens, audio, input, clipboard or host names, and nothing once the two computers
+are connected. It cannot impersonate a host: the
 viewer checks that the host's certificate hashes to the device ID it asked for, and
 the access code never passes through the service. A broken or hostile service can at
 most send a viewer to a wrong address, where that check fails. See the privacy notes

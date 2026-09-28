@@ -303,7 +303,8 @@ fn run(program: &str, argv: Vec<OsString>) -> Result<()> {
                 print_progress(step)
             }
         };
-        let dialer = connect::Dialer::new(&opts.host, &opts.route, report).await?;
+        let dialer =
+            connect::Dialer::new(&opts.host, &opts.route, Some(&opts.code), report).await?;
         // The launcher probes directly reachable hosts itself.
         if let Some(answers) = answers
             && opts.route != connect::Route::Direct

@@ -68,6 +68,10 @@ pub struct Introduction {
     pub reflexive: SocketAddr,
     /// This computer's NAT, from the service's two ports.
     pub nat: NatKind,
+    /// The host's local addresses, sealed with its access code (see
+    /// [`super::candidates`]); empty unless the host registered some and
+    /// this computer is at the host's internet address.
+    pub candidates: Vec<u8>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -171,7 +175,7 @@ impl Lookup {
             } if now >= *next => {
                 *tries += 1;
                 *next = now + FIRST_RETRY;
-                let lookup = ToServer::Lookup {
+                let lookup = ToServer::LookupWithCandidates {
                     device_id: self.device_id,
                     nonce: self.nonce,
                     challenge: *challenge,
@@ -208,26 +212,18 @@ impl Lookup {
                     tries: 0,
                 };
             }
+            // A service from before sealed addresses answers without them.
             FromServer::Introduced {
                 nonce,
                 session,
                 peer,
-            } if self.answers(&nonce) => {
-                let Some(reflexive) = self.reflexive else {
-                    return;
-                };
-                let nat = match self.alt_reflexive {
-                    Some(other) if other == reflexive => NatKind::EndpointIndependent,
-                    Some(_) => NatKind::Symmetric,
-                    None => NatKind::Unknown,
-                };
-                self.outcome = Some(LookupOutcome::Introduced(Introduction {
-                    session,
-                    peer,
-                    reflexive,
-                    nat,
-                }));
-            }
+            } if self.answers(&nonce) => self.introduced(session, peer, Vec::new()),
+            FromServer::IntroducedWithCandidates {
+                nonce,
+                session,
+                peer,
+                candidates,
+            } if self.answers(&nonce) => self.introduced(session, peer, candidates),
             FromServer::NotFound { nonce } if self.answers(&nonce) => {
                 self.outcome = Some(LookupOutcome::NotFound);
             }
@@ -257,6 +253,24 @@ impl Lookup {
 
     pub fn outcome(&self) -> Option<&LookupOutcome> {
         self.outcome.as_ref()
+    }
+
+    fn introduced(&mut self, session: Session, peer: SocketAddr, candidates: Vec<u8>) {
+        let Some(reflexive) = self.reflexive else {
+            return;
+        };
+        let nat = match self.alt_reflexive {
+            Some(other) if other == reflexive => NatKind::EndpointIndependent,
+            Some(_) => NatKind::Symmetric,
+            None => NatKind::Unknown,
+        };
+        self.outcome = Some(LookupOutcome::Introduced(Introduction {
+            session,
+            peer,
+            reflexive,
+            nat,
+            candidates,
+        }));
     }
 
     fn new_round(&mut self) {
@@ -292,12 +306,16 @@ pub enum Event {
     Incoming { session: Session, peer: SocketAddr },
 }
 
-/// The key material a registration needs.
+/// The key material a registration needs, and what it carries.
 #[derive(Clone)]
 pub struct Credentials {
     pub device_id: DeviceId,
     pub cert_der: Vec<u8>,
     pub pkcs8: Vec<u8>,
+    /// This host's local addresses sealed with its access code (see
+    /// [`super::candidates`]), for viewers on the same network; empty for
+    /// none. Register again with new ones when they or the code change.
+    pub candidates: Vec<u8>,
 }
 
 /// One host's registration with one service.
@@ -530,14 +548,26 @@ impl Registration {
             device_id,
             cert_der,
             pkcs8,
+            candidates,
         } = &*self.credentials;
         let signature = sign_registration(pkcs8, device_id, challenge).ok()?;
-        Some(encode(&ToServer::Register {
-            device_id: *device_id,
-            cert_der: cert_der.clone(),
-            challenge: *challenge,
-            signature,
-        }))
+        let register = if candidates.is_empty() {
+            ToServer::Register {
+                device_id: *device_id,
+                cert_der: cert_der.clone(),
+                challenge: *challenge,
+                signature,
+            }
+        } else {
+            ToServer::RegisterWithCandidates {
+                device_id: *device_id,
+                cert_der: cert_der.clone(),
+                challenge: *challenge,
+                signature,
+                candidates: candidates.clone(),
+            }
+        };
+        Some(encode(&register))
     }
 
     /// Updates the status of a registered host with what is known.
@@ -575,6 +605,7 @@ mod tests {
             device_id: DeviceId::from_cert(&cert_der),
             cert_der,
             pkcs8: generated.signing_key.serialize_der(),
+            candidates: Vec::new(),
         })
     }
 
@@ -689,6 +720,38 @@ mod tests {
         };
         assert_eq!(r.status(), &expected);
         assert_eq!(r.next_deadline(), later + REFRESH_EVERY);
+    }
+
+    #[test]
+    fn registration_carries_sealed_local_addresses_when_it_has_them() {
+        let t0 = Instant::now();
+        let sealed = vec![7; 52];
+        let credentials = Arc::new(Credentials {
+            candidates: sealed.clone(),
+            ..(*credentials()).clone()
+        });
+        let mut r = Registration::new("s".into(), addr(SERVICE), credentials.clone(), t0);
+        let nonce = hello_nonce(&mut r, t0);
+        let (challenge, register) = challenged(&mut r, nonce, t0);
+        let ToServer::RegisterWithCandidates {
+            device_id,
+            cert_der,
+            challenge: signed,
+            signature,
+            candidates,
+        } = register
+        else {
+            panic!("expected RegisterWithCandidates, got {register:?}");
+        };
+        assert_eq!(
+            (device_id, signed, candidates),
+            (credentials.device_id, challenge, sealed)
+        );
+        assert!(verify_registration(
+            &cert_der, &device_id, &challenge, &signature
+        ));
+        register_answered(&mut r, &credentials, t0);
+        assert!(matches!(r.status(), RendezvousStatus::Registered { .. }));
     }
 
     #[test]
@@ -813,7 +876,7 @@ mod tests {
             asked,
             [(
                 addr(SERVICE),
-                ToServer::Lookup {
+                ToServer::LookupWithCandidates {
                     device_id: id,
                     nonce,
                     challenge: [4; 16]
@@ -840,9 +903,36 @@ mod tests {
             peer: addr(HOST),
             reflexive: addr(ME),
             nat: NatKind::Unknown,
+            candidates: Vec::new(),
         };
         assert_eq!(l.outcome(), Some(&LookupOutcome::Introduced(expected)));
         assert_eq!(l.next_deadline(), None);
+    }
+
+    #[test]
+    fn lookup_takes_the_sealed_local_addresses_an_introduction_carries() {
+        let t0 = Instant::now();
+        let id = DeviceId([1; 8]);
+        let mut l = Lookup::new("s".into(), addr(SERVICE), id, t0);
+        let nonce = lookup_hello_nonce(&mut l, t0);
+        let challenge = FromServer::Challenge {
+            nonce,
+            challenge: [4; 16],
+            reflexive: addr(ME),
+        };
+        l.on_datagram(addr(SERVICE), &encode(&challenge), t0);
+        l.poll(t0);
+        let introduced = FromServer::IntroducedWithCandidates {
+            nonce,
+            session: [5; 8],
+            peer: addr(HOST),
+            candidates: vec![1, 2, 3],
+        };
+        l.on_datagram(addr(SERVICE), &encode(&introduced), t0);
+        assert!(matches!(
+            l.outcome(),
+            Some(LookupOutcome::Introduced(i)) if i.peer == addr(HOST) && i.candidates == [1, 2, 3]
+        ));
     }
 
     #[test]

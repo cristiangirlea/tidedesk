@@ -8,6 +8,10 @@
 //!
 //! Every datagram is `00 'T' 'D' 'R'`, a version byte, then a postcard-encoded
 //! message, at most [`MAX_DATAGRAM`] bytes in all.
+//!
+//! Hosts and viewers already in use encode each message by its variant's
+//! position, so a message is never changed or reordered: new ones go at the
+//! end of their enum, and the service keeps answering the earlier ones.
 
 use std::fmt;
 use std::net::SocketAddr;
@@ -35,6 +39,11 @@ pub const DEFAULT_PORT: u16 = 47900;
 /// Padding every Hello carries, so that it is never smaller than its answer
 /// and a forged source address cannot use the service to amplify traffic.
 pub const HELLO_PADDING: usize = 48;
+
+/// Most bytes of sealed local addresses a registration may carry
+/// ([`ToServer::RegisterWithCandidates`]); the service keeps none of a
+/// longer list. Enough for four addresses under an authenticated cipher.
+pub const MAX_CANDIDATES_LEN: usize = 96;
 
 pub type Nonce = [u8; 8];
 pub type Challenge = [u8; 16];
@@ -146,6 +155,25 @@ pub enum ToServer {
         nonce: Nonce,
         challenge: Challenge,
     },
+    /// [`ToServer::Register`], plus the host's local addresses sealed with
+    /// its access code (see `tidedesk_core::nat::candidates`). The service
+    /// stores them unread, at most [`MAX_CANDIDATES_LEN`] bytes, and passes
+    /// them only to a viewer at the same public address as the host, which
+    /// is where they can be reached.
+    RegisterWithCandidates {
+        device_id: DeviceId,
+        cert_der: Vec<u8>,
+        challenge: Challenge,
+        signature: Vec<u8>,
+        candidates: Vec<u8>,
+    },
+    /// [`ToServer::Lookup`] from a viewer that can open sealed local
+    /// addresses: answered with [`FromServer::IntroducedWithCandidates`].
+    LookupWithCandidates {
+        device_id: DeviceId,
+        nonce: Nonce,
+        challenge: Challenge,
+    },
 }
 
 impl ToServer {
@@ -189,6 +217,17 @@ pub enum FromServer {
     },
     Error {
         code: ErrorCode,
+    },
+    /// [`FromServer::Introduced`], plus the host's sealed local addresses:
+    /// empty unless the host registered some and the viewer is at the host's
+    /// public address. Larger than the lookup it answers, which is safe: a
+    /// lookup returns a challenge sent to the sender's own address, so a
+    /// forged source gets no introduction at all.
+    IntroducedWithCandidates {
+        nonce: Nonce,
+        session: Session,
+        peer: SocketAddr,
+        candidates: Vec<u8>,
     },
 }
 
@@ -483,5 +522,103 @@ mod tests {
         assert_eq!(decode::<FromServer>(&encode(&reply)), Some(reply));
         let oversized = [MAGIC.as_slice(), &[VERSION], &[0; MAX_DATAGRAM]].concat();
         assert_eq!(decode::<ToServer>(&oversized), None);
+    }
+
+    /// Hosts and viewers already in use encode each message by its variant's
+    /// position, so a new message only ever goes at the end of its enum.
+    #[test]
+    fn earlier_messages_keep_their_encoding_when_variants_are_added() {
+        let id = DeviceId([1; 8]);
+        let peer: SocketAddr = "203.0.113.5:40000".parse().unwrap();
+        let variant = |datagram: Vec<u8>| datagram[5];
+        assert_eq!(variant(encode(&ToServer::hello([0; 8]))), 0);
+        let register = ToServer::Register {
+            device_id: id,
+            cert_der: vec![1],
+            challenge: [0; 16],
+            signature: vec![2],
+        };
+        assert_eq!(variant(encode(&register)), 1);
+        let refresh = ToServer::Refresh {
+            device_id: id,
+            token: [0; 16],
+        };
+        assert_eq!(variant(encode(&refresh)), 2);
+        let lookup = ToServer::Lookup {
+            device_id: id,
+            nonce: [0; 8],
+            challenge: [0; 16],
+        };
+        assert_eq!(variant(encode(&lookup)), 3);
+        let with_candidates = ToServer::RegisterWithCandidates {
+            device_id: id,
+            cert_der: vec![1],
+            challenge: [0; 16],
+            signature: vec![2],
+            candidates: vec![3],
+        };
+        assert_eq!(variant(encode(&with_candidates)), 4);
+        let lookup_with_candidates = ToServer::LookupWithCandidates {
+            device_id: id,
+            nonce: [0; 8],
+            challenge: [0; 16],
+        };
+        assert_eq!(variant(encode(&lookup_with_candidates)), 5);
+
+        let introduced = FromServer::Introduced {
+            nonce: [0; 8],
+            session: [0; 8],
+            peer,
+        };
+        assert_eq!(variant(encode(&introduced)), 2);
+        let incoming = FromServer::Incoming {
+            session: [0; 8],
+            peer,
+        };
+        assert_eq!(variant(encode(&incoming)), 3);
+        assert_eq!(variant(encode(&FromServer::NotFound { nonce: [0; 8] })), 4);
+        let error = FromServer::Error {
+            code: ErrorCode::Full,
+        };
+        assert_eq!(variant(encode(&error)), 5);
+        let introduced_with_candidates = FromServer::IntroducedWithCandidates {
+            nonce: [0; 8],
+            session: [0; 8],
+            peer,
+            candidates: vec![3],
+        };
+        assert_eq!(variant(encode(&introduced_with_candidates)), 6);
+    }
+
+    #[test]
+    fn candidates_travel_opaquely_and_fit_in_one_datagram() {
+        let (cert, pkcs8, _) = host_cert();
+        let id = DeviceId::from_cert(&cert);
+        let peer: SocketAddr = "203.0.113.5:40000".parse().unwrap();
+        let candidates = vec![0xAB; MAX_CANDIDATES_LEN];
+        let register = ToServer::RegisterWithCandidates {
+            device_id: id,
+            signature: sign_registration(&pkcs8, &id, &[1; 16]).unwrap(),
+            challenge: [1; 16],
+            cert_der: cert,
+            candidates: candidates.clone(),
+        };
+        let datagram = encode(&register);
+        assert!(datagram.len() <= MAX_DATAGRAM, "{} bytes", datagram.len());
+        assert_eq!(decode::<ToServer>(&datagram), Some(register));
+
+        let lookup = ToServer::LookupWithCandidates {
+            device_id: id,
+            nonce: [2; 8],
+            challenge: [1; 16],
+        };
+        assert_eq!(decode::<ToServer>(&encode(&lookup)), Some(lookup));
+        let introduced = FromServer::IntroducedWithCandidates {
+            nonce: [2; 8],
+            session: [3; 8],
+            peer,
+            candidates,
+        };
+        assert_eq!(decode::<FromServer>(&encode(&introduced)), Some(introduced));
     }
 }
