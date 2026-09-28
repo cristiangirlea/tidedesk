@@ -207,7 +207,10 @@ service's own CI against it (`TIDEDESK_TEST_SERVICE=ip:port`).
   secret token, so a forged source address gains nothing. Each address is rate-limited.
 - **Compatibility.** Messages are encoded by their position in an enum, so new ones
   are appended and none is changed: hosts and viewers from before the sealed
-  addresses keep registering and looking up, and get answers without them.
+  addresses keep registering and looking up, and get answers without them. The
+  other way round, a host or viewer whose new message goes unanswered for a round
+  sends the earlier one on the next, so a service from before still serves it,
+  without sealed addresses.
 
 ## Device IDs on the local network
 

@@ -387,7 +387,17 @@ async fn through_service(
         bail!(symmetric_nat());
     }
     let peer = introduction.peer;
-    let local = local_addresses_to_try(&introduction, device_id, code);
+    // Opening the seal derives a key from the code, which takes a while:
+    // off the runtime's threads, so the search of this network goes on.
+    let local = {
+        let introduction = introduction.clone();
+        let code = code.map(str::to_owned);
+        tokio::task::spawn_blocking(move || {
+            local_addresses_to_try(&introduction, device_id, code.as_deref())
+        })
+        .await
+        .unwrap_or_default()
+    };
     if !local.is_empty() {
         progress(Progress::Status(format!(
             "{device_id} has this computer's internet address; trying the local addresses it \

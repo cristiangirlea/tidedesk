@@ -36,6 +36,9 @@ pub struct HostInfo {
     pub agent: Arc<Agent>,
     /// For registering with a rendezvous service set in Settings.
     pub identity: Arc<Credentials>,
+    /// The rendezvous service this run registers with, chosen at start (the
+    /// command line may override Settings); none while turned off.
+    pub service: Option<String>,
     /// Runs the agent's work started from the window.
     pub runtime: tokio::runtime::Handle,
     pub config: HostConfig,
@@ -251,16 +254,14 @@ impl HostApp {
                             *state.code.lock().unwrap() = new.clone();
                             // The local addresses sealed with the old code open
                             // with it: register again with a new seal.
-                            if let Some(service) = self.info.config.rendezvous_service() {
+                            if let Some(service) = self.info.service.clone() {
                                 let port = self.info.port;
                                 let credentials = crate::registration_credentials(
                                     &self.info.identity,
                                     &new,
                                     port,
                                 );
-                                self.info
-                                    .agent
-                                    .start_rendezvous(service.to_string(), credentials);
+                                self.info.agent.start_rendezvous(service, credentials);
                             }
                             self.notice =
                                 Some("New code saved. The old one no longer works.".into());
@@ -597,8 +598,12 @@ impl HostApp {
                         self.info
                             .agent
                             .start_rendezvous(service.to_string(), credentials);
+                        self.info.service = Some(service.to_string());
                     }
-                    None => self.info.agent.stop_rendezvous(),
+                    None => {
+                        self.info.agent.stop_rendezvous();
+                        self.info.service = None;
+                    }
                 }
             }
             if cfg.lan_discovery != before.lan_discovery {

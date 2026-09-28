@@ -244,25 +244,27 @@ pub fn start(options: &StartOptions) -> Result<Started> {
         .worker_threads(2)
         .enable_all()
         .build()?;
-    let (endpoint, agent) = {
+    let (endpoint, agent, listen) = {
         let _guard = runtime.enter();
         let (socket, side_channel) =
             SharedSocket::bind(listen).with_context(|| format!("listening on {listen}"))?;
+        // With port 0 asked for, the port the system chose.
+        let bound = socket.local_addr().unwrap_or(listen);
         let agent = Agent::spawn(socket.clone(), side_channel)?;
-        (net::server_endpoint_on(socket, &identity)?, agent)
+        (net::server_endpoint_on(socket, &identity)?, agent, bound)
     };
     if config.discover_public_address {
         agent.start_refresh(config.effective_stun_servers(), STUN_REFRESH);
     }
+    let credentials = identity.rendezvous_credentials();
     let rendezvous = rendezvous_choice(
         options.rendezvous.as_deref(),
         options.no_rendezvous,
         config.rendezvous_service(),
     );
-    if let Some(service) = rendezvous {
-        let credentials =
-            registration_credentials(&identity.rendezvous_credentials(), &code, listen.port());
-        agent.start_rendezvous(service, credentials);
+    if let Some(service) = &rendezvous {
+        let sealed = registration_credentials(&credentials, &code, listen.port());
+        agent.start_rendezvous(service.clone(), sealed);
     }
     // Needs no service: viewers on this network ask the network itself.
     if config.lan_discovery {
@@ -280,7 +282,8 @@ pub fn start(options: &StartOptions) -> Result<Started> {
     let info = gui::HostInfo {
         state,
         agent,
-        identity: identity.rendezvous_credentials(),
+        identity: credentials,
+        service: rendezvous,
         runtime: runtime.handle().clone(),
         start_hidden: options.tray || config.start_in_tray,
         config,

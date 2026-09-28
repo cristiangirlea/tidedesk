@@ -100,6 +100,9 @@ pub struct Lookup {
     phase: LookupPhase,
     reflexive: Option<SocketAddr>,
     alt_reflexive: Option<SocketAddr>,
+    /// Ask with the message from before sealed addresses this round: the
+    /// last round's went unanswered, as a service from before ignores it.
+    plain: bool,
     outcome: Option<LookupOutcome>,
 }
 
@@ -136,6 +139,7 @@ impl Lookup {
             },
             reflexive: None,
             alt_reflexive: None,
+            plain: false,
             outcome: None,
         }
     }
@@ -160,7 +164,9 @@ impl Lookup {
                 vec![(self.main, hello.clone()), (self.alt, hello)]
             }
             LookupPhase::Asking { tries, .. } if *tries >= REGISTER_TRIES => {
-                // The challenge may have gone stale: ask for a new one.
+                // The challenge may have gone stale: ask for a new one, the
+                // other way, in case the service did not understand this one.
+                self.plain = !self.plain;
                 self.new_round();
                 self.phase = LookupPhase::Hello {
                     next: now,
@@ -175,10 +181,19 @@ impl Lookup {
             } if now >= *next => {
                 *tries += 1;
                 *next = now + FIRST_RETRY;
-                let lookup = ToServer::LookupWithCandidates {
-                    device_id: self.device_id,
-                    nonce: self.nonce,
-                    challenge: *challenge,
+                let (device_id, nonce, challenge) = (self.device_id, self.nonce, *challenge);
+                let lookup = if self.plain {
+                    ToServer::Lookup {
+                        device_id,
+                        nonce,
+                        challenge,
+                    }
+                } else {
+                    ToServer::LookupWithCandidates {
+                        device_id,
+                        nonce,
+                        challenge,
+                    }
                 };
                 vec![(self.main, encode(&lookup))]
             }
@@ -335,6 +350,9 @@ pub struct Registration {
     status: RendezvousStatus,
     /// Since when nothing has been heard from the service.
     silent_since: Instant,
+    /// Register with the message from before sealed addresses this round:
+    /// the last round's went unanswered, as a service from before ignores it.
+    plain: bool,
 }
 
 enum Phase {
@@ -377,6 +395,7 @@ impl Registration {
             alt_reflexive: None,
             status: RendezvousStatus::Connecting,
             silent_since: now,
+            plain: false,
         }
     }
 
@@ -398,6 +417,9 @@ impl Registration {
                 vec![(self.main, hello.clone()), (self.alt, hello)]
             }
             Phase::Registering { tries, .. } if *tries >= REGISTER_TRIES => {
+                // Unanswered: try the other message next, in case the
+                // service did not understand this one.
+                self.plain = !self.plain;
                 self.restart(now);
                 self.poll(now)
             }
@@ -492,6 +514,8 @@ impl Registration {
                     next: now + REFRESH_EVERY,
                     missed: 0,
                 };
+                // The next registration, whenever, starts with sealed addresses.
+                self.plain = false;
                 self.refresh_status();
             }
             FromServer::Error { code } => match code {
@@ -551,7 +575,7 @@ impl Registration {
             candidates,
         } = &*self.credentials;
         let signature = sign_registration(pkcs8, device_id, challenge).ok()?;
-        let register = if candidates.is_empty() {
+        let register = if self.plain || candidates.is_empty() {
             ToServer::Register {
                 device_id: *device_id,
                 cert_der: cert_der.clone(),
@@ -755,6 +779,49 @@ mod tests {
     }
 
     #[test]
+    fn registration_falls_back_to_a_plain_register_when_candidates_go_unanswered() {
+        let t0 = Instant::now();
+        let credentials = Arc::new(Credentials {
+            candidates: vec![7; 52],
+            ..(*credentials()).clone()
+        });
+        let mut r = Registration::new("s".into(), addr(SERVICE), credentials.clone(), t0);
+        let nonce = hello_nonce(&mut r, t0);
+        let (_, first) = challenged(&mut r, nonce, t0);
+        assert!(matches!(first, ToServer::RegisterWithCandidates { .. }));
+        let mut now = t0 + FIRST_RETRY;
+        for _ in 1..REGISTER_TRIES {
+            let again = sent(&r.poll(now));
+            assert!(
+                matches!(again[..], [(_, ToServer::RegisterWithCandidates { .. })]),
+                "{again:?}"
+            );
+            now += FIRST_RETRY;
+        }
+
+        // A service from before sealed addresses never answers that:
+        // register the old way.
+        let nonce = hello_nonce(&mut r, now);
+        let (_, plain) = challenged(&mut r, nonce, now);
+        assert!(matches!(plain, ToServer::Register { .. }), "{plain:?}");
+        register_answered(&mut r, &credentials, now);
+        assert!(matches!(r.status(), RendezvousStatus::Registered { .. }));
+
+        // Registering again later (the service forgot this host) starts
+        // with the sealed addresses again.
+        let forgot = FromServer::Error {
+            code: ErrorCode::NotRegistered,
+        };
+        from_service(&mut r, &forgot, now);
+        let nonce = hello_nonce(&mut r, now);
+        let (_, again) = challenged(&mut r, nonce, now);
+        assert!(
+            matches!(again, ToServer::RegisterWithCandidates { .. }),
+            "{again:?}"
+        );
+    }
+
+    #[test]
     fn client_reregisters_after_three_missed_refreshes() {
         let t0 = Instant::now();
         let credentials = credentials();
@@ -932,6 +999,57 @@ mod tests {
         assert!(matches!(
             l.outcome(),
             Some(LookupOutcome::Introduced(i)) if i.peer == addr(HOST) && i.candidates == [1, 2, 3]
+        ));
+    }
+
+    #[test]
+    fn lookup_falls_back_to_a_plain_lookup_when_the_first_asks_go_unanswered() {
+        // A service from before sealed addresses ignores LookupWithCandidates.
+        let t0 = Instant::now();
+        let id = DeviceId([1; 8]);
+        let mut l = Lookup::new("s".into(), addr(SERVICE), id, t0);
+        let nonce = lookup_hello_nonce(&mut l, t0);
+        let challenge = |nonce| FromServer::Challenge {
+            nonce,
+            challenge: [4; 16],
+            reflexive: addr(ME),
+        };
+        l.on_datagram(addr(SERVICE), &encode(&challenge(nonce)), t0);
+        let mut now = t0;
+        for _ in 0..REGISTER_TRIES {
+            let asked = sent(&l.poll(now));
+            assert!(
+                matches!(asked[..], [(_, ToServer::LookupWithCandidates { .. })]),
+                "{asked:?}"
+            );
+            now += FIRST_RETRY;
+        }
+
+        // Nothing came back: a new round, asking the old way.
+        let second = lookup_hello_nonce(&mut l, now);
+        assert_ne!(second, nonce);
+        l.on_datagram(addr(SERVICE), &encode(&challenge(second)), now);
+        let asked = sent(&l.poll(now));
+        assert_eq!(
+            asked,
+            [(
+                addr(SERVICE),
+                ToServer::Lookup {
+                    device_id: id,
+                    nonce: second,
+                    challenge: [4; 16]
+                }
+            )]
+        );
+        let introduced = FromServer::Introduced {
+            nonce: second,
+            session: [5; 8],
+            peer: addr(HOST),
+        };
+        l.on_datagram(addr(SERVICE), &encode(&introduced), now);
+        assert!(matches!(
+            l.outcome(),
+            Some(LookupOutcome::Introduced(i)) if i.peer == addr(HOST) && i.candidates.is_empty()
         ));
     }
 
