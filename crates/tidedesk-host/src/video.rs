@@ -164,15 +164,15 @@ fn run(
         };
 
         let work_start = Instant::now();
-        let frame = capturer.frame();
-        let (w, h) = (frame.width, frame.height);
+        let (w, h) = capturer.size();
         captured = true;
 
         if control.keyframe.swap(false, Ordering::Relaxed) {
             encoder.force_keyframe();
         }
         let capture_us = epoch.elapsed().as_micros() as u64;
-        let keyframe = encoder.encode(&frame.bgra, (w, h), capture_us / 1000, &mut bitstream)?;
+        let keyframe =
+            encoder.encode(capturer.image(), (w, h), capture_us / 1000, &mut bitstream)?;
         pending = false;
         next_due = next_due.max(now) + interval;
 
@@ -211,8 +211,9 @@ mod tests {
     /// desktop. Switching must also work when the captured desktop is static.
     #[tokio::test]
     async fn idle_session_applies_boost_and_restores_desktop_without_reconnecting() {
+        /// A still desktop in BGRA pixels.
         struct StaticCapture {
-            frame: capture::Frame,
+            bgra: Vec<u8>,
             first: bool,
         }
         impl capture::Capturer for StaticCapture {
@@ -223,8 +224,11 @@ mod tests {
                 std::thread::sleep(timeout);
                 Ok(false)
             }
-            fn frame(&self) -> &capture::Frame {
-                &self.frame
+            fn image(&self) -> tidedesk_codec::Image<'_> {
+                (&self.bgra).into()
+            }
+            fn size(&self) -> (usize, usize) {
+                (256, 144)
             }
             fn rect(&self) -> DisplayRect {
                 DisplayRect {
@@ -249,11 +253,7 @@ mod tests {
         let worker = std::thread::spawn(move || {
             run(
                 Box::new(StaticCapture {
-                    frame: capture::Frame {
-                        width: 256,
-                        height: 144,
-                        bgra: vec![90; 256 * 144 * 4],
-                    },
+                    bgra: vec![90; 256 * 144 * 4],
                     first: true,
                 }),
                 VideoSettings {

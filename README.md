@@ -54,10 +54,11 @@ On an AMD Ryzen 9 9950X (16 cores), streaming a 3840×2160 display over loopback
 The table was measured with OpenH264. The host now encodes on the graphics card where it has
 an H.264 encoder (here an AMD Radeon RX 7900 XT): CPU time per frame at 30 fps is 3 ms at
 1080p, 4 ms at 1440p and 7 ms at 4K, against 13, 27 and 55 ms with Windows' own software
-encoder and 11, 18 and 45 ms with OpenH264. Each picture takes 9–16 ms from capture to
-encoded, a few milliseconds more than with the software encoder on this 16-core CPU. These
-figures are not performance guarantees. Encoding straight from the captured screen, without
-the copy through system memory, and lower 4K memory use remain planned.
+encoder and 11, 18 and 45 ms with OpenH264. The captured screen stays on the card for that
+encoder, so a live 1440p session costs the whole host about 2 ms of CPU per frame. Each
+picture takes 9–19 ms from capture to encoded, varying with the card's clocks, against 5–9
+ms with the software encoder on this 16-core CPU. These figures are not performance
+guarantees. Lower 4K memory use remains planned.
 
 ## Quick start
 

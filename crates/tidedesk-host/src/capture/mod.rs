@@ -9,13 +9,7 @@ mod dxgi;
 use std::time::Duration;
 
 use anyhow::Result;
-
-/// A captured frame in BGRA8, cropped to even dimensions for the encoder.
-pub struct Frame {
-    pub width: usize,
-    pub height: usize,
-    pub bgra: Vec<u8>,
-}
+use tidedesk_codec::Image;
 
 /// The captured display's position within the whole virtual desktop, in
 /// physical pixels. Used to map viewer pointer positions back onto it.
@@ -37,9 +31,13 @@ pub struct DisplayInfo {
 
 pub trait Capturer {
     /// Waits up to `timeout` for the screen to change. Returns `true` when
-    /// [`Capturer::frame`] now holds a newer image.
+    /// [`Capturer::image`] now holds a newer picture.
     fn next_frame(&mut self, timeout: Duration) -> Result<bool>;
-    fn frame(&self) -> &Frame;
+    /// The latest picture, once [`Capturer::next_frame`] has returned `true`:
+    /// pixels, or on Windows a texture that stays on the graphics card.
+    fn image(&self) -> Image<'_>;
+    /// The picture's size, cropped to even dimensions for the encoder.
+    fn size(&self) -> (usize, usize);
     fn rect(&self) -> DisplayRect;
 }
 
