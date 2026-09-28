@@ -3,7 +3,9 @@
 //! synthetic desktop, for each encoder:
 //! `cargo run --release -p tidedesk-codec --example encode_bench -- 2560 1440`
 //! With `texture` the pictures come as Direct3D 11 textures, as screen
-//! capture hands them over (the upload is not timed).
+//! capture hands them over (the upload is not timed). With `paced` they come
+//! at the frame rate (`fps=60` to change it from 30), as a host sends them,
+//! instead of back to back.
 
 use std::time::{Duration, Instant};
 
@@ -45,10 +47,17 @@ fn psnr(decoder: &mut Decoder, unit: &[u8], bgra: &[u8], shown: &mut Vec<u32>) -
 
 fn main() {
     let textures = std::env::args().any(|a| a == "texture");
+    let paced = std::env::args().any(|a| a == "paced");
+    let fps = std::env::args()
+        .find_map(|a| a.strip_prefix("fps=").map(|n| n.parse().expect("fps=N")))
+        .unwrap_or(30);
     let args: Vec<usize> = std::env::args()
         .skip(1)
-        .filter(|a| a != "texture")
-        .map(|a| a.parse().expect("width height [frames] [texture]"))
+        .filter(|a| a != "texture" && a != "paced" && !a.starts_with("fps="))
+        .map(|a| {
+            a.parse()
+                .expect("width height [frames] [texture] [paced] [fps=N]")
+        })
         .collect();
     let (width, height) = (
         args.first().copied().unwrap_or(1920),
@@ -56,7 +65,7 @@ fn main() {
     );
     let frames = args.get(2).copied().unwrap_or(60);
     let settings = Settings {
-        fps: 30,
+        fps,
         bitrate_bps: 8_000_000,
         motion: false,
     };
@@ -77,9 +86,14 @@ fn main() {
     #[cfg(not(windows))]
     assert!(!textures, "textures are Direct3D 11 textures, on Windows");
     println!(
-        "{width}x{height}, {frames} frames at {} Mbit/s{}",
+        "{width}x{height}, {frames} frames at {} Mbit/s{}{}",
         settings.bitrate_bps / 1_000_000,
-        if textures { ", as textures" } else { "" }
+        if textures { ", as textures" } else { "" },
+        if paced {
+            format!(", {fps} a second")
+        } else {
+            String::new()
+        }
     );
     'encoders: for mut encoder in encoders {
         let name = encoder.implementation().to_string();
@@ -88,7 +102,12 @@ fn main() {
         let (mut times, mut bytes, mut keyframes) = (Vec::new(), 0, 0);
         let (mut quality, mut decoded) = (0.0, 0);
         let (mut out, mut shown) = (Vec::new(), Vec::new());
+        let began = Instant::now();
         for frame in 0..frames {
+            if paced {
+                let due = began + Duration::from_secs_f64(frame as f64 / fps as f64);
+                std::thread::sleep(due.saturating_duration_since(Instant::now()));
+            }
             // Typing and scrolling: a band changes every frame.
             let band = (frame * 37) % (height - 40);
             for y in band..band + 40 {
