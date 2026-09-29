@@ -104,6 +104,13 @@ This behavior always applies when mouse control is enabled; it has no separate s
    the generated repositioning event are not sent as host mouse movement.
 4. Subsequent viewer movement controls the host from that position.
 
+A click says where it is meant. One made before the handoff, as when a tablet, a pen
+or a tool puts the pointer somewhere and clicks at once, is not lost: it waits for the
+host's answer, and then the host's pointer goes to the click while the viewer's stays.
+This includes the click that brings the remote window to the front: it is made on the
+host too, as in other remote desktop viewers. A click is forgotten if the pointer leaves
+the image before the host has answered.
+
 The host rejects events carrying an outdated pointer epoch, including events already
 in transit when someone moves the host mouse. Switching control back on, refocusing,
 or resizing also requires a fresh handoff. If the host pointer is on another monitor
@@ -134,6 +141,9 @@ and clipboard.
 - Repeat during rapid alternating movement, while dragging, after toggling mouse control,
   after focus loss and after resizing a letterboxed remote window.
 - Disable mouse control while holding a button; ensure the host is not left dragging.
+- With a pen, a tablet or a tool that puts the pointer somewhere and clicks at once:
+  the first click lands on the host where it was made, also right after the remote
+  window got the focus and after the host's own mouse moved.
 - With mouse control off, move the host pointer over a stationary desktop: only the
   amber arrow follows it. Move the viewer crosshair independently and verify the
   host pointer stays put. Repeat with control denied in Host Settings.
