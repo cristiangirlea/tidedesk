@@ -80,7 +80,7 @@ packets in.
 - Each side punches every 200 ms, answers the other side's punches with acks, and
   counts the path as **open once an ack echoes its own token**: its packets arrive,
   and the answers come back. Then keepalive punches follow every 2 seconds for up to
-  3 minutes, until QUIC's own 5-second keep-alive carries the path.
+  3 minutes, until QUIC's own keep-alive (every second) carries the path.
 - Packets are accepted from the peer's IP address on any port, and punches follow the
   port that answered: routers may use another port towards the peer than the one STUN
   reported.

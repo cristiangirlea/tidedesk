@@ -17,7 +17,11 @@ pub const ALPN: &[u8] = b"tidedesk/1";
 
 fn transport() -> Arc<quinn::TransportConfig> {
     let mut t = quinn::TransportConfig::default();
-    t.keep_alive_interval(Some(Duration::from_secs(5)));
+    // With nothing else to send, a packet a second, which the other side
+    // answers: a peer that has gone shows within seconds (see
+    // `stats::SILENT_AFTER`). The connection itself is given up much later,
+    // so that a network that fails for a moment does not end a session.
+    t.keep_alive_interval(Some(Duration::from_secs(1)));
     t.max_idle_timeout(Some(Duration::from_secs(20).try_into().unwrap()));
     // BBR tracks the path's real capacity instead of filling queues until loss,
     // which is what keeps interactive video latency low.
