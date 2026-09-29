@@ -6,6 +6,7 @@ mod app;
 mod child;
 mod computers;
 mod connect;
+mod control;
 mod icon;
 mod keys;
 pub mod launcher;
@@ -81,6 +82,11 @@ struct Args {
     /// Not supported: TideDesk never relays sessions. Prints how to connect directly.
     #[arg(long, value_name = "URL")]
     relay: Option<String>,
+
+    /// For tests: take commands on standard input, one to a line, and answer
+    /// them on standard output (see docs/test-control.md).
+    #[arg(long, hide = true)]
+    control: bool,
 }
 
 struct ProxyNotify(Mutex<EventLoopProxy<UiEvent>>);
@@ -224,7 +230,13 @@ pub fn window_icon() -> std::sync::Arc<egui::IconData> {
 pub fn main(program: &str, argv: Vec<OsString>, self_prefix: &'static [&'static str]) {
     set_self_prefix(self_prefix);
     attach_console();
-    tracing_subscriber::fmt().with_target(false).init();
+    let log = tracing_subscriber::fmt().with_target(false);
+    // With test control, standard output is for its answers alone.
+    if argv.iter().any(|word| word == "--control") {
+        log.with_writer(std::io::stderr).init();
+    } else {
+        log.init();
+    }
     if let Err(e) = run(program, argv) {
         eprintln!("{}", ChildLine::Error(format!("{e:#}")));
         std::process::exit(1);
@@ -417,6 +429,25 @@ fn run(program: &str, argv: Vec<OsString>) -> Result<()> {
         window_placement::WindowMemory::load(&fingerprint),
         game_boost,
     );
+    if args.control {
+        let conn = conn.clone();
+        app.test.path = Some(Box::new(move || {
+            let path = conn.stats().path;
+            let rtt = path.rtt.as_secs_f64() * 1000.0;
+            format!("rtt {rtt:.1} ms, {} packets lost", path.lost_packets)
+        }));
+        let ui = ui.clone();
+        let read = move || {
+            let lines = std::io::stdin().lines().map_while(Result::ok);
+            for line in lines.filter(|line| !line.trim().is_empty()) {
+                ui.notify(UiEvent::Command(control::parse(&line)));
+            }
+        };
+        std::thread::Builder::new()
+            .name("test control".into())
+            .spawn(read)
+            .context("test control cannot start")?;
+    }
     event_loop.run_app(&mut app)?;
 
     // `exiting` queued key releases; dropping the app closes the control

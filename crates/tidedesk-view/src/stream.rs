@@ -19,6 +19,9 @@ pub struct Picture {
     pub height: u32,
     pub pixels: Vec<u32>,
     pub redraw_pending: bool,
+    /// Pictures decoded so far, and when the last one was.
+    pub frames: u64,
+    pub decoded: Option<std::time::Instant>,
 }
 
 #[derive(Debug)]
@@ -28,6 +31,8 @@ pub enum UiEvent {
     /// Nothing has come from the host for this long, or, with `None`, it
     /// answers again.
     Silent(Option<std::time::Duration>),
+    /// A line of test control: a command, or what is wrong with the line.
+    Command(Result<crate::control::Command, String>),
     Disconnected(String),
 }
 
@@ -164,6 +169,8 @@ fn decode_thread(
             pic.width = w as u32;
             pic.height = h as u32;
             std::mem::swap(&mut pic.pixels, &mut spare);
+            pic.frames += 1;
+            pic.decoded = Some(std::time::Instant::now());
             let notify = !pic.redraw_pending;
             pic.redraw_pending = true;
             notify
