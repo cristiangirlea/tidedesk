@@ -40,6 +40,8 @@ pub struct TestControl {
     asked: u64,
     /// The answers, to be printed in this order.
     pub answers: Vec<String>,
+    /// `quit` was done: the viewer ends, and nothing after it is done.
+    pub quit: bool,
     /// The network path in words, from the connection.
     pub path: Option<Box<dyn Fn() -> String>>,
 }
@@ -254,14 +256,7 @@ impl App {
                 }
             }
             UiEvent::Silent(silent) => self.host_silent(silent),
-            UiEvent::Command(command) => {
-                let quit = command == Ok(control::Command::Quit);
-                self.command(command);
-                if quit {
-                    self.answer();
-                    event_loop.exit();
-                }
-            }
+            UiEvent::Command(command) => self.command(command),
             UiEvent::Disconnected(reason) => {
                 self.game_boost.store(false, Ordering::Relaxed);
                 self.release_keys();
@@ -281,6 +276,7 @@ impl App {
 
     fn run_commands(&mut self) {
         while self.test.waiting.is_none()
+            && !self.test.quit
             && let Some(command) = self.test.commands.pop_front()
         {
             let answer = command.and_then(|command| self.run(command));
@@ -372,7 +368,10 @@ impl App {
                 keys.into_iter().for_each(|key| self.send(key));
                 return Ok(Some(format!("type {} characters", text.chars().count())));
             }
-            control::Command::Quit => return Ok(Some("quit".into())),
+            control::Command::Quit => {
+                self.test.quit = true;
+                return Ok(Some("quit".into()));
+            }
             control::Command::Move { x, y } => (vec![at(x, y)?], format!("move {x} {y}")),
             control::Command::Click { x, y, button: b } => (
                 vec![at(x, y)?, button(b, true), button(b, false)],
@@ -793,6 +792,9 @@ impl ApplicationHandler<UiEvent> for App {
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UiEvent) {
         self.handle(event_loop, event);
         self.answer();
+        if self.test.quit {
+            event_loop.exit();
+        }
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
@@ -946,6 +948,9 @@ impl ApplicationHandler<UiEvent> for App {
             }
             self.give_up(Instant::now());
             self.answer();
+            if self.test.quit {
+                event_loop.exit();
+            }
             if self.clipboard_enabled() {
                 if let Some((generation, text)) = &self.pending_clipboard {
                     if !self.sharing.accepts_clipboard(*generation) || self.clipboard.receive(text)
@@ -1172,6 +1177,23 @@ mod tests {
         app.command(Ok(Command::Move { x: 1, y: 1 }));
         assert!(app.test.answers[0].starts_with("error: mouse control is off"));
         assert_eq!(sent(&mut rx), []);
+    }
+
+    #[test]
+    fn quit_waits_its_turn() {
+        let (mut app, mut rx) = with_mouse();
+        let button = MouseButton::Left;
+        app.command(Ok(Command::Click { x: 1, y: 1, button }));
+        app.command(Ok(Command::Quit));
+        assert!(!app.test.quit, "the click is not done yet");
+        let (request, position) = (u64::MAX - 1, ANCHOR);
+        app.host_message(ServerMessage::PointerAnchor { request, position });
+        assert!(app.test.quit);
+        assert_eq!(app.test.answers, ["ok click 1 1", "ok quit"]);
+        assert_eq!(sent(&mut rx).len(), 4);
+        // What comes after it is not done.
+        app.command(Ok(Command::Size));
+        assert_eq!(app.test.answers.len(), 2);
     }
 
     #[test]

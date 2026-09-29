@@ -19,14 +19,14 @@ left corner, whatever the window's size and place.
 | Command | What it does | Answer |
 | --- | --- | --- |
 | `size` | | `ok 2560x1440` |
-| `frames` | | `ok 82 frames, the last 30 ms ago` |
+| `frames` | Pictures put up for the window so far. Game Boost leaves out pictures that a newer one has overtaken. | `ok 82 frames, the last 30 ms ago` |
 | `stats` | | `ok 2560x1440, 82 frames, the last 30 ms ago, rtt 0.8 ms, 0 packets lost` |
 | `crop X Y WIDTH HEIGHT FILE [SCALE]` | Saves that area of the decoded picture as a PNG file. | `ok 640x360 FILE` |
 | `move X Y` | Moves the host's pointer there. | `ok move 10 20` |
 | `click X Y [left\|right\|middle]` | Moves the pointer there, presses the button and lets go. | `ok click 10 20` |
 | `press X Y [BUTTON]` | Presses without letting go, to drag with `move`. | `ok press 10 20` |
 | `release [BUTTON]` | | `ok release` |
-| `wheel LINES` | Turns the wheel up, or down with a negative number. | `ok wheel -3` |
+| `wheel LINES` | Turns the wheel up, or down with a negative number, by 100 lines at most. | `ok wheel -3` |
 | `key SCANCODE [down\|up]` | Presses the key and lets go, or one of the two. | `ok key E04D` |
 | `type TEXT` | Types the text, all that follows on the line. | `ok type 11 characters` |
 | `quit` | Ends the session and the viewer. | `ok quit` |
@@ -35,7 +35,8 @@ left corner, whatever the window's size and place.
 window shows. `SCALE` is a whole number from 2 to 8 to make each pixel that many
 times as wide and high (repeated, not blended: small text can be looked at closely),
 or `1/2` to `1/8` to make the picture smaller (each pixel the mean of those it stands
-for: an overview of a whole screen). A file name with spaces goes in double quotes.
+for: an overview of a whole screen). A crop has 59 million pixels at most: enlarge a
+smaller area. A file name with spaces goes in double quotes.
 
 **Keys** go by hardware scan code, in hexadecimal, with `E0` in front for extended
 keys: `1E` is A on a United States keyboard, `1C` Enter, `E04D` the right arrow,

@@ -10,7 +10,7 @@
 //!
 //! ```text
 //! size                              the remote screen's size
-//! frames                            pictures decoded so far, and the last one's age
+//! frames                            pictures put up so far, and the last one's age
 //! stats                             the above and the network path
 //! crop X Y WIDTH HEIGHT FILE        that area of the decoded picture, as a PNG
 //! crop X Y WIDTH HEIGHT FILE 3      each pixel three times as wide and high
@@ -97,6 +97,12 @@ pub enum Command {
 
 /// The most a crop is enlarged or reduced by.
 const MOST: u32 = 8;
+
+/// The most pixels in a crop: a 5120x2880 screen twice enlarged, 177 MB.
+const LARGEST: u64 = 10_240 * 5_760;
+
+/// The most lines the wheel is turned by at once.
+const FAR: i32 = 100;
 
 /// A pixel of `length` along the remote screen as the place that the host
 /// turns back into that pixel (it rounds down).
@@ -201,9 +207,15 @@ pub fn parse(line: &str) -> Result<Command, String> {
         "release" => Command::Release {
             button: button(given.first())?,
         },
-        "wheel" => Command::Wheel {
-            lines: number(&given[0])?,
-        },
+        "wheel" => {
+            let lines = number::<i64>(&given[0])?;
+            if lines.abs() > i64::from(FAR) {
+                return Err(format!("the wheel turns {FAR} lines at most"));
+            }
+            Command::Wheel {
+                lines: lines as i32,
+            }
+        }
         "key" => {
             let word = &given[0];
             let digits = word.strip_prefix("0x").unwrap_or(word);
@@ -268,6 +280,11 @@ pub fn crop(picture: &Picture, area: Area, scale: Scale) -> Result<(u32, u32, Ve
     };
     if out_width == 0 || out_height == 0 {
         return Err(format!("nothing is left of {width}x{height} at that scale"));
+    }
+    if u64::from(out_width) * u64::from(out_height) > LARGEST {
+        return Err(format!(
+            "{out_width}x{out_height} is too large: enlarge a smaller area"
+        ));
     }
     let mut rgb = Vec::with_capacity((out_width * out_height * 3) as usize);
     for row in 0..out_height {
@@ -513,6 +530,32 @@ mod tests {
         assert!(error.contains("nothing is left"), "{error}");
         let none = crop(&Picture::default(), area(0, 0, 1, 1), Scale::Times(1));
         assert!(none.unwrap_err().contains("no picture yet"));
+    }
+
+    /// A whole 4K screen eight times enlarged would be 1.6 GB.
+    #[test]
+    fn a_crop_has_its_limits() {
+        let large = Picture {
+            width: 3840,
+            height: 2160,
+            pixels: vec![0; 3840 * 2160],
+            ..Picture::default()
+        };
+        let error = crop(&large, area(0, 0, 3840, 2160), Scale::Times(8)).unwrap_err();
+        assert!(error.contains("30720x17280 is too large"), "{error}");
+        // The whole of it as it is, and a part of it enlarged, are not.
+        assert!(crop(&large, area(0, 0, 3840, 2160), Scale::Times(1)).is_ok());
+        assert!(crop(&large, area(100, 100, 640, 360), Scale::Times(8)).is_ok());
+    }
+
+    #[test]
+    fn the_wheel_has_its_limits() {
+        assert_eq!(parse("wheel 100"), Ok(Command::Wheel { lines: 100 }));
+        assert_eq!(parse("wheel -100"), Ok(Command::Wheel { lines: -100 }));
+        for line in ["wheel 101", "wheel -101", "wheel 20000000"] {
+            let error = parse(line).unwrap_err();
+            assert!(error.contains("100 lines at most"), "{line:?}: {error}");
+        }
     }
 
     #[test]

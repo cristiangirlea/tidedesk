@@ -19,7 +19,8 @@ pub struct Picture {
     pub height: u32,
     pub pixels: Vec<u32>,
     pub redraw_pending: bool,
-    /// Pictures decoded so far, and when the last one was.
+    /// Pictures put up for the window so far, and when the last one was.
+    /// Game Boost leaves out pictures that a newer one has overtaken.
     pub frames: u64,
     pub decoded: Option<std::time::Instant>,
 }
