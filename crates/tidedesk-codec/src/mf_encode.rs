@@ -68,8 +68,8 @@ const HARDWARE_TIMEOUT: Duration = Duration::from_secs(1);
 /// its time over each picture (15 to 30 ms at desktop sizes), so waiting for
 /// one before handing over the next bounds the frame rate by that time. An
 /// encoder that works on two at once takes as long over each with the next
-/// one going in meanwhile, and they come out as fast as they went in; see
-/// [`Pairing`] for the ones that do not.
+/// one going in meanwhile, and they come out as fast as they went in. One
+/// that takes its pictures in turn gets one at a time.
 pub const HARDWARE_DEPTH: usize = 2;
 
 /// Whether the encoder gains from getting the next picture while it encodes
@@ -77,12 +77,20 @@ pub const HARDWARE_DEPTH: usize = 2;
 /// its pictures in turn only keeps the next one waiting, which adds to the
 /// delay and nothing to the frame rate: it gets one at a time, as soon as
 /// that shows.
+///
+/// Pictures also take longer when there is more on the screen. So when they
+/// take longer with another in the encoder than the last ones did alone, the
+/// next ones go in alone again, and the verdict is about pictures taken
+/// right after each other.
 #[derive(Default)]
 struct Pairing {
     /// How long the last pictures took that were alone in the encoder, and
     /// the last ones that were not.
     alone: VecDeque<Duration>,
     paired: VecDeque<Duration>,
+    /// Pictures took longer with another in the encoder: how long they take
+    /// alone is being measured again.
+    doubted: bool,
     verdict: Option<Verdict>,
 }
 
@@ -127,11 +135,20 @@ impl Pairing {
         (median(&self.alone), median(&self.paired))
     }
 
+    /// Whether pictures take longer with another in the encoder than alone.
+    fn longer_together(&self) -> bool {
+        let (alone, together) = self.times();
+        together > alone * 5 / 4 + Self::SLACK
+    }
+
     /// Takes note of how long a picture took, `paired` if another was in
     /// the encoder meanwhile: the verdict, when this picture changes it. Once
     /// pictures are found to be taken in turn, they are for good: what the
     /// encoder is does not change, and finding out costs delay.
     fn record(&mut self, took: Duration, paired: bool) -> Option<Verdict> {
+        if self.verdict == Some(Verdict::InTurn) {
+            return None;
+        }
         let (times, most) = match paired {
             true => (&mut self.paired, Self::PAIRED),
             false => (&mut self.alone, Self::ALONE),
@@ -140,14 +157,26 @@ impl Pairing {
         if times.len() > most {
             times.pop_front();
         }
-        if !paired || self.paired.len() < Self::PAIRED || self.verdict == Some(Verdict::InTurn) {
+        if self.alone.len() < Self::ALONE || self.paired.len() < Self::PAIRED {
             return None;
         }
-        let (alone, together) = self.times();
-        let verdict = if together > alone * 5 / 4 + Self::SLACK {
-            Verdict::InTurn
-        } else {
-            Verdict::AtOnce
+        let verdict = match (paired, self.doubted) {
+            (true, false) if self.longer_together() => {
+                self.doubted = true;
+                self.alone.clear();
+                return None;
+            }
+            (true, false) => Verdict::AtOnce,
+            (false, true) if self.longer_together() => Verdict::InTurn,
+            (false, true) => {
+                // The next verdict is about pictures from here on.
+                self.doubted = false;
+                self.paired.clear();
+                Verdict::AtOnce
+            }
+            // Pictures that were in the encoder when the doubt arose, and
+            // ones that happen to be alone.
+            (true, true) | (false, false) => return None,
         };
         (self.verdict.replace(verdict) != Some(verdict)).then_some(verdict)
     }
@@ -770,10 +799,18 @@ impl Encoder {
         self.hardware_mut().wanted -= 1;
         unsafe { self.transform.ProcessInput(0, &sample, 0) }
             .context("the hardware H.264 encoder refused the picture")?;
-        let sent = &mut self.hardware_mut().sent;
-        sent.iter_mut().for_each(|sent| sent.paired = true);
-        let paired = !sent.is_empty();
-        sent.push_back(Sent { at, paired });
+        let hardware = self.hardware_mut();
+        while let Ok(event) = hardware.events.try_recv() {
+            hardware.count(event)?;
+        }
+        // The picture before is in the encoder with this one unless its
+        // output is there already, only not taken or handed out.
+        let finished = !hardware.announced.is_empty() || !hardware.taken.is_empty();
+        let paired = !hardware.sent.is_empty() && !finished;
+        if paired {
+            hardware.sent.iter_mut().for_each(|sent| sent.paired = true);
+        }
+        hardware.sent.push_back(Sent { at, paired });
         Ok(())
     }
 
@@ -804,10 +841,10 @@ impl Encoder {
     }
 
     /// The next picture the graphics card's encoder finished, in `out`,
-    /// waiting up to `wait` for it: its timestamp and whether it is a
-    /// keyframe. Pictures come back in the order they went in. An error once
-    /// a picture has been in the encoder for [`HARDWARE_TIMEOUT`].
-    pub fn receive(&mut self, wait: Duration, out: &mut Vec<u8>) -> Result<Option<(u64, bool)>> {
+    /// waiting up to `wait` for it: whether it is a keyframe. Pictures come
+    /// back in the order they went in. An error once a picture has been in
+    /// the encoder for [`HARDWARE_TIMEOUT`].
+    pub fn receive(&mut self, wait: Duration, out: &mut Vec<u8>) -> Result<Option<bool>> {
         if self.in_flight() == 0 {
             return Ok(None);
         }
@@ -831,14 +868,17 @@ impl Encoder {
         // when no other picture is in the encoder; else it is the next one.
         let alone = hardware.sent.len() == 1;
         let first = hardware.taken.pop_front().expect("taken above");
-        out.extend_from_slice(&first.data);
+        if out.is_empty() {
+            *out = first.data;
+        } else {
+            out.extend_from_slice(&first.data);
+        }
         while let Some(more) = hardware.taken.front()
             && (more.time == first.time || alone)
         {
             out.extend_from_slice(&more.data);
             hardware.taken.pop_front();
         }
-        let time = first.time;
         let sent = hardware.sent.pop_front().expect("in flight");
         let took = first.announced.saturating_duration_since(sent.at);
         if let Some(verdict) = hardware.pairing.record(took, sent.paired) {
@@ -857,7 +897,7 @@ impl Encoder {
         if keyframe {
             with_parameter_sets(out, &self.parameter_sets);
         }
-        Ok(Some(((time.max(0) / 10_000) as u64, keyframe)))
+        Ok(Some(keyframe))
     }
 
     /// Takes the outputs the encoder has announced so far, without waiting.
@@ -1322,21 +1362,32 @@ mod tests {
         assert_eq!(pairing.verdict(), Some(Verdict::AtOnce));
     }
 
+    /// Records pictures with another in the encoder, of the times `took`
+    /// gives, until the encoder gets one at a time.
+    fn until_doubted(pairing: &mut Pairing, took: impl Fn(u64) -> u64) {
+        for i in 0..40 {
+            assert_eq!(pairing.record(ms(took(i)), true), None, "picture {i}");
+            if pairing.depth() == 1 {
+                return;
+            }
+        }
+        panic!("the pictures were never doubted");
+    }
+
     #[test]
     fn an_encoder_that_takes_pictures_in_turn_gets_one_at_a_time() {
         let mut pairing = measured(17);
         // Each waits for the one before it, longer and longer, up to twice
         // the time.
-        let mut verdicts = Vec::new();
-        for i in 0..40 {
-            let took = (18 + i).min(34);
-            verdicts.extend(pairing.record(ms(took), true));
-            if pairing.depth() == 1 {
-                break;
-            }
+        until_doubted(&mut pairing, |i| (18 + i).min(34));
+        // How long one takes alone is measured again, right then: as long
+        // as before.
+        for i in 1..=Pairing::ALONE {
+            assert_eq!(pairing.depth(), 1);
+            let verdict = pairing.record(ms(17), false);
+            assert_eq!(verdict.is_some(), i == Pairing::ALONE, "picture {i}");
         }
-        assert_eq!(verdicts, [Verdict::InTurn]);
-        assert_eq!(pairing.depth(), 1);
+        assert_eq!(pairing.verdict(), Some(Verdict::InTurn));
         // For good: what it is does not change, and finding out costs delay.
         for _ in 0..100 {
             assert_eq!(pairing.record(ms(17), false), None);
@@ -1355,16 +1406,21 @@ mod tests {
     }
 
     #[test]
-    fn pictures_are_compared_with_recent_ones_alone() {
-        // A still screen, then a film: every picture takes longer, alone too.
+    fn a_busier_screen_is_not_held_against_the_encoder() {
+        // A still screen, then a film: every picture takes longer.
         let mut pairing = measured(8);
-        for _ in 0..Pairing::ALONE {
-            pairing.record(ms(24), false);
+        until_doubted(&mut pairing, |_| 26);
+        // Alone too, measured right then.
+        for i in 1..=Pairing::ALONE {
+            assert_eq!(pairing.depth(), 1);
+            let verdict = pairing.record(ms(24), false);
+            assert_eq!(verdict.is_some(), i == Pairing::ALONE, "picture {i}");
         }
-        for _ in 0..40 {
-            pairing.record(ms(26), true);
+        assert_eq!(pairing.verdict(), Some(Verdict::AtOnce));
+        for _ in 0..100 {
+            assert_eq!(pairing.record(ms(26), true), None);
+            assert_eq!(pairing.depth(), HARDWARE_DEPTH);
         }
-        assert_eq!(pairing.depth(), HARDWARE_DEPTH);
     }
 
     #[test]

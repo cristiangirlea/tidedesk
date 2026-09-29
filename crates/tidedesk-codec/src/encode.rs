@@ -244,6 +244,9 @@ impl Encoder {
     ) -> Result<bool> {
         let image = image.into();
         out.clear();
+        if self.in_flight() > 0 {
+            bail!("the encoder still holds pictures sent to it");
+        }
         self.send(image, size, timestamp_ms)?;
         loop {
             match self.receive(Duration::from_millis(100), out)? {
@@ -329,7 +332,7 @@ impl Encoder {
             && let Some(&(timestamp_ms, size)) = self.flying.front()
         {
             match encoder.receive(wait, out) {
-                Ok(Some((_, keyframe))) => {
+                Ok(Some(keyframe)) => {
                     self.flying.pop_front();
                     return Ok(Received::Picture(Encoded {
                         timestamp_ms,
@@ -376,18 +379,17 @@ impl Encoder {
                 });
                 if !fits {
                     // The pictures the old encoder holds come out first.
-                    while let (Some(old), Some(&(timestamp_ms, size))) =
+                    while let (Some(old), Some(&(sent_ms, sent_size))) =
                         (current.as_mut(), self.flying.front())
                     {
                         let mut finished = Vec::new();
-                        let Some((_, keyframe)) =
-                            old.receive(Duration::from_secs(1), &mut finished)?
+                        let Some(keyframe) = old.receive(Duration::from_secs(1), &mut finished)?
                         else {
                             bail!("the hardware H.264 encoder did not finish its pictures");
                         };
                         let encoded = Encoded {
-                            timestamp_ms,
-                            size,
+                            timestamp_ms: sent_ms,
+                            size: sent_size,
                             keyframe,
                         };
                         self.flying.pop_front();
@@ -1007,6 +1009,7 @@ mod tests {
                         .unwrap();
                 }
                 assert_eq!(encoder.in_flight(), 2);
+                refuses_to_encode(&mut encoder);
                 for i in first..first + 2 {
                     let timestamp = take_back(&mut encoder, &mut decoder, &mut out);
                     assert_eq!(timestamp, i as u64 * 33);
@@ -1023,15 +1026,30 @@ mod tests {
                 error.contains("holds 1 pictures already"),
                 "{name}: {error}"
             );
+            refuses_to_encode(&mut encoder);
             assert_eq!(encoder.implementation(), name);
         }
     }
 
-    /// Textures too: on the card each picture in flight has a texture of its
-    /// own, so the one being encoded is not overwritten by the next.
+    /// With pictures in flight, `encode` would give back one of them for
+    /// its own.
+    fn refuses_to_encode(encoder: &mut Encoder) {
+        let name = encoder.implementation();
+        let (held, mut out) = (encoder.in_flight(), vec![1]);
+        let error = encoder
+            .encode(&scene(SIZE.0, SIZE.1, 0), SIZE, 999, &mut out)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("still holds pictures"), "{name}: {error}");
+        assert_eq!((encoder.in_flight(), out.len()), (held, 0), "{name}");
+    }
+
+    /// Textures too, two at once, each encoded as the picture it was. (That
+    /// the one being encoded is not written over by the next is the
+    /// converter's test: small pictures are read before the next comes.)
     #[cfg(windows)]
     #[test]
-    fn textures_in_flight_keep_their_own_picture() {
+    fn textures_go_in_two_at_once() {
         let (Some(device), Some(mut encoder)) =
             (crate::gpu::tests::device(), hardware_or_skip(SETTINGS))
         else {

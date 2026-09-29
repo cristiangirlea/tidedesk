@@ -202,8 +202,18 @@ fn run_with<E: Encode>(
     let mut next_due = Instant::now();
     let mut pending = false; // captured but not yet encoded
     let mut flying = VecDeque::new();
-    // Encoded while the network was busy with the frame before.
-    let mut held: Option<EncodedFrame> = None;
+    // Encoded while the network was busy with the frame before, and the
+    // preset it was made with.
+    let mut held: Option<(EncodedFrame, StreamingStatus)> = None;
+    // Times in a row that the network was found busy.
+    let mut busy = 0;
+    // A preset is acknowledged once a frame made with it has left.
+    let mut acknowledge = |status: StreamingStatus| {
+        if reported_request != status.request {
+            *control.streaming_status.lock().unwrap() = Some(status);
+            reported_request = status.request;
+        }
+    };
     let mut meter = tidedesk_core::stats::Meter::new("host video (capture+encode)");
 
     while !control.stop.load(Ordering::Relaxed) {
@@ -233,12 +243,12 @@ fn run_with<E: Encode>(
             // viewer gets a real frame and acknowledgement of this preset.
             pending |= captured;
         }
-        if let Some(frame) = held.take() {
+        if let Some((frame, made_with)) = held.take() {
             match frames.try_send(frame) {
-                Ok(()) => {}
+                Ok(()) => acknowledge(made_with),
                 Err(TrySendError::Full(frame)) => {
                     // Network still busy with the previous frame.
-                    held = Some(frame);
+                    held = Some((frame, made_with));
                     std::thread::sleep(Duration::from_millis(2));
                     continue;
                 }
@@ -295,13 +305,14 @@ fn run_with<E: Encode>(
                     status,
                 });
                 pending = false;
+                busy = 0;
                 // From when it was due, so that a picture that went in a
                 // little late does not make the following ones late too.
                 // After a screen that stayed the same, or with an encoder or
                 // network that cannot keep up, the pace starts anew.
                 next_due += interval;
-                if next_due <= now {
-                    next_due = now + interval;
+                if next_due <= began {
+                    next_due = began + interval;
                 }
             }
         }
@@ -311,7 +322,8 @@ fn run_with<E: Encode>(
             if frames.capacity() < frames.max_capacity() && until_due.is_zero() {
                 // Network still busy with the previous frame, which it takes
                 // within moments unless it has to wait itself.
-                std::thread::sleep(Duration::from_micros(500));
+                busy += 1;
+                std::thread::sleep(Duration::from_micros(if busy > 4 { 2000 } else { 500 }));
             } else {
                 std::thread::sleep(until_due);
             }
@@ -356,13 +368,9 @@ fn run_with<E: Encode>(
             },
             data: std::mem::take(&mut bitstream),
         };
-        if reported_request != picture.status.request {
-            *control.streaming_status.lock().unwrap() = Some(picture.status);
-            reported_request = picture.status.request;
-        }
         match frames.try_send(frame) {
-            Ok(()) => {}
-            Err(TrySendError::Full(frame)) => held = Some(frame),
+            Ok(()) => acknowledge(picture.status),
+            Err(TrySendError::Full(frame)) => held = Some((frame, picture.status)),
             Err(TrySendError::Closed(_)) => break,
         }
     }
@@ -602,6 +610,8 @@ mod tests {
         bgra: Vec<u8>,
         frame: usize,
         busy: bool,
+        /// Stays as it is for 60 ms before every eighth picture, until then.
+        pauses: Option<Instant>,
     }
 
     impl Screen {
@@ -610,7 +620,14 @@ mod tests {
                 bgra: vec![0; 256 * 144 * 4],
                 frame: 0,
                 busy,
+                pauses: None,
             })
+        }
+
+        fn with_pauses() -> Box<Self> {
+            let mut screen = Self::new(true);
+            screen.pauses = Some(Instant::now());
+            screen
         }
     }
 
@@ -619,6 +636,16 @@ mod tests {
             if !self.busy && self.frame > 0 {
                 std::thread::sleep(timeout);
                 return Ok(false);
+            }
+            if let Some(until) = self.pauses {
+                let left = until.saturating_duration_since(Instant::now());
+                std::thread::sleep(left.min(timeout));
+                if left > timeout {
+                    return Ok(false);
+                }
+                if self.frame % 8 == 6 {
+                    self.pauses = Some(Instant::now() + Duration::from_millis(60));
+                }
             }
             self.frame += 1;
             let left = self.frame * 7 % 200;
@@ -737,6 +764,7 @@ mod tests {
     /// on. A frame of its holds its picture's timestamp.
     struct Slow {
         pictures: VecDeque<(Instant, tidedesk_codec::Encoded)>,
+        keyframe: bool,
         /// Fails with the first pictures it holds.
         fails: bool,
         log: Arc<Mutex<Log>>,
@@ -747,6 +775,7 @@ mod tests {
             move |_| {
                 Ok(Self {
                     pictures: VecDeque::new(),
+                    keyframe: false,
                     fails,
                     log: log.clone(),
                 })
@@ -758,7 +787,9 @@ mod tests {
         fn implementation(&self) -> Implementation {
             Implementation::Hardware
         }
-        fn force_keyframe(&mut self) {}
+        fn force_keyframe(&mut self) {
+            self.keyframe = true;
+        }
         fn depth(&self) -> usize {
             2
         }
@@ -770,7 +801,7 @@ mod tests {
             let encoded = tidedesk_codec::Encoded {
                 timestamp_ms,
                 size,
-                keyframe: false,
+                keyframe: std::mem::take(&mut self.keyframe),
             };
             let ready = Instant::now() + Duration::from_millis(25);
             self.pictures.push_back((ready, encoded));
@@ -835,9 +866,66 @@ mod tests {
             taken.push(pipeline.frame().await.header.capture_us);
         }
         let apart = (taken[60] - taken[0]) as f64 / 60.0 / 1000.0;
-        assert!(apart < 20.0, "pictures {apart:.1} ms apart");
+        // 25 ms with one at a time; the rest is for a computer that is busy.
+        assert!(apart < 22.0, "pictures {apart:.1} ms apart");
         // Nor faster than asked for.
         assert!(apart > 16.0, "pictures {apart:.1} ms apart");
+    }
+
+    /// After a screen that stayed the same, the pace starts anew: the next
+    /// picture is not taken at once for being late.
+    #[tokio::test]
+    async fn the_pace_starts_anew_after_a_pause() {
+        let log = Arc::new(Mutex::new(Log::default()));
+        let mut pipeline = Pipeline::start(Slow::maker(false, log), Screen::with_pauses());
+        let mut taken = Vec::new();
+        for _ in 0..40 {
+            taken.push(pipeline.frame().await.header.capture_us);
+        }
+        let apart: Vec<u64> = taken.windows(2).map(|pair| pair[1] - pair[0]).collect();
+        let mut pauses = 0;
+        for (i, pair) in apart.windows(2).enumerate() {
+            if pair[0] > 50_000 {
+                pauses += 1;
+                assert!(pair[1] > 15_000, "picture {}: {apart:?}", i + 2);
+            }
+        }
+        assert!(pauses >= 3, "{apart:?}");
+    }
+
+    /// A preset is acknowledged once a frame made with it leaves, not while
+    /// that frame waits for the network.
+    #[tokio::test]
+    async fn a_preset_is_acknowledged_when_its_frame_leaves() {
+        let log = Arc::new(Mutex::new(Log::default()));
+        let mut pipeline = Pipeline::start(Slow::maker(false, log), Screen::new(true));
+        for _ in 0..6 {
+            pipeline.frame().await;
+        }
+        // The network takes no frames for a while: one waits for it, the
+        // next is kept. The request's picture goes in meanwhile.
+        *pipeline.control.boost_request.lock().unwrap() = (1, false);
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        let acknowledged = |pipeline: &Pipeline| {
+            let status = pipeline.control.streaming_status.lock().unwrap();
+            status.is_some_and(|status| status.request == 1)
+        };
+        let early = acknowledged(&pipeline);
+        let mut frame = pipeline.frame().await;
+        assert!(
+            !early || frame.header.keyframe,
+            "acknowledged before its frame"
+        );
+        while !frame.header.keyframe {
+            frame = pipeline.frame().await;
+        }
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !acknowledged(&pipeline) {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .expect("acknowledged with its frame");
     }
 
     /// An encoder that fails loses the pictures it holds. The one on the

@@ -83,7 +83,8 @@ fn main() {
         args.first().copied().unwrap_or(1920),
         args.get(1).copied().unwrap_or(1080),
     );
-    let frames = args.get(2).copied().unwrap_or(60);
+    // The first picture sets the encoder up; the times are of the rest.
+    let frames = args.get(2).copied().unwrap_or(60).max(2);
     let settings = Settings {
         fps,
         bitrate_bps: 8_000_000,
