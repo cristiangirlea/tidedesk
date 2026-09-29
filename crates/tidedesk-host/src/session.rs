@@ -40,11 +40,18 @@ pub struct HostState {
     pub viewer: Mutex<Option<ViewerInfo>>,
     /// A viewer on another network this host opens a path to.
     pub expected_viewer: Mutex<Option<crate::internet::ExpectedViewer>>,
+    /// What is known and wanted about updates from the Store.
+    pub updates: Mutex<crate::updates::Board>,
     /// Called whenever something the UI shows has changed.
     pub on_change: Mutex<Option<Box<dyn Fn() + Send + Sync>>>,
 }
 
 impl HostState {
+    /// Whether a viewer is connected, or about to be.
+    pub fn connected(&self) -> bool {
+        self.busy.load(Ordering::SeqCst) || self.viewer.lock().unwrap().is_some()
+    }
+
     pub fn changed(&self) {
         if let Some(notify) = self.on_change.lock().unwrap().as_ref() {
             notify();

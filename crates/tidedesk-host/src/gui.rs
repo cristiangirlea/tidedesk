@@ -23,6 +23,7 @@ use crate::config::{HostConfig, parse_stun_servers};
 use crate::internet::{self, PathState};
 use crate::session::HostState;
 use crate::tray::Tray;
+use crate::updates::{Step, Updates};
 use crate::{icon, platform};
 
 /// Also used to find the native window for tray and taskbar handling.
@@ -71,6 +72,9 @@ pub struct HostApp {
     notice: Option<String>,
     settings_error: Option<String>,
     autostart: bool,
+    /// The build the Microsoft Store installed, which it also updates.
+    from_store: bool,
+    started: Instant,
     tray: Option<Tray>,
     window_hooked: bool,
 }
@@ -173,6 +177,8 @@ impl HostApp {
             notice: None,
             settings_error: None,
             autostart: platform::autostart_enabled(),
+            from_store: platform::is_packaged(),
+            started: Instant::now(),
             tray: None,
             window_hooked: false,
         }
@@ -182,6 +188,7 @@ impl HostApp {
     /// adds the tray icon.
     pub fn attach(&mut self, ctx: egui::Context) {
         let state = self.info.state.clone();
+        state.updates.lock().unwrap().window = Some(self.title);
         *state.on_change.lock().unwrap() = Some(Box::new(move || ctx.request_repaint()));
         match Tray::new(state, self.title) {
             Ok(tray) => self.tray = Some(tray),
@@ -213,6 +220,34 @@ impl HostApp {
             .map(|e| format!("Could not save settings: {e:#}"));
     }
 
+    /// An update that waits in the Store: the offer to install it, and how
+    /// that goes. Nothing while a viewer is connected.
+    fn update(&mut self, ui: &mut egui::Ui) {
+        let state = self.info.state.clone();
+        let connected = state.connected();
+        let mut board = state.updates.lock().unwrap();
+        let now = Instant::now();
+        if board.installing {
+            ui.small("The Microsoft Store is installing an update. TideDesk starts again when it is done.");
+        } else if board.step(connected, self.started, now) == Step::Offer {
+            ui.horizontal_wrapped(|ui| {
+                ui.label("An update of TideDesk is ready in the Microsoft Store.");
+                if ui.button("Update now").clicked() {
+                    board.now();
+                }
+                if ui.button("Later").clicked() {
+                    board.later(now);
+                }
+            });
+            ui.small("TideDesk closes for the update and starts again in the tray.");
+        }
+        if let Some(why) = board.failed.as_ref().filter(|_| !connected) {
+            ui.small(
+                RichText::new(format!("The update was not installed: {why}")).color(WARNING_AMBER),
+            );
+        }
+    }
+
     /// Access code, addresses, device ID and who is connected.
     pub fn status_tab(&mut self, ui: &mut egui::Ui) {
         let state = self.info.state.clone();
@@ -240,6 +275,7 @@ impl HostApp {
         if ui.checkbox(&mut accept, "Accept new connections").changed() {
             state.accepting.store(accept, Ordering::SeqCst);
         }
+        self.update(ui);
         ui.separator();
 
         ui.label("Access code");
@@ -505,6 +541,23 @@ impl HostApp {
         ui.small("Closing the window keeps TideDesk running in the tray; quit from the tray menu.");
         ui.add_space(8.0);
 
+        if self.from_store {
+            ui.label(RichText::new("Updates").strong());
+            egui::ComboBox::from_id_salt("updates")
+                .selected_text(cfg.updates.label())
+                .show_ui(ui, |ui| {
+                    for choice in Updates::ALL {
+                        ui.selectable_value(&mut cfg.updates, choice, choice.label());
+                    }
+                });
+            ui.small(
+                "The Microsoft Store updates TideDesk when it does not run, which is seldom. \
+                 TideDesk can ask the Store itself, and closes for an update only while no \
+                 viewer is connected.",
+            );
+            ui.add_space(8.0);
+        }
+
         ui.label(RichText::new("Network").strong());
         ui.horizontal(|ui| {
             ui.label("UDP port");
@@ -581,6 +634,7 @@ impl HostApp {
             state.audio.store(cfg.share_audio, Ordering::SeqCst);
             state.clipboard.store(cfg.allow_clipboard, Ordering::SeqCst);
             state.mouse.store(cfg.allow_mouse, Ordering::SeqCst);
+            state.updates.lock().unwrap().setting = cfg.updates;
             if cfg.show_in_taskbar != before.show_in_taskbar {
                 platform::set_taskbar_button(title, cfg.show_in_taskbar);
             }

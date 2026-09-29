@@ -40,6 +40,8 @@ pub struct HostConfig {
     /// Answer viewers on the local network that look for this computer's
     /// device ID, so they find it without the service or the internet.
     pub lan_discovery: bool,
+    /// What to do about updates, in the build the Microsoft Store installed.
+    pub updates: crate::updates::Updates,
 }
 
 impl Default for HostConfig {
@@ -60,6 +62,7 @@ impl Default for HostConfig {
             rendezvous: true,
             rendezvous_server: String::new(),
             lan_discovery: true,
+            updates: Default::default(),
         }
     }
 }
@@ -213,6 +216,21 @@ mod tests {
         // A host.toml from before the setting existed keeps its named service.
         let old: HostConfig = toml::from_str("rendezvous_server = \"rv.example.org\"").unwrap();
         assert_eq!(old.rendezvous_service(), Some("rv.example.org"));
+    }
+
+    #[test]
+    fn updates_are_asked_about_unless_chosen_otherwise() {
+        use crate::updates::Updates;
+        assert_eq!(HostConfig::default().updates, Updates::Ask);
+        let old: HostConfig = toml::from_str("fps = 30").unwrap();
+        assert_eq!(old.updates, Updates::Ask, "a host.toml from before");
+        let off: HostConfig = toml::from_str("updates = \"off\"").unwrap();
+        assert_eq!(off.updates, Updates::Off);
+        let saved = toml::to_string_pretty(&HostConfig {
+            updates: Updates::Automatic,
+            ..Default::default()
+        });
+        assert!(saved.unwrap().contains("updates = \"automatic\""));
     }
 
     #[test]

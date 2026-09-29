@@ -73,6 +73,35 @@ the package during publication after approval. This workflow does not upload,
 submit, accept agreements, or publish to the Store automatically. Store updates
 are separate from GitHub releases; portable ZIP users still update manually.
 
+## Updates inside the app
+
+The Store updates its apps on its own, but not while they run, and TideDesk Host
+usually runs all the time, in the tray. So the Store build asks the Store itself
+(`Windows.Services.Store`), a minute after it starts and every six hours:
+
+| Settings, Updates | What happens when an update waits |
+| --- | --- |
+| Ask me (default) | The Status tab says so, with **Update now** and **Later** (asks again after a day). |
+| Install when no one is connected | The Store installs it as soon as no viewer is connected. |
+| Leave it to the Store | TideDesk does not ask; the Store updates it when it does not run. |
+
+Nothing is asked, offered or installed while a viewer is connected. The Store
+downloads and installs the package; TideDesk downloads nothing itself. Windows ends
+the program for the update and starts it again afterwards, hidden in the tray
+(`RegisterApplicationRestart`). Where the person's Store settings do not allow an
+update without a question, the Store asks in a window of its own. A host started
+with `--headless` has no window to ask in: with "Ask me" it only writes to its log
+that an update waits.
+
+Whether an update is mandatory is set in Partner Center and not used by the app.
+
+To check before a release (it needs a package installed from the Store, for example
+through a package flight, and a newer one published after it): the offer appears
+within a minute or two of the start; **Later** hides it; **Update now** installs,
+ends the program and brings it back in the tray with the same device ID and access
+code; with a viewer connected nothing appears until it has gone; "Install when no one
+is connected" does the same without a word.
+
 ## Required checks before the first submission
 
 - Review the custom license and ownership of original code; previously granted
@@ -103,7 +132,7 @@ are separate from GitHub releases; portable ZIP users still update manually.
   app privacy-policy URL and reviewed custom license terms for the listing.
   Do not advertise passwords, 2FA, hardware encoding or a relay as implemented.
   Describe direct internet connections as experimental, and make sure the privacy
-  policy mentions the STUN lookups (the host about every 25 seconds while running,
+  policy mentions that the Store build asks the Store for updates, the STUN lookups (the host about every 25 seconds while running,
   the viewer when it connects over the internet) and the rendezvous service
   (rendezvous.tidedesk.app: the host registers its device ID and public address
   with it by default; the viewer asks it when connecting by device ID), and that a

@@ -11,6 +11,7 @@ mod internet;
 mod platform;
 pub mod session;
 mod tray;
+pub mod updates;
 mod video;
 
 use std::ffi::OsString;
@@ -237,8 +238,10 @@ pub fn start(options: &StartOptions) -> Result<Started> {
         busy: AtomicBool::new(false),
         viewer: Mutex::new(None),
         expected_viewer: Mutex::new(None),
+        updates: Mutex::new(updates::Board::new(config.updates)),
         on_change: Mutex::new(None),
     });
+    updates::watch(state.clone());
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
