@@ -3,6 +3,7 @@
 //! memory, and the graphics card's encoder, asynchronously and from Direct3D
 //! 11 textures.
 
+use std::collections::VecDeque;
 use std::mem::ManuallyDrop;
 use std::sync::Mutex;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
@@ -63,6 +64,139 @@ const KEYFRAME_INTERVAL_S: u32 = 3600;
 /// hand one back before it counts as failed.
 const HARDWARE_TIMEOUT: Duration = Duration::from_secs(1);
 
+/// Pictures the graphics card's encoder holds at once, at most. A card takes
+/// its time over each picture (15 to 30 ms at desktop sizes), so waiting for
+/// one before handing over the next bounds the frame rate by that time. An
+/// encoder that works on two at once takes as long over each with the next
+/// one going in meanwhile, and they come out as fast as they went in. One
+/// that takes its pictures in turn gets one at a time.
+pub const HARDWARE_DEPTH: usize = 2;
+
+/// Whether the encoder gains from getting the next picture while it encodes
+/// the last, found out from how long pictures take. An encoder that takes
+/// its pictures in turn only keeps the next one waiting, which adds to the
+/// delay and nothing to the frame rate: it gets one at a time, as soon as
+/// that shows.
+///
+/// Pictures also take longer when there is more on the screen. So when they
+/// take longer with another in the encoder than the last ones did alone, the
+/// next ones go in alone again, and the verdict is about pictures taken
+/// right after each other.
+#[derive(Default)]
+struct Pairing {
+    /// How long the last pictures took that were alone in the encoder, and
+    /// the last ones that were not.
+    alone: VecDeque<Duration>,
+    paired: VecDeque<Duration>,
+    /// Pictures took longer with another in the encoder: how long they take
+    /// alone is being measured again.
+    doubted: bool,
+    verdict: Option<Verdict>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Verdict {
+    /// Pictures take as long with another in the encoder as alone.
+    AtOnce,
+    /// Pictures wait for the one before them.
+    InTurn,
+}
+
+impl Pairing {
+    /// Pictures that go in alone first, to know how long one takes.
+    const ALONE: usize = 8;
+    /// Pictures with another in the encoder that the verdict is about.
+    const PAIRED: usize = 16;
+    /// What the time a picture takes varies by, whatever is in the encoder.
+    const SLACK: Duration = Duration::from_millis(2);
+
+    /// Pictures the encoder gets at once.
+    fn depth(&self) -> usize {
+        if self.verdict == Some(Verdict::InTurn) || self.alone.len() < Self::ALONE {
+            1
+        } else {
+            HARDWARE_DEPTH
+        }
+    }
+
+    #[cfg(test)]
+    fn verdict(&self) -> Option<Verdict> {
+        self.verdict
+    }
+
+    /// How long pictures take alone and with another in the encoder: the
+    /// median of the last ones.
+    fn times(&self) -> (Duration, Duration) {
+        let median = |times: &VecDeque<Duration>| {
+            let mut sorted: Vec<_> = times.iter().copied().collect();
+            sorted.sort();
+            sorted.get(sorted.len() / 2).copied().unwrap_or_default()
+        };
+        (median(&self.alone), median(&self.paired))
+    }
+
+    /// Whether pictures take longer with another in the encoder than alone.
+    fn longer_together(&self) -> bool {
+        let (alone, together) = self.times();
+        together > alone * 5 / 4 + Self::SLACK
+    }
+
+    /// Takes note of how long a picture took, `paired` if another was in
+    /// the encoder meanwhile: the verdict, when this picture changes it. Once
+    /// pictures are found to be taken in turn, they are for good: what the
+    /// encoder is does not change, and finding out costs delay.
+    fn record(&mut self, took: Duration, paired: bool) -> Option<Verdict> {
+        if self.verdict == Some(Verdict::InTurn) {
+            return None;
+        }
+        let (times, most) = match paired {
+            true => (&mut self.paired, Self::PAIRED),
+            false => (&mut self.alone, Self::ALONE),
+        };
+        times.push_back(took);
+        if times.len() > most {
+            times.pop_front();
+        }
+        if self.alone.len() < Self::ALONE || self.paired.len() < Self::PAIRED {
+            return None;
+        }
+        let verdict = match (paired, self.doubted) {
+            (true, false) if self.longer_together() => {
+                self.doubted = true;
+                self.alone.clear();
+                return None;
+            }
+            (true, false) => Verdict::AtOnce,
+            (false, true) if self.longer_together() => Verdict::InTurn,
+            (false, true) => {
+                // The next verdict is about pictures from here on.
+                self.doubted = false;
+                self.paired.clear();
+                Verdict::AtOnce
+            }
+            // Pictures that were in the encoder when the doubt arose, and
+            // ones that happen to be alone.
+            (true, true) | (false, false) => return None,
+        };
+        (self.verdict.replace(verdict) != Some(verdict)).then_some(verdict)
+    }
+}
+
+/// A picture in the graphics card's encoder.
+struct Sent {
+    at: Instant,
+    /// Another picture was in the encoder meanwhile.
+    paired: bool,
+}
+
+/// Output taken from the graphics card's encoder.
+struct Taken {
+    /// Its sample's time (in 100 ns, as the picture's was set).
+    time: i64,
+    announced: Instant,
+    data: Vec<u8>,
+}
+
 pub struct Encoder {
     transform: IMFTransform,
     codec: ICodecAPI,
@@ -93,10 +227,15 @@ struct Hardware {
     device: ID3D11Device,
     /// Hands the device to the encoder; kept alive with it.
     _manager: IMFDXGIDeviceManager,
-    /// Pictures the encoder asked for, and outputs it announced, not yet
-    /// served.
+    /// Pictures the encoder asked for, not yet served.
     wanted: u32,
-    announced: u32,
+    /// When the encoder announced each output that is not taken yet.
+    announced: VecDeque<Instant>,
+    /// The pictures in the encoder, oldest first.
+    sent: VecDeque<Sent>,
+    /// Outputs taken from the encoder and not handed out yet, oldest first.
+    taken: VecDeque<Taken>,
+    pairing: Pairing,
     /// The picture in NV12, uploaded into a texture.
     nv12: Vec<u8>,
     /// Set when the encoder shares capture's device: pictures are converted
@@ -121,11 +260,12 @@ impl Drop for Encoder {
     }
 }
 
-/// An event from the encoder: its type and status.
-type Event = windows::core::Result<(u32, HRESULT)>;
+/// An event from the encoder: when it came, its type and status.
+type Event = (Instant, windows::core::Result<(u32, HRESULT)>);
 
 enum Output {
-    Data,
+    /// Data, with its sample's time (in 100 ns, as the picture's was set).
+    Data(i64),
     NeedMoreInput,
     StreamChanged,
 }
@@ -232,7 +372,7 @@ fn read_events(events: IMFMediaEventGenerator) -> Result<(Receiver<Event>, JoinH
                     .and_then(|event| unsafe { Ok((event.GetType()?, event.GetStatus()?)) });
                 // Ends once the encoder shuts down or nobody listens.
                 let failed = event.is_err();
-                if sender.send(event).is_err() || failed {
+                if sender.send((Instant::now(), event)).is_err() || failed {
                     break;
                 }
             }
@@ -597,15 +737,33 @@ impl Encoder {
         })
     }
 
-    /// Encodes a texture on this encoder's device into `out`; whether it is
-    /// a keyframe.
-    pub fn encode_texture(
+    /// Pictures the graphics card's encoder gets at once: [`HARDWARE_DEPTH`]
+    /// once it is known how long a picture takes alone, unless they take
+    /// longer with another in the encoder; one until then, and for the
+    /// software encoder.
+    pub fn depth(&self) -> usize {
+        self.hardware
+            .as_ref()
+            .map_or(1, |hardware| hardware.pairing.depth())
+    }
+
+    /// Pictures in the graphics card's encoder whose output has not been
+    /// taken.
+    pub fn in_flight(&self) -> usize {
+        self.hardware
+            .as_ref()
+            .map_or(0, |hardware| hardware.sent.len())
+    }
+
+    /// Hands a texture on this encoder's device to the graphics card's
+    /// encoder, without waiting for it to be encoded; [`Encoder::receive`]
+    /// gives the pictures back.
+    pub fn send_texture(
         &mut self,
         texture: &ID3D11Texture2D,
         timestamp_ms: u64,
         keyframe: bool,
-        out: &mut Vec<u8>,
-    ) -> Result<bool> {
+    ) -> Result<()> {
         let hardware = self
             .hardware
             .as_mut()
@@ -615,7 +773,176 @@ impl Encoder {
             .as_mut()
             .context("the encoder does not share the picture's device")?;
         let sample = surface_sample(converter.convert(texture)?)?;
-        self.encode_sample(sample, timestamp_ms, keyframe, out)
+        self.send_sample(sample, timestamp_ms, keyframe)
+    }
+
+    /// Hands BGRA pixels of this encoder's size to the graphics card's
+    /// encoder likewise, uploaded to the card.
+    pub fn send(&mut self, bgra: &[u8], timestamp_ms: u64, keyframe: bool) -> Result<()> {
+        self.yuv.read_bgra8(BgraSliceU8::new(bgra, self.size));
+        let hardware = self
+            .hardware
+            .as_mut()
+            .context("not a graphics card's encoder")?;
+        let sample = hardware.texture_sample(&self.yuv, self.size)?;
+        self.send_sample(sample, timestamp_ms, keyframe)
+    }
+
+    fn send_sample(&mut self, sample: IMFSample, timestamp_ms: u64, keyframe: bool) -> Result<()> {
+        if self.in_flight() >= self.depth() {
+            let held = self.in_flight();
+            bail!("the hardware H.264 encoder holds {held} pictures already");
+        }
+        let at = Instant::now();
+        self.stamp(&sample, timestamp_ms, keyframe)?;
+        self.wait_for_request()?;
+        self.hardware_mut().wanted -= 1;
+        unsafe { self.transform.ProcessInput(0, &sample, 0) }
+            .context("the hardware H.264 encoder refused the picture")?;
+        let hardware = self.hardware_mut();
+        while let Ok(event) = hardware.events.try_recv() {
+            hardware.count(event)?;
+        }
+        // The picture before is in the encoder with this one unless its
+        // output is there already, only not taken or handed out.
+        let finished = !hardware.announced.is_empty() || !hardware.taken.is_empty();
+        let paired = !hardware.sent.is_empty() && !finished;
+        if paired {
+            hardware.sent.iter_mut().for_each(|sent| sent.paired = true);
+        }
+        hardware.sent.push_back(Sent { at, paired });
+        Ok(())
+    }
+
+    /// Waits until the encoder asks for a picture. An encoder that only asks
+    /// once the last picture's output is taken has it taken here, for
+    /// [`Encoder::receive`] to hand out: it encodes one picture at a time, as
+    /// all did before.
+    fn wait_for_request(&mut self) -> Result<()> {
+        let deadline = Instant::now() + HARDWARE_TIMEOUT;
+        loop {
+            let hardware = self.hardware_mut();
+            if hardware.wanted > 0 {
+                return Ok(());
+            }
+            if !hardware.announced.is_empty() {
+                self.take_announced()?;
+                continue;
+            }
+            let left = deadline.saturating_duration_since(Instant::now());
+            match hardware.events.recv_timeout(left) {
+                Ok(event) => hardware.count(event)?,
+                Err(RecvTimeoutError::Timeout) => {
+                    bail!("the hardware H.264 encoder did not ask for a picture in time")
+                }
+                Err(RecvTimeoutError::Disconnected) => bail!("the hardware H.264 encoder stopped"),
+            }
+        }
+    }
+
+    /// The next picture the graphics card's encoder finished, in `out`,
+    /// waiting up to `wait` for it: whether it is a keyframe. Pictures come
+    /// back in the order they went in. An error once a picture has been in
+    /// the encoder for [`HARDWARE_TIMEOUT`].
+    pub fn receive(&mut self, wait: Duration, out: &mut Vec<u8>) -> Result<Option<bool>> {
+        if self.in_flight() == 0 {
+            return Ok(None);
+        }
+        let deadline = Instant::now() + wait;
+        loop {
+            self.take_announced()?;
+            if !self.hardware_mut().taken.is_empty() {
+                break;
+            }
+            if !self.announced_by(deadline)? {
+                let oldest = self.hardware_mut().sent.front();
+                if oldest.is_some_and(|sent| sent.at.elapsed() >= HARDWARE_TIMEOUT) {
+                    bail!("the hardware H.264 encoder did not encode the picture in time");
+                }
+                return Ok(None);
+            }
+        }
+        let hardware = self.hardware_mut();
+        // What else is taken is part of this picture when it carries its
+        // time, as the parameter sets some encoders hand out apart do, or
+        // when no other picture is in the encoder; else it is the next one.
+        let alone = hardware.sent.len() == 1;
+        let first = hardware.taken.pop_front().expect("taken above");
+        if out.is_empty() {
+            *out = first.data;
+        } else {
+            out.extend_from_slice(&first.data);
+        }
+        while let Some(more) = hardware.taken.front()
+            && (more.time == first.time || alone)
+        {
+            out.extend_from_slice(&more.data);
+            hardware.taken.pop_front();
+        }
+        let sent = hardware.sent.pop_front().expect("in flight");
+        let took = first.announced.saturating_duration_since(sent.at);
+        if let Some(verdict) = hardware.pairing.record(took, sent.paired) {
+            let (alone, paired) = hardware.pairing.times();
+            let (alone, paired) = (alone.as_secs_f64() * 1e3, paired.as_secs_f64() * 1e3);
+            match verdict {
+                Verdict::AtOnce => tracing::info!(
+                    "the hardware H.264 encoder works on two pictures at once: {paired:.1} ms each, {alone:.1} ms alone"
+                ),
+                Verdict::InTurn => tracing::info!(
+                    "the hardware H.264 encoder takes its pictures in turn, so it gets one at a time: {paired:.1} ms each with the next one waiting, {alone:.1} ms alone"
+                ),
+            }
+        }
+        let keyframe = is_keyframe(out);
+        if keyframe {
+            with_parameter_sets(out, &self.parameter_sets);
+        }
+        Ok(Some(keyframe))
+    }
+
+    /// Takes the outputs the encoder has announced so far, without waiting.
+    fn take_announced(&mut self) -> Result<()> {
+        let mut changes = 0;
+        loop {
+            let hardware = self.hardware_mut();
+            while let Ok(event) = hardware.events.try_recv() {
+                hardware.count(event)?;
+            }
+            let Some(announced) = hardware.announced.pop_front() else {
+                return Ok(());
+            };
+            let mut data = Vec::new();
+            match self.take_output(&mut data)? {
+                Output::Data(time) => self.hardware_mut().taken.push_back(Taken {
+                    time,
+                    announced,
+                    data,
+                }),
+                Output::NeedMoreInput => {}
+                Output::StreamChanged if changes < 3 => {
+                    changes += 1;
+                    self.renegotiate()?;
+                }
+                Output::StreamChanged => {
+                    bail!("the hardware H.264 encoder keeps changing its output")
+                }
+            }
+        }
+    }
+
+    /// Takes the encoder's events until it announces output or `deadline`
+    /// passes: whether it did. An error if the encoder reports a failure.
+    fn announced_by(&mut self, deadline: Instant) -> Result<bool> {
+        let hardware = self.hardware_mut();
+        while hardware.announced.is_empty() {
+            let left = deadline.saturating_duration_since(Instant::now());
+            match hardware.events.recv_timeout(left) {
+                Ok(event) => hardware.count(event)?,
+                Err(RecvTimeoutError::Timeout) => return Ok(false),
+                Err(RecvTimeoutError::Disconnected) => bail!("the hardware H.264 encoder stopped"),
+            }
+        }
+        Ok(true)
     }
 
     fn on_graphics_card(
@@ -639,7 +966,10 @@ impl Encoder {
             device,
             _manager: manager,
             wanted: 0,
-            announced: 0,
+            announced: VecDeque::new(),
+            sent: VecDeque::new(),
+            taken: VecDeque::new(),
+            pairing: Pairing::default(),
             nv12: Vec::new(),
             converter,
         };
@@ -788,8 +1118,10 @@ impl Encoder {
         self.size
     }
 
-    /// Encodes one BGRA picture of this encoder's size into `out`; whether
-    /// it is a keyframe.
+    /// Encodes one BGRA picture of this encoder's size into `out` with
+    /// Windows' software encoder, which finishes a picture before it returns;
+    /// whether it is a keyframe. The graphics card's encoder takes its
+    /// pictures through [`Encoder::send`].
     pub fn encode(
         &mut self,
         bgra: &[u8],
@@ -797,21 +1129,22 @@ impl Encoder {
         keyframe: bool,
         out: &mut Vec<u8>,
     ) -> Result<bool> {
+        if self.hardware.is_some() {
+            bail!("the hardware H.264 encoder takes its pictures in flight");
+        }
         self.yuv.read_bgra8(BgraSliceU8::new(bgra, self.size));
-        let sample = match &mut self.hardware {
-            Some(hardware) => hardware.texture_sample(&self.yuv, self.size)?,
-            None => self.memory_sample()?,
-        };
-        self.encode_sample(sample, timestamp_ms, keyframe, out)
+        let sample = self.memory_sample()?;
+        self.stamp(&sample, timestamp_ms, keyframe)?;
+        self.encode_in_software(&sample, out)?;
+        let keyframe = is_keyframe(out);
+        if keyframe {
+            with_parameter_sets(out, &self.parameter_sets);
+        }
+        Ok(keyframe)
     }
 
-    fn encode_sample(
-        &mut self,
-        sample: IMFSample,
-        timestamp_ms: u64,
-        keyframe: bool,
-        out: &mut Vec<u8>,
-    ) -> Result<bool> {
+    /// Sets when a picture was taken, and asks for it to be a keyframe.
+    fn stamp(&self, sample: &IMFSample, timestamp_ms: u64, keyframe: bool) -> Result<()> {
         unsafe {
             sample.SetSampleTime(timestamp_ms as i64 * 10_000)?;
             sample.SetSampleDuration(self.frame_duration)?;
@@ -823,16 +1156,7 @@ impl Encoder {
             }
             .context("the H.264 encoder cannot start a keyframe")?;
         }
-        if self.hardware.is_some() {
-            self.encode_on_graphics_card(&sample, out)?;
-        } else {
-            self.encode_in_software(&sample, out)?;
-        }
-        let keyframe = is_keyframe(out);
-        if keyframe {
-            with_parameter_sets(out, &self.parameter_sets);
-        }
-        Ok(keyframe)
+        Ok(())
     }
 
     fn encode_in_software(&mut self, sample: &IMFSample, out: &mut Vec<u8>) -> Result<()> {
@@ -848,69 +1172,8 @@ impl Encoder {
         self.drain(out)
     }
 
-    /// Hands the picture over once the encoder asks for one, then takes the
-    /// encoded picture once it is announced.
-    fn encode_on_graphics_card(&mut self, sample: &IMFSample, out: &mut Vec<u8>) -> Result<()> {
-        self.wait_for(|hardware| hardware.wanted > 0, "ask for a picture")?;
-        self.hardware_mut().wanted -= 1;
-        unsafe { self.transform.ProcessInput(0, sample, 0) }
-            .context("the hardware H.264 encoder refused the picture")?;
-        let mut changes = 0;
-        loop {
-            self.wait_for(|hardware| hardware.announced > 0, "encode the picture")?;
-            self.hardware_mut().announced -= 1;
-            match self.take_output(out)? {
-                Output::Data => return self.take_announced(out),
-                Output::NeedMoreInput => {}
-                Output::StreamChanged if changes < 3 => {
-                    changes += 1;
-                    self.renegotiate()?;
-                }
-                Output::StreamChanged => {
-                    bail!("the hardware H.264 encoder keeps changing its output")
-                }
-            }
-        }
-    }
-
-    /// Takes whatever else the encoder has already announced: it belongs to
-    /// this picture, as the next one is not in yet.
-    fn take_announced(&mut self, out: &mut Vec<u8>) -> Result<()> {
-        loop {
-            let hardware = self.hardware_mut();
-            while let Ok(event) = hardware.events.try_recv() {
-                hardware.count(event)?;
-            }
-            if hardware.announced == 0 {
-                return Ok(());
-            }
-            hardware.announced -= 1;
-            if let Output::StreamChanged = self.take_output(out)? {
-                self.renegotiate()?;
-            }
-        }
-    }
-
     fn hardware_mut(&mut self) -> &mut Hardware {
         self.hardware.as_mut().expect("a hardware encoder")
-    }
-
-    /// Takes the encoder's events until `done`; an error if that takes
-    /// longer than [`HARDWARE_TIMEOUT`] or the encoder reports a failure.
-    fn wait_for(&mut self, done: fn(&Hardware) -> bool, what: &str) -> Result<()> {
-        let hardware = self.hardware_mut();
-        let deadline = Instant::now() + HARDWARE_TIMEOUT;
-        while !done(hardware) {
-            let left = deadline.saturating_duration_since(Instant::now());
-            match hardware.events.recv_timeout(left) {
-                Ok(event) => hardware.count(event)?,
-                Err(RecvTimeoutError::Timeout) => {
-                    bail!("the hardware H.264 encoder did not {what} in time")
-                }
-                Err(RecvTimeoutError::Disconnected) => bail!("the hardware H.264 encoder stopped"),
-            }
-        }
-        Ok(())
     }
 
     fn memory_sample(&mut self) -> Result<IMFSample> {
@@ -935,7 +1198,7 @@ impl Encoder {
         let mut changes = 0;
         loop {
             match self.take_output(out)? {
-                Output::Data => {}
+                Output::Data(_) => {}
                 Output::NeedMoreInput => return Ok(()),
                 // The encoder settles its output type; take what it offers.
                 Output::StreamChanged if changes < 3 => {
@@ -980,13 +1243,14 @@ impl Encoder {
         match result {
             Ok(()) => {
                 let sample = sample.context("the H.264 encoder returned no data")?;
+                let time = unsafe { sample.GetSampleTime() }.unwrap_or(0);
                 let buffer = unsafe { sample.ConvertToContiguousBuffer() }?;
                 let mut data = std::ptr::null_mut();
                 let mut length = 0;
                 unsafe { buffer.Lock(&mut data, None, Some(&mut length)) }?;
                 out.extend_from_slice(unsafe { std::slice::from_raw_parts(data, length as usize) });
                 unsafe { buffer.Unlock() }?;
-                Ok(Output::Data)
+                Ok(Output::Data(time))
             }
             Err(e) if e.code() == MF_E_TRANSFORM_NEED_MORE_INPUT => Ok(Output::NeedMoreInput),
             Err(e) if e.code() == MF_E_TRANSFORM_STREAM_CHANGE => Ok(Output::StreamChanged),
@@ -998,7 +1262,7 @@ impl Encoder {
 impl Hardware {
     /// Counts a request for a picture or an announced output; an error if the
     /// encoder reports a failure.
-    fn count(&mut self, event: Event) -> Result<()> {
+    fn count(&mut self, (at, event): Event) -> Result<()> {
         let (kind, status) = event.context("the hardware H.264 encoder failed")?;
         if status.is_err() || kind == MEError.0 as u32 {
             let error = windows::core::Error::from(status);
@@ -1007,7 +1271,7 @@ impl Hardware {
         if kind == METransformNeedInput.0 as u32 {
             self.wanted += 1;
         } else if kind == METransformHaveOutput.0 as u32 {
-            self.announced += 1;
+            self.announced.push_back(at);
         }
         Ok(())
     }
@@ -1068,6 +1332,96 @@ fn surface_sample(texture: &ID3D11Texture2D) -> Result<IMFSample> {
 mod tests {
     use super::*;
     use windows::Win32::Foundation::{E_INVALIDARG, E_OUTOFMEMORY};
+
+    fn ms(ms: u64) -> Duration {
+        Duration::from_millis(ms)
+    }
+
+    /// Pictures that took `alone` each, one at a time, as the first ones go.
+    fn measured(alone: u64) -> Pairing {
+        let mut pairing = Pairing::default();
+        // The first also sets the encoder up.
+        assert_eq!(pairing.record(ms(170), false), None);
+        for _ in 1..Pairing::ALONE {
+            assert_eq!(pairing.depth(), 1, "not known yet how long a picture takes");
+            assert_eq!(pairing.record(ms(alone), false), None);
+        }
+        assert_eq!(pairing.depth(), HARDWARE_DEPTH);
+        pairing
+    }
+
+    #[test]
+    fn an_encoder_that_works_on_two_pictures_at_once_gets_them() {
+        let mut pairing = measured(28);
+        // As long as alone, with the next one in the encoder: 60 a second
+        // where one at a time gives 35.
+        for took in [28, 29, 27, 30].into_iter().cycle().take(100) {
+            pairing.record(ms(took), true);
+            assert_eq!(pairing.depth(), HARDWARE_DEPTH);
+        }
+        assert_eq!(pairing.verdict(), Some(Verdict::AtOnce));
+    }
+
+    /// Records pictures with another in the encoder, of the times `took`
+    /// gives, until the encoder gets one at a time.
+    fn until_doubted(pairing: &mut Pairing, took: impl Fn(u64) -> u64) {
+        for i in 0..40 {
+            assert_eq!(pairing.record(ms(took(i)), true), None, "picture {i}");
+            if pairing.depth() == 1 {
+                return;
+            }
+        }
+        panic!("the pictures were never doubted");
+    }
+
+    #[test]
+    fn an_encoder_that_takes_pictures_in_turn_gets_one_at_a_time() {
+        let mut pairing = measured(17);
+        // Each waits for the one before it, longer and longer, up to twice
+        // the time.
+        until_doubted(&mut pairing, |i| (18 + i).min(34));
+        // How long one takes alone is measured again, right then: as long
+        // as before.
+        for i in 1..=Pairing::ALONE {
+            assert_eq!(pairing.depth(), 1);
+            let verdict = pairing.record(ms(17), false);
+            assert_eq!(verdict.is_some(), i == Pairing::ALONE, "picture {i}");
+        }
+        assert_eq!(pairing.verdict(), Some(Verdict::InTurn));
+        // For good: what it is does not change, and finding out costs delay.
+        for _ in 0..100 {
+            assert_eq!(pairing.record(ms(17), false), None);
+            assert_eq!(pairing.depth(), 1);
+        }
+    }
+
+    #[test]
+    fn small_pictures_are_not_held_against_the_encoder() {
+        // 1 to 2 ms is within what the time varies by, not a wait.
+        let mut pairing = measured(1);
+        for _ in 0..40 {
+            pairing.record(ms(2), true);
+        }
+        assert_eq!(pairing.depth(), HARDWARE_DEPTH);
+    }
+
+    #[test]
+    fn a_busier_screen_is_not_held_against_the_encoder() {
+        // A still screen, then a film: every picture takes longer.
+        let mut pairing = measured(8);
+        until_doubted(&mut pairing, |_| 26);
+        // Alone too, measured right then.
+        for i in 1..=Pairing::ALONE {
+            assert_eq!(pairing.depth(), 1);
+            let verdict = pairing.record(ms(24), false);
+            assert_eq!(verdict.is_some(), i == Pairing::ALONE, "picture {i}");
+        }
+        assert_eq!(pairing.verdict(), Some(Verdict::AtOnce));
+        for _ in 0..100 {
+            assert_eq!(pairing.record(ms(26), true), None);
+            assert_eq!(pairing.depth(), HARDWARE_DEPTH);
+        }
+    }
 
     #[test]
     fn keyframes_get_parameter_sets_once() {

@@ -27,6 +27,12 @@ Settings are shared by viewer sessions on this Windows account.
   connection's original FPS (and OpenH264's screen-content preset with two
   encoding threads). Rapid changes are coalesced with a 250 ms minimum
   between encoder reconfigurations.
+- A graphics card's encoder that works on two pictures at once gets the next
+  one while it encodes the last, so the time it takes over each, 15 to 30 ms at
+  desktop sizes, does not hold the frame rate below 60. Whether it does shows in
+  how long its pictures take: one that takes them in turn would only keep the
+  next one waiting, and gets one at a time, as the other encoders do. The host's
+  log says which it is. Frames leave in the order their pictures were taken.
 - A new encoder starts each profile change with a keyframe and codec headers.
   No display mode switch, fixed resolution, scaling change or reconnection is used.
   The original host bitrate setting is preserved; Boost does not raise bandwidth
