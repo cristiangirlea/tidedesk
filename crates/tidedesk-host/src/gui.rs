@@ -197,7 +197,9 @@ impl HostApp {
     }
 
     /// Once per frame, before drawing: hides on close when a tray icon can
-    /// bring the window back, and mirrors the state into the tray.
+    /// bring the window back, and mirrors the state into the tray. (A hidden
+    /// window draws when the host's state changes, as when an update is
+    /// found.)
     pub fn frame(&mut self) {
         if !self.window_hooked && self.tray.is_some() {
             // Only hide on close when there is a tray icon to come back from.

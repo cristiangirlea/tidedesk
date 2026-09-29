@@ -81,12 +81,16 @@ usually runs all the time, in the tray. So the Store build asks the Store itself
 
 | Settings, Updates | What happens when an update waits |
 | --- | --- |
-| Ask me (default) | The Status tab says so, with **Update now** and **Later** (asks again after a day). |
+| Ask me (default) | The Status tab says so, with **Update now** and **Later** (asks again after a day). The tray icon's tooltip says "an update is ready". |
 | Install when no one is connected | The Store installs it as soon as no viewer is connected. |
 | Leave it to the Store | TideDesk does not ask; the Store updates it when it does not run. |
 
-Nothing is asked, offered or installed while a viewer is connected. The Store
-downloads and installs the package; TideDesk downloads nothing itself. Windows ends
+The tray icon's menu has **Update TideDesk now**, whatever is chosen in Settings: the
+Store is asked at once, and what it has is installed (once no viewer is connected).
+
+Nothing is asked, offered or installed while a viewer is connected, and while the
+Store installs an update new viewers are refused, as when the host is paused. The
+Store downloads and installs the package; TideDesk downloads nothing itself. Windows ends
 the program for the update and starts it again afterwards, hidden in the tray
 (`RegisterApplicationRestart`). Where the person's Store settings do not allow an
 update without a question, the Store asks in a window of its own. A host started

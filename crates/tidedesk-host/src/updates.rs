@@ -17,13 +17,15 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Updates {
-    /// Say that an update waits, and install it when told to.
-    #[default]
-    Ask,
     /// Install an update as soon as no viewer is connected.
     Automatic,
     /// Do not ask the Store; it updates the app when it does not run.
     Off,
+    /// Say that an update waits, and install it when told to. Also what a
+    /// word means that this version does not know (for which it is last).
+    #[default]
+    #[serde(other)]
+    Ask,
 }
 
 impl Updates {
@@ -93,11 +95,14 @@ impl Board {
     /// `connected` or not.
     pub fn step(&self, connected: bool, started: Instant, now: Instant) -> Step {
         let since = |then: Instant| now.saturating_duration_since(then);
-        if self.setting == Updates::Off || connected || self.installing {
+        // A word from the person counts whatever Settings say.
+        let off = self.setting == Updates::Off && !self.wanted;
+        if off || connected || self.installing {
             return Step::Nothing;
         }
         if !self.found {
             let due = match self.looked {
+                _ if self.wanted => true,
                 Some(looked) => since(looked) >= Self::EVERY,
                 None => since(started) >= Self::FIRST,
             };
@@ -116,12 +121,20 @@ impl Board {
     pub fn looked(&mut self, found: bool, now: Instant) {
         self.looked = Some(now);
         self.found = found;
-        if found {
-            self.failed = None;
+        self.failed = None;
+        if !found {
+            self.wanted = false;
         }
     }
 
-    /// "Update now" was chosen.
+    /// Whether an update waits that could be installed now, whether or not
+    /// "Later" was chosen in the window: what the tray's tooltip says.
+    pub fn waits(&self, connected: bool) -> bool {
+        self.found && !self.installing && !connected && self.setting != Updates::Off
+    }
+
+    /// "Update now" was chosen: what waits is installed, after asking the
+    /// Store if nothing is known to wait.
     pub fn now(&mut self) {
         self.wanted = true;
         self.failed = None;
@@ -162,7 +175,8 @@ pub fn watch(state: std::sync::Arc<crate::session::HostState>) {
         .name("updates".into())
         .spawn(move || {
             loop {
-                std::thread::sleep(Duration::from_secs(20));
+                // Short, for a word from the person to be followed soon.
+                std::thread::sleep(Duration::from_secs(2));
                 let connected = state.connected();
                 let step = state
                     .updates
@@ -244,6 +258,8 @@ mod store {
                 .join()?
         } else {
             let window = window.context("the Store wants to ask, and there is no window")?;
+            // In front of the window, which is hidden while in the tray.
+            crate::platform::set_window_visible(window, true);
             let owner = unsafe { FindWindowW(None, &HSTRING::from(window)) }
                 .context("the Store wants to ask, and the window is not to be found")?;
             unsafe { store.cast::<IInitializeWithWindow>()?.Initialize(owner) }?;
@@ -389,6 +405,68 @@ mod tests {
         board.looked(true, at + 6 * HOUR);
         assert_eq!(board.failed, None);
         assert_eq!(board.step(false, started, at + 6 * HOUR), Step::Install);
+    }
+
+    #[test]
+    fn a_failure_is_forgotten_when_the_store_is_asked_again() {
+        let (mut board, started) = found(Updates::Ask);
+        let at = started + 2 * MINUTE;
+        board.installed(Err("the Store stopped at step 4".into()), at);
+        // The Store updated the app itself meanwhile, or withdrew the update.
+        board.looked(false, at + 6 * HOUR);
+        assert_eq!(board.failed, None);
+    }
+
+    /// What the tray's tooltip says: whatever was chosen in the window.
+    #[test]
+    fn the_tray_says_what_waits() {
+        let (mut board, started) = found(Updates::Ask);
+        let at = started + 2 * MINUTE;
+        assert!(board.waits(false));
+        board.later(at);
+        assert!(board.waits(false));
+        assert!(!board.waits(true), "not with a viewer connected");
+        board.installing();
+        assert!(!board.waits(false));
+        assert!(!found(Updates::Off).0.waits(false));
+        assert!(!Board::new(Updates::Ask).waits(false), "nothing found");
+    }
+
+    /// "Update TideDesk now" in the tray's menu, which is there whether or
+    /// not an update is known to wait: the Store is asked at once, and what
+    /// it has is installed.
+    #[test]
+    fn a_word_is_enough_to_ask_the_store_and_install() {
+        for setting in Updates::ALL {
+            let started = Instant::now();
+            let mut board = Board::new(setting);
+            board.now();
+            // Not in the first minute's turn, nor in six hours.
+            assert_eq!(board.step(false, started, started), Step::Look);
+            assert_eq!(board.step(true, started, started), Step::Nothing);
+            board.looked(true, started);
+            assert_eq!(board.step(false, started, started), Step::Install);
+
+            // With nothing in the Store, that is that.
+            let mut board = Board::new(setting);
+            board.looked(false, started);
+            board.now();
+            assert_eq!(board.step(false, started, started), Step::Look);
+            board.looked(false, started);
+            assert_eq!(board.step(false, started, started), Step::Nothing);
+        }
+    }
+
+    /// A word that this version does not know, from a hand or from a later
+    /// version, must not cost the other settings.
+    #[test]
+    fn an_unknown_word_means_ask() {
+        #[derive(Deserialize)]
+        struct File {
+            updates: Updates,
+        }
+        let file: File = toml::from_str("updates = \"nightly\"").unwrap();
+        assert_eq!(file.updates, Updates::Ask);
     }
 
     #[test]

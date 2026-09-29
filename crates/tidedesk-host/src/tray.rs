@@ -32,6 +32,10 @@ impl Tray {
             None,
         );
         let disconnect = MenuItem::new("Disconnect viewer", true, None);
+        // Always there in the build the Store installed, and not kept up to
+        // date with what waits: a window hidden in the tray may not draw,
+        // and nothing else runs on this thread.
+        let update = MenuItem::new(format!("Update {title} now"), true, None);
         let quit = MenuItem::new("Quit", true, None);
         let menu = Menu::with_items(&[
             &open,
@@ -39,8 +43,11 @@ impl Tray {
             &accept,
             &disconnect,
             &PredefinedMenuItem::separator(),
-            &quit,
         ])?;
+        if platform::is_packaged() {
+            menu.append(&update)?;
+        }
+        menu.append(&quit)?;
 
         let icon = TrayIconBuilder::new()
             .with_icon(tray_icon::Icon::from_rgba(
@@ -64,10 +71,11 @@ impl Tray {
             }
         }));
 
-        let (open_id, accept_id, disconnect_id, quit_id) = (
+        let (open_id, accept_id, disconnect_id, update_id, quit_id) = (
             open.id().clone(),
             accept.id().clone(),
             disconnect.id().clone(),
+            update.id().clone(),
             quit.id().clone(),
         );
         MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
@@ -82,6 +90,9 @@ impl Tray {
                 if let Some(v) = state.viewer.lock().unwrap().as_ref() {
                     v.connection.close(2u32.into(), b"disconnected by host");
                 }
+            } else if event.id == update_id {
+                state.updates.lock().unwrap().now();
+                state.changed();
             } else if event.id == quit_id {
                 if let Some(v) = state.viewer.lock().unwrap().as_ref() {
                     v.connection.close(0u32.into(), b"host quit");
@@ -106,8 +117,14 @@ impl Tray {
         if self.accept.is_checked() != accepting {
             self.accept.set_checked(accepting);
         }
+        let (waits, installing) = {
+            let updates = state.updates.lock().unwrap();
+            (updates.waits(state.connected()), updates.installing)
+        };
         let tooltip = match state.viewer.lock().unwrap().as_ref() {
             Some(v) => format!("{} — {} connected", self.title, v.name),
+            None if installing => format!("{} — installing an update", self.title),
+            None if waits => format!("{} — an update is ready", self.title),
             None if accepting => format!("{} — waiting for a viewer", self.title),
             None => format!("{} — paused", self.title),
         };
