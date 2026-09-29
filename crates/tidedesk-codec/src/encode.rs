@@ -3,6 +3,9 @@
 //! with the parameter sets in front of every keyframe, which every TideDesk
 //! viewer decodes.
 
+use std::collections::VecDeque;
+use std::time::Duration;
+
 use anyhow::{Result, bail};
 use openh264::encoder::{
     BitRate, Complexity, EncoderConfig, FrameRate, FrameType, RateControlMode, UsageType,
@@ -52,9 +55,38 @@ pub struct Settings {
     pub motion: bool,
 }
 
+/// A picture an encoder finished.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Encoded {
+    /// As given to [`Encoder::send`] with the picture.
+    pub timestamp_ms: u64,
+    pub size: (usize, usize),
+    pub keyframe: bool,
+}
+
+/// What [`Encoder::receive`] found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Received {
+    /// The next picture, in the order they were sent.
+    Picture(Encoded),
+    /// No picture is finished yet, or none was sent.
+    Waiting,
+    /// The graphics card's encoder failed, and the pictures it held are
+    /// lost. Windows' software encoder takes over with the next picture,
+    /// starting with a keyframe; should that fail, OpenH264 does.
+    Lost,
+}
+
 pub struct Encoder {
     inner: Inner,
     keyframe: bool,
+    /// Pictures in the graphics card's encoder, oldest first: their
+    /// timestamps and sizes.
+    flying: VecDeque<(u64, (usize, usize))>,
+    /// Pictures finished and not taken yet, oldest first.
+    ready: VecDeque<(Encoded, Vec<u8>)>,
+    /// The buffer the last picture was taken into, for the next.
+    spare: Vec<u8>,
     /// Pixels of textures, for encoders that need them in system memory.
     #[cfg(windows)]
     readback: crate::gpu::Readback,
@@ -121,15 +153,22 @@ impl Encoder {
             .num_threads(if settings.motion { 4 } else { 2 });
         let encoder =
             openh264::encoder::Encoder::with_api_config(OpenH264API::from_source(), config)?;
-        Ok(Self {
-            inner: Inner::OpenH264 {
-                encoder: Box::new(encoder),
-                yuv: None,
-            },
+        Ok(Self::with(Inner::OpenH264 {
+            encoder: Box::new(encoder),
+            yuv: None,
+        }))
+    }
+
+    fn with(inner: Inner) -> Self {
+        Self {
+            inner,
             keyframe: false,
+            flying: VecDeque::new(),
+            ready: VecDeque::new(),
+            spare: Vec::new(),
             #[cfg(windows)]
             readback: Default::default(),
-        })
+        }
     }
 
     /// Windows' own encoder; an error where Windows has none.
@@ -148,16 +187,11 @@ impl Encoder {
 
     #[cfg(windows)]
     fn windows(settings: Settings, hardware: bool) -> Self {
-        Self {
-            inner: Inner::MediaFoundation {
-                current: None,
-                settings,
-                hardware,
-            },
-            keyframe: false,
-            #[cfg(windows)]
-            readback: Default::default(),
-        }
+        Self::with(Inner::MediaFoundation {
+            current: None,
+            settings,
+            hardware,
+        })
     }
 
     pub fn implementation(&self) -> Implementation {
@@ -174,13 +208,33 @@ impl Encoder {
         self.keyframe = true;
     }
 
+    /// Pictures the encoder gets at once: two for a graphics card's that
+    /// works on the next picture while it encodes the last, so that the time
+    /// it takes over each does not bound the frame rate. That shows in how
+    /// long its pictures take, so it is one for its first pictures, and stays
+    /// one where a picture only waits for the one before it; as it is for the
+    /// other encoders.
+    pub fn depth(&self) -> usize {
+        match &self.inner {
+            #[cfg(windows)]
+            Inner::MediaFoundation {
+                current: Some(encoder),
+                ..
+            } => encoder.depth(),
+            _ => 1,
+        }
+    }
+
+    /// Pictures sent and not received yet.
+    pub fn in_flight(&self) -> usize {
+        self.flying.len() + self.ready.len()
+    }
+
     /// Encodes one picture, the top-left `size` of `image` (even width and
-    /// height), into `out`,
-    /// which stays empty when the encoder skips the picture; whether it is a
-    /// keyframe. Should the graphics card's encoder fail, Windows' software
-    /// encoder takes over from this picture on, starting with a keyframe;
-    /// should that fail, OpenH264 does. Pictures larger than H.264 decoders
-    /// take are refused.
+    /// height), into `out`, which stays empty when the encoder skips the
+    /// picture; whether it is a keyframe. This is [`Encoder::send`] and
+    /// [`Encoder::receive`] in one, for an encoder with no pictures in
+    /// flight.
     pub fn encode<'a>(
         &mut self,
         image: impl Into<Image<'a>>,
@@ -190,6 +244,32 @@ impl Encoder {
     ) -> Result<bool> {
         let image = image.into();
         out.clear();
+        self.send(image, size, timestamp_ms)?;
+        loop {
+            match self.receive(Duration::from_millis(100), out)? {
+                Received::Picture(encoded) => return Ok(encoded.keyframe),
+                Received::Waiting => {}
+                // The encoder that took over encodes it.
+                Received::Lost => self.send(image, size, timestamp_ms)?,
+            }
+        }
+    }
+
+    /// Hands over one picture, the top-left `size` of `image` (even width
+    /// and height), for [`Encoder::receive`] to give back encoded. The
+    /// graphics card's encoder takes it without waiting for the one before,
+    /// up to [`Encoder::depth`] at once; the others encode it here. Should
+    /// the graphics card's encoder fail, Windows' software encoder takes over
+    /// from this picture on, starting with a keyframe, and the pictures the
+    /// card held are lost; should that fail, OpenH264 does. Pictures larger
+    /// than H.264 decoders take are refused.
+    pub fn send<'a>(
+        &mut self,
+        image: impl Into<Image<'a>>,
+        size: (usize, usize),
+        timestamp_ms: u64,
+    ) -> Result<()> {
+        let image = image.into();
         if let Image::Bgra(bgra) = image
             && bgra.len() != size.0 * size.1 * 4
         {
@@ -202,7 +282,81 @@ impl Encoder {
                 size.1
             );
         }
+        if self.in_flight() >= self.depth() {
+            bail!("the encoder holds {} pictures already", self.in_flight());
+        }
         let keyframe = std::mem::take(&mut self.keyframe);
+        let mut data = std::mem::take(&mut self.spare);
+        data.clear();
+        match self.hand_over(image, size, (timestamp_ms, keyframe), &mut data) {
+            Ok(Some(keyframe)) => {
+                let encoded = Encoded {
+                    timestamp_ms,
+                    size,
+                    keyframe,
+                };
+                self.ready.push_back((encoded, data));
+                Ok(())
+            }
+            Ok(None) => {
+                self.spare = data;
+                self.flying.push_back((timestamp_ms, size));
+                Ok(())
+            }
+            Err(e) => {
+                self.fall_back(e)?;
+                self.send(image, size, timestamp_ms)
+            }
+        }
+    }
+
+    /// The next picture finished, in `out` (empty when the encoder skipped
+    /// it), waiting up to `wait` for the graphics card's encoder to finish
+    /// it.
+    pub fn receive(&mut self, wait: Duration, out: &mut Vec<u8>) -> Result<Received> {
+        out.clear();
+        if let Some((encoded, data)) = self.ready.pop_front() {
+            self.spare = std::mem::replace(out, data);
+            return Ok(Received::Picture(encoded));
+        }
+        #[cfg(not(windows))]
+        let _ = wait;
+        #[cfg(windows)]
+        if let Inner::MediaFoundation {
+            current: Some(encoder),
+            ..
+        } = &mut self.inner
+            && let Some(&(timestamp_ms, size)) = self.flying.front()
+        {
+            match encoder.receive(wait, out) {
+                Ok(Some((_, keyframe))) => {
+                    self.flying.pop_front();
+                    return Ok(Received::Picture(Encoded {
+                        timestamp_ms,
+                        size,
+                        keyframe,
+                    }));
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    out.clear();
+                    self.fall_back(e)?;
+                    return Ok(Received::Lost);
+                }
+            }
+        }
+        Ok(Received::Waiting)
+    }
+
+    /// Hands the picture to the encoder in use. One that finishes it at once
+    /// writes it into `data`: whether it is a keyframe.
+    fn hand_over(
+        &mut self,
+        image: Image<'_>,
+        size: (usize, usize),
+        (timestamp_ms, keyframe): (u64, bool),
+        data: &mut Vec<u8>,
+    ) -> Result<Option<bool>> {
         match &mut self.inner {
             #[cfg(windows)]
             Inner::MediaFoundation {
@@ -210,32 +364,67 @@ impl Encoder {
                 settings,
                 hardware,
             } => {
+                use crate::mf_encode::Encoder as Windows;
                 let (settings, hardware) = (*settings, *hardware);
-                let encoded = Self::encode_in_windows(
-                    current,
-                    &mut self.readback,
-                    image,
-                    size,
-                    (settings, hardware),
-                    (timestamp_ms, keyframe),
-                    out,
-                );
-                encoded.or_else(|e| {
-                    *self = if hardware {
-                        tracing::warn!("using Windows' software encoder from here on: {e:#}");
-                        match Self::media_foundation(settings) {
-                            Ok(encoder) => encoder,
-                            Err(e) => {
-                                tracing::warn!("using OpenH264 from here on: {e:#}");
-                                Self::openh264(settings)?
-                            }
+                let texture = match image {
+                    Image::Texture(texture) if hardware => Some(texture),
+                    _ => None,
+                };
+                let fits = current.as_ref().is_some_and(|encoder| {
+                    encoder.size() == size
+                        && texture.is_none_or(|t| !encoder.zero_copy() || encoder.same_device(t))
+                });
+                if !fits {
+                    // The pictures the old encoder holds come out first.
+                    while let (Some(old), Some(&(timestamp_ms, size))) =
+                        (current.as_mut(), self.flying.front())
+                    {
+                        let mut finished = Vec::new();
+                        let Some((_, keyframe)) =
+                            old.receive(Duration::from_secs(1), &mut finished)?
+                        else {
+                            bail!("the hardware H.264 encoder did not finish its pictures");
+                        };
+                        let encoded = Encoded {
+                            timestamp_ms,
+                            size,
+                            keyframe,
+                        };
+                        self.flying.pop_front();
+                        self.ready.push_back((encoded, finished));
+                    }
+                    // A new encoder, for a new size or card, starts with a
+                    // keyframe.
+                    *current = None;
+                    let made = match texture {
+                        Some(texture) => {
+                            Windows::on_texture_card(texture, size, settings).or_else(|e| {
+                                tracing::debug!(
+                                    "the picture leaves the graphics card to be encoded: {e:#}"
+                                );
+                                Windows::new(size, settings, hardware)
+                            })
                         }
-                    } else {
-                        tracing::warn!("using OpenH264 from here on: {e:#}");
-                        Self::openh264(settings)?
+                        None => Windows::new(size, settings, hardware),
                     };
-                    self.encode(image, size, timestamp_ms, out)
-                })
+                    *current = Some(Box::new(made?));
+                }
+                let encoder = current.as_mut().expect("made above");
+                // A texture stays on its card when that card's encoder takes
+                // it; otherwise its pixels are copied back.
+                let bgra = match image {
+                    Image::Texture(texture) if encoder.zero_copy() => {
+                        encoder.send_texture(texture, timestamp_ms, keyframe)?;
+                        return Ok(None);
+                    }
+                    Image::Texture(texture) => self.readback.read(texture, size)?,
+                    Image::Bgra(bgra) => bgra,
+                };
+                if hardware {
+                    encoder.send(bgra, timestamp_ms, keyframe)?;
+                    return Ok(None);
+                }
+                encoder.encode(bgra, timestamp_ms, keyframe, data).map(Some)
             }
             Inner::OpenH264 { encoder, yuv } => {
                 let bgra = match image {
@@ -253,55 +442,35 @@ impl Encoder {
                 }
                 let encoded = encoder.encode_at(buffer, Timestamp::from_millis(timestamp_ms))?;
                 let keyframe = matches!(encoded.frame_type(), FrameType::IDR | FrameType::I);
-                encoded.write_vec(out);
-                Ok(keyframe)
+                encoded.write_vec(data);
+                Ok(Some(keyframe))
             }
         }
     }
 
-    /// Encodes with Windows' encoders. A texture stays on its card when that
-    /// card's encoder takes it; otherwise its pixels are copied back.
-    #[cfg(windows)]
-    fn encode_in_windows(
-        current: &mut Option<Box<crate::mf_encode::Encoder>>,
-        readback: &mut crate::gpu::Readback,
-        image: Image<'_>,
-        size: (usize, usize),
-        (settings, hardware): (Settings, bool),
-        (timestamp_ms, keyframe): (u64, bool),
-        out: &mut Vec<u8>,
-    ) -> Result<bool> {
-        use crate::mf_encode::Encoder as Windows;
-        let texture = match image {
-            Image::Texture(texture) if hardware => Some(texture),
-            _ => None,
-        };
-        let fits = current.as_ref().is_some_and(|encoder| {
-            encoder.size() == size
-                && texture.is_none_or(|t| !encoder.zero_copy() || encoder.same_device(t))
-        });
-        if !fits {
-            // A new encoder, for a new size or card, starts with a keyframe.
-            *current = None;
-            let made = match texture {
-                Some(texture) => Windows::on_texture_card(texture, size, settings).or_else(|e| {
-                    tracing::debug!("the picture leaves the graphics card to be encoded: {e:#}");
-                    Windows::new(size, settings, hardware)
-                }),
-                None => Windows::new(size, settings, hardware),
-            };
-            *current = Some(Box::new(made?));
-        }
-        let encoder = current.as_mut().expect("made above");
-        match image {
-            Image::Texture(texture) if encoder.zero_copy() => {
-                encoder.encode_texture(texture, timestamp_ms, keyframe, out)
+    /// Replaces a Windows encoder that failed with `error` by the next one
+    /// down; the pictures it held are lost. OpenH264 has none to follow it.
+    fn fall_back(&mut self, error: anyhow::Error) -> Result<()> {
+        match self.inner {
+            #[cfg(windows)]
+            Inner::MediaFoundation {
+                settings, hardware, ..
+            } => {
+                let next = if hardware {
+                    tracing::warn!("using Windows' software encoder from here on: {error:#}");
+                    Self::media_foundation(settings).or_else(|e| {
+                        tracing::warn!("using OpenH264 from here on: {e:#}");
+                        Self::openh264(settings)
+                    })?
+                } else {
+                    tracing::warn!("using OpenH264 from here on: {error:#}");
+                    Self::openh264(settings)?
+                };
+                self.flying.clear();
+                self.inner = next.inner;
+                Ok(())
             }
-            Image::Texture(texture) => {
-                let bgra = readback.read(texture, size)?;
-                encoder.encode(bgra, timestamp_ms, keyframe, out)
-            }
-            Image::Bgra(bgra) => encoder.encode(bgra, timestamp_ms, keyframe, out),
+            Inner::OpenH264 { .. } => Err(error),
         }
     }
 
@@ -361,6 +530,8 @@ pub(crate) fn is_keyframe(annex_b: &[u8]) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
     use crate::Decoder;
 
@@ -736,6 +907,174 @@ mod tests {
             assert!(
                 error.to_string().contains("0 bytes for a 256x144"),
                 "{name}: {error}"
+            );
+        }
+    }
+
+    /// Takes the next picture back from `encoder`, which has one in flight,
+    /// and checks that a viewer decodes it: its timestamp.
+    fn take_back(encoder: &mut Encoder, decoder: &mut Decoder, out: &mut Vec<u8>) -> u64 {
+        let name = encoder.implementation();
+        match encoder.receive(Duration::from_secs(2), out).unwrap() {
+            Received::Picture(encoded) => {
+                assert_eq!(encoded.size, SIZE, "{name}");
+                assert_eq!(encoded.keyframe, is_keyframe(out), "{name}");
+                let (size, _) = decode(decoder, out).expect("a viewer decodes it");
+                assert_eq!(size, SIZE, "{name}");
+                encoded.timestamp_ms
+            }
+            Received::Waiting => panic!("{name} did not finish its picture"),
+            Received::Lost => panic!("{name} lost its pictures"),
+        }
+    }
+
+    /// Pictures handed over come back in the order they went in, each with
+    /// its own timestamp, from every encoder: the host sends them on as they
+    /// come.
+    #[test]
+    fn pictures_sent_come_back_in_order_with_their_timestamps() {
+        for mut encoder in encoders(SETTINGS) {
+            let name = encoder.implementation();
+            let mut decoder = Decoder::openh264().unwrap();
+            let (mut out, mut back) = (Vec::new(), Vec::new());
+            assert!(
+                matches!(
+                    encoder.receive(Duration::ZERO, &mut out).unwrap(),
+                    Received::Waiting
+                ),
+                "{name}: nothing went in yet"
+            );
+            // Enough for the graphics card's encoder to get two at once.
+            for i in 0..20 {
+                while encoder.in_flight() >= encoder.depth() {
+                    back.push(take_back(&mut encoder, &mut decoder, &mut out));
+                }
+                encoder
+                    .send(&scene(SIZE.0, SIZE.1, i), SIZE, i as u64 * 33)
+                    .unwrap();
+                assert!(encoder.in_flight() <= encoder.depth(), "{name}");
+            }
+            while encoder.in_flight() > 0 {
+                back.push(take_back(&mut encoder, &mut decoder, &mut out));
+            }
+            let sent: Vec<u64> = (0..20).map(|i| i * 33).collect();
+            assert_eq!(back, sent, "{name}");
+            assert_eq!(encoder.implementation(), name);
+        }
+    }
+
+    /// Encodes pictures one at a time until the graphics card's encoder
+    /// knows how long one takes, and gets two at once: how many it took.
+    #[cfg(windows)]
+    fn until_two_at_once(
+        encoder: &mut Encoder,
+        mut send: impl FnMut(&mut Encoder, usize),
+    ) -> usize {
+        let mut out = Vec::new();
+        for i in 0..20 {
+            if encoder.depth() == 2 {
+                return i;
+            }
+            send(encoder, i);
+            let received = encoder.receive(Duration::from_secs(2), &mut out).unwrap();
+            assert!(matches!(received, Received::Picture(_)), "picture {i}");
+        }
+        panic!("the encoder never got two pictures at once");
+    }
+
+    /// The graphics card's encoder gets the next picture while it is still
+    /// encoding the last, so that the frame rate is not bound by the time a
+    /// picture takes, once it is known how long that is; the others finish
+    /// each picture before the next.
+    #[test]
+    fn only_the_cards_encoder_holds_two_pictures_at_once() {
+        for mut encoder in encoders(SETTINGS) {
+            let name = encoder.implementation();
+            assert_eq!(encoder.depth(), 1, "{name}");
+            #[cfg(windows)]
+            if name == Implementation::Hardware {
+                let first = until_two_at_once(&mut encoder, |encoder, i| {
+                    let pixels = scene(SIZE.0, SIZE.1, i);
+                    encoder.send(&pixels, SIZE, i as u64 * 33).unwrap();
+                });
+                let mut decoder = Decoder::openh264().unwrap();
+                let mut out = Vec::new();
+                encoder.force_keyframe();
+                // Two in, back to back, before anything is taken out.
+                for i in first..first + 2 {
+                    encoder
+                        .send(&scene(SIZE.0, SIZE.1, i), SIZE, i as u64 * 33)
+                        .unwrap();
+                }
+                assert_eq!(encoder.in_flight(), 2);
+                for i in first..first + 2 {
+                    let timestamp = take_back(&mut encoder, &mut decoder, &mut out);
+                    assert_eq!(timestamp, i as u64 * 33);
+                }
+                assert_eq!(encoder.in_flight(), 0);
+                assert_eq!(encoder.implementation(), name);
+                continue;
+            }
+            // A second picture is refused, not queued.
+            let pixels = scene(SIZE.0, SIZE.1, 0);
+            encoder.send(&pixels, SIZE, 0).unwrap();
+            let error = encoder.send(&pixels, SIZE, 33).unwrap_err().to_string();
+            assert!(
+                error.contains("holds 1 pictures already"),
+                "{name}: {error}"
+            );
+            assert_eq!(encoder.implementation(), name);
+        }
+    }
+
+    /// Textures too: on the card each picture in flight has a texture of its
+    /// own, so the one being encoded is not overwritten by the next.
+    #[cfg(windows)]
+    #[test]
+    fn textures_in_flight_keep_their_own_picture() {
+        let (Some(device), Some(mut encoder)) =
+            (crate::gpu::tests::device(), hardware_or_skip(SETTINGS))
+        else {
+            return;
+        };
+        let first = until_two_at_once(&mut encoder, |encoder, i| {
+            let texture = crate::gpu::tests::upload(&device, &scene(SIZE.0, SIZE.1, i), SIZE);
+            let at = i as u64 * 33;
+            encoder.send(Image::Texture(&texture), SIZE, at).unwrap();
+        });
+        let mut decoder = Decoder::openh264().unwrap();
+        let mut out = Vec::new();
+        encoder.force_keyframe();
+        let pictures: Vec<Vec<u8>> = (0..6).map(|i| scene(SIZE.0, SIZE.1, i * 9)).collect();
+        let mut decoded = Vec::new();
+        let mut take = |encoder: &mut Encoder, decoded: &mut Vec<Planes>| {
+            let Received::Picture(_) = encoder.receive(Duration::from_secs(2), &mut out).unwrap()
+            else {
+                panic!("the card did not finish its picture");
+            };
+            decoded.push(decode(&mut decoder, &out).expect("a viewer decodes it").1);
+        };
+        let mut most = 0;
+        for (i, pixels) in pictures.iter().enumerate() {
+            while encoder.in_flight() >= encoder.depth() {
+                take(&mut encoder, &mut decoded);
+            }
+            let texture = crate::gpu::tests::upload(&device, pixels, SIZE);
+            let at = (first + i) as u64 * 33;
+            encoder.send(Image::Texture(&texture), SIZE, at).unwrap();
+            most = most.max(encoder.in_flight());
+        }
+        while encoder.in_flight() > 0 {
+            take(&mut encoder, &mut decoded);
+        }
+        assert_eq!(most, 2);
+        assert!(encoder.on_card());
+        assert_eq!(decoded.len(), pictures.len());
+        for (i, (decoded, pixels)) in decoded.iter().zip(&pictures).enumerate() {
+            let quality = psnr(&decoded[0], &source_planes(pixels, SIZE)[0]);
+            assert!(
+                quality > 30.0,
+                "picture {i} is not its own: {quality:.1} dB"
             );
         }
     }

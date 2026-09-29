@@ -34,8 +34,11 @@ pub(crate) struct Converter {
     context: ID3D11VideoContext,
     enumerator: ID3D11VideoProcessorEnumerator,
     processor: ID3D11VideoProcessor,
-    output: ID3D11Texture2D,
-    output_view: ID3D11VideoProcessorOutputView,
+    /// NV12 textures, written in turn: one more than the encoder holds
+    /// pictures at once, so that none it is still reading is written over.
+    outputs: Vec<(ID3D11Texture2D, ID3D11VideoProcessorOutputView)>,
+    /// The texture the next picture goes into.
+    next: usize,
     /// The last picture's texture and its view: capture reuses its texture.
     input: Option<(ID3D11Texture2D, ID3D11VideoProcessorInputView)>,
     /// The top-left `size` of larger pictures. Video processors are to crop
@@ -80,27 +83,30 @@ impl Converter {
             CPUAccessFlags: 0,
             MiscFlags: 0,
         };
-        let mut output = None;
-        unsafe { device.CreateTexture2D(&desc, None, Some(&mut output)) }
-            .context("the card cannot hold NV12 pictures")?;
-        let output = output.context("no NV12 texture")?;
         let view = D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC {
             ViewDimension: D3D11_VPOV_DIMENSION_TEXTURE2D,
             Anonymous: D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC_0 {
                 Texture2D: D3D11_TEX2D_VPOV { MipSlice: 0 },
             },
         };
-        let mut output_view = None;
-        unsafe {
-            video.CreateVideoProcessorOutputView(
-                &output,
-                &enumerator,
-                &view,
-                Some(&mut output_view),
-            )
+        let mut outputs = Vec::new();
+        for _ in 0..=crate::mf_encode::HARDWARE_DEPTH {
+            let mut output = None;
+            unsafe { device.CreateTexture2D(&desc, None, Some(&mut output)) }
+                .context("the card cannot hold NV12 pictures")?;
+            let output = output.context("no NV12 texture")?;
+            let mut output_view = None;
+            unsafe {
+                video.CreateVideoProcessorOutputView(
+                    &output,
+                    &enumerator,
+                    &view,
+                    Some(&mut output_view),
+                )
+            }
+            .context("the card cannot convert into NV12")?;
+            outputs.push((output, output_view.context("no NV12 view")?));
         }
-        .context("the card cannot convert into NV12")?;
-        let output_view = output_view.context("no NV12 view")?;
         let rect = RECT {
             left: 0,
             top: 0,
@@ -147,15 +153,16 @@ impl Converter {
             context,
             enumerator,
             processor,
-            output,
-            output_view,
+            outputs,
+            next: 0,
             input: None,
             cropped: None,
         })
     }
 
     /// The top-left `size` of `bgra` as NV12, in a texture the converter
-    /// reuses: done with once the encoder has returned its picture.
+    /// uses again once the encoder has returned this picture and the ones
+    /// handed over after it while it was in the encoder.
     pub(crate) fn convert(&mut self, bgra: &ID3D11Texture2D) -> Result<&ID3D11Texture2D> {
         let desc = bgra_description(bgra)?;
         let (width, height) = (self.size.0 as u32, self.size.1 as u32);
@@ -253,13 +260,16 @@ impl Converter {
             pInputSurface: ManuallyDrop::new(Some(view)),
             ..Default::default()
         }];
+        let slot = self.next;
+        self.next = (slot + 1) % self.outputs.len();
+        let (output, output_view) = &self.outputs[slot];
         let converted = unsafe {
             self.context
-                .VideoProcessorBlt(&self.processor, &self.output_view, 0, &streams)
+                .VideoProcessorBlt(&self.processor, output_view, 0, &streams)
         };
         unsafe { ManuallyDrop::drop(&mut streams[0].pInputSurface) };
         converted.context("the card could not convert the picture")?;
-        Ok(&self.output)
+        Ok(output)
     }
 }
 
@@ -604,6 +614,32 @@ pub(crate) mod tests {
         for (plane, card, cpu) in [("U", &u, &cpu_u), ("V", &v, &cpu_v)] {
             let quality = psnr(card, cpu);
             assert!(quality > 25.0, "{plane}: {quality:.1} dB");
+        }
+    }
+
+    /// The encoder reads a converted picture while the next ones are
+    /// converted, so each stays as it is for as many conversions as the
+    /// encoder holds pictures.
+    #[test]
+    fn converted_pictures_last_while_the_encoder_holds_them() {
+        let Some(device) = video_device() else {
+            return;
+        };
+        let size = (64, 32);
+        let flat = |level: u8| -> Vec<u8> {
+            std::iter::repeat_n([level, level, level, 255], size.0 * size.1)
+                .flatten()
+                .collect()
+        };
+        let mut converter = Converter::new(&device, size).unwrap();
+        let first = upload(&device, &flat(40), size);
+        let held = converter.convert(&first).unwrap().clone();
+        let (before, _) = nv12(&device, &held, size);
+        for i in 0..crate::mf_encode::HARDWARE_DEPTH {
+            let next = upload(&device, &flat(200), size);
+            converter.convert(&next).unwrap();
+            let (now, _) = nv12(&device, &held, size);
+            assert!(now == before, "overwritten by conversion {}", i + 1);
         }
     }
 

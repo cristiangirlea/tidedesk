@@ -13,7 +13,7 @@ mod mf;
 #[cfg(windows)]
 mod mf_encode;
 
-pub use encode::{Encoder, Image, Settings};
+pub use encode::{Encoded, Encoder, Image, Received, Settings};
 
 use std::fmt;
 
