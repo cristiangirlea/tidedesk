@@ -20,11 +20,39 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow};
 use winit::keyboard::{Key, ModifiersState, PhysicalKey};
 use winit::window::{CursorIcon, Window, WindowId};
 
+use crate::control;
 use crate::layout::{self, Placement};
 use crate::pointer::{Motion, PointerFlow, Press};
 use crate::settings::{self, ViewerSettings};
 use crate::stream::{Picture, UiEvent};
 use crate::window_placement::WindowMemory;
+
+/// Test control ([`crate::control`]): commands are done in the order they
+/// came, each answered before the next is begun.
+#[derive(Default)]
+pub struct TestControl {
+    /// Commands that wait for the one before them.
+    commands: std::collections::VecDeque<Result<control::Command, String>>,
+    /// The mouse command that waits for the host to say where its pointer
+    /// is: the events need its epoch.
+    waiting: Option<Waiting>,
+    /// How many times the host was asked.
+    asked: u64,
+    /// The answers, to be printed in this order.
+    pub answers: Vec<String>,
+    /// `quit` was done: the viewer ends, and nothing after it is done.
+    pub quit: bool,
+    /// The network path in words, from the connection.
+    pub path: Option<Box<dyn Fn() -> String>>,
+}
+
+struct Waiting {
+    request: u64,
+    since: Instant,
+    events: Vec<InputEvent>,
+    /// The answer once they are sent.
+    done: String,
+}
 
 /// What the window is told of a key.
 struct KeyPress<'a> {
@@ -68,6 +96,7 @@ pub struct App {
     next_tick: Instant,
     settings_window: Option<Child>,
     notice: Option<String>,
+    pub test: TestControl,
     /// For how long the host has not answered.
     silent: Option<Duration>,
     pub exit_message: Option<String>,
@@ -109,6 +138,7 @@ impl App {
             next_tick: Instant::now(),
             settings_window: None,
             notice: None,
+            test: TestControl::default(),
             silent: None,
             exit_message: None,
         }
@@ -214,6 +244,197 @@ impl App {
         }
         // Repeats are forwarded too: injected keys don't auto-repeat.
         self.send(InputEvent::Key { scancode, pressed });
+    }
+
+    /// What the session and test control tell the window.
+    fn handle(&mut self, event_loop: &ActiveEventLoop, event: UiEvent) {
+        match event {
+            UiEvent::Control(message) => self.host_message(message),
+            UiEvent::NewPicture => {
+                if let Some(s) = &self.surface {
+                    s.window.request_redraw();
+                }
+            }
+            UiEvent::Silent(silent) => self.host_silent(silent),
+            UiEvent::Command(command) => self.command(command),
+            UiEvent::Disconnected(reason) => {
+                self.game_boost.store(false, Ordering::Relaxed);
+                self.release_keys();
+                self.release_mouse();
+                self.exit_message = Some(reason);
+                event_loop.exit();
+            }
+        }
+    }
+
+    /// A line of test control. It is done once those before it are, and
+    /// answered in `test.answers`.
+    pub fn command(&mut self, command: Result<control::Command, String>) {
+        self.test.commands.push_back(command);
+        self.run_commands();
+    }
+
+    fn run_commands(&mut self) {
+        while self.test.waiting.is_none()
+            && !self.test.quit
+            && let Some(command) = self.test.commands.pop_front()
+        {
+            let answer = command.and_then(|command| self.run(command));
+            match answer {
+                Ok(None) => {}
+                Ok(Some(answer)) => self.test.answers.push(format!("ok {answer}")),
+                Err(why) => self.test.answers.push(format!("error: {why}")),
+            }
+        }
+    }
+
+    /// Gives up on a host that does not say where its pointer is.
+    fn give_up(&mut self, now: Instant) {
+        const LONG: Duration = Duration::from_secs(2);
+        if let Some(waiting) = &self.test.waiting
+            && now.saturating_duration_since(waiting.since) >= LONG
+        {
+            self.test.waiting = None;
+            let why = "the host did not say where its pointer is: is mouse control allowed there?";
+            self.test.answers.push(format!("error: {why}"));
+            self.run_commands();
+        }
+    }
+
+    /// The remote screen's size: the last picture's, else as the host said.
+    fn screen(&self) -> (u32, u32) {
+        let picture = self.picture.lock().unwrap();
+        match (picture.width, picture.height) {
+            (0, _) | (_, 0) => self.remote_size,
+            size => size,
+        }
+    }
+
+    /// Does a command: its answer, or none yet for one that waits for the
+    /// host.
+    fn run(&mut self, command: control::Command) -> Result<Option<String>, String> {
+        let frames = |picture: &Picture| match picture.decoded {
+            Some(decoded) => format!(
+                "{} frames, the last {} ms ago",
+                picture.frames,
+                decoded.elapsed().as_millis()
+            ),
+            None => "0 frames".into(),
+        };
+        let button = |button, pressed| InputEvent::MouseButton { button, pressed };
+        let (wide, high) = self.screen();
+        let at = |x: u32, y: u32| match x < wide && y < high {
+            true => Ok(InputEvent::MouseMove {
+                x: control::place(x, wide),
+                y: control::place(y, high),
+            }),
+            false => Err(format!("{x},{y} is outside: the screen is {wide}x{high}")),
+        };
+        let (events, done) = match command {
+            control::Command::Size => return Ok(Some(format!("{wide}x{high}"))),
+            control::Command::Frames => return Ok(Some(frames(&self.picture.lock().unwrap()))),
+            control::Command::Stats => {
+                let picture = frames(&self.picture.lock().unwrap());
+                let path = self.test.path.as_ref().map(|path| path());
+                let path = path.unwrap_or_else(|| "no connection".into());
+                return Ok(Some(format!("{wide}x{high}, {picture}, {path}")));
+            }
+            control::Command::Crop { area, file, scale } => {
+                let cropped = control::crop(&self.picture.lock().unwrap(), area, scale)?;
+                let (width, height) = (cropped.0, cropped.1);
+                control::save(&file, cropped)?;
+                return Ok(Some(format!("{width}x{height} {}", file.display())));
+            }
+            control::Command::Key { scancode, pressed } => {
+                for pressed in pressed.map_or(vec![true, false], |pressed| vec![pressed]) {
+                    self.send(InputEvent::Key { scancode, pressed });
+                }
+                let which = match pressed {
+                    Some(true) => " down",
+                    Some(false) => " up",
+                    None => "",
+                };
+                return Ok(Some(format!("key {scancode:X}{which}")));
+            }
+            control::Command::Type { text } => {
+                let mut keys = Vec::new();
+                for character in text.chars() {
+                    let typed = crate::keys::typed(character, &self.held_keys);
+                    if typed.is_empty() {
+                        return Err(format!("no key of this keyboard makes {character:?}"));
+                    }
+                    keys.extend(typed);
+                }
+                keys.into_iter().for_each(|key| self.send(key));
+                return Ok(Some(format!("type {} characters", text.chars().count())));
+            }
+            control::Command::Quit => {
+                self.test.quit = true;
+                return Ok(Some("quit".into()));
+            }
+            control::Command::Move { x, y } => (vec![at(x, y)?], format!("move {x} {y}")),
+            control::Command::Click { x, y, button: b } => (
+                vec![at(x, y)?, button(b, true), button(b, false)],
+                format!("click {x} {y}"),
+            ),
+            control::Command::Press { x, y, button: b } => {
+                (vec![at(x, y)?, button(b, true)], format!("press {x} {y}"))
+            }
+            control::Command::Release { button: b } => (vec![button(b, false)], "release".into()),
+            control::Command::Wheel { lines } => (
+                vec![InputEvent::MouseWheel {
+                    dx: 0,
+                    dy: lines * 120,
+                }],
+                format!("wheel {lines}"),
+            ),
+        };
+        if !self.mouse_enabled() {
+            return Err("mouse control is off, here or at the host".into());
+        }
+        // The host takes mouse events with its pointer's epoch only, which
+        // it tells with where its pointer is. Counted down from the top, so
+        // as not to be taken for the person's own handoff.
+        self.test.asked += 1;
+        let request = u64::MAX - self.test.asked;
+        self.test.waiting = Some(Waiting {
+            request,
+            since: Instant::now(),
+            events,
+            done,
+        });
+        let _ = self.control.send(ClientMessage::PointerSync { request });
+        Ok(None)
+    }
+
+    /// The host said where its pointer is, for a command that waited.
+    fn anchored(&mut self, position: PointerPosition) {
+        let Some(waiting) = self.test.waiting.take() else {
+            return;
+        };
+        if position.inside {
+            for event in waiting.events {
+                let epoch = position.epoch;
+                let _ = self
+                    .control
+                    .send(ClientMessage::MouseInput { epoch, event });
+            }
+            self.test.answers.push(format!("ok {}", waiting.done));
+        } else {
+            let why = "the host's pointer is on a screen that is not shared: move it onto this one";
+            self.test.answers.push(format!("error: {why}"));
+        }
+        self.run_commands();
+    }
+
+    /// Prints the answers of test control.
+    fn answer(&mut self) {
+        use std::io::Write;
+        let mut out = std::io::stdout().lock();
+        for answer in self.test.answers.drain(..) {
+            let _ = writeln!(out, "{answer}");
+        }
+        let _ = out.flush();
     }
 
     /// A mouse button pressed or let go of where the viewer's pointer is.
@@ -428,6 +649,11 @@ impl App {
                 self.update_title();
             }
             ServerMessage::PointerAnchor { request, position }
+                if self.test.waiting.as_ref().map(|w| w.request) == Some(request) =>
+            {
+                self.anchored(position);
+            }
+            ServerMessage::PointerAnchor { request, position }
                 if self.focused && self.mouse_enabled() =>
             {
                 self.last_cursor = self.cursor_position();
@@ -564,21 +790,10 @@ impl ApplicationHandler<UiEvent> for App {
     }
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UiEvent) {
-        match event {
-            UiEvent::Control(message) => self.host_message(message),
-            UiEvent::NewPicture => {
-                if let Some(s) = &self.surface {
-                    s.window.request_redraw();
-                }
-            }
-            UiEvent::Silent(silent) => self.host_silent(silent),
-            UiEvent::Disconnected(reason) => {
-                self.game_boost.store(false, Ordering::Relaxed);
-                self.release_keys();
-                self.release_mouse();
-                self.exit_message = Some(reason);
-                event_loop.exit();
-            }
+        self.handle(event_loop, event);
+        self.answer();
+        if self.test.quit {
+            event_loop.exit();
         }
     }
 
@@ -731,6 +946,11 @@ impl ApplicationHandler<UiEvent> for App {
             {
                 self.release_mouse();
             }
+            self.give_up(Instant::now());
+            self.answer();
+            if self.test.quit {
+                event_loop.exit();
+            }
             if self.clipboard_enabled() {
                 if let Some((generation, text)) = &self.pending_clipboard {
                     if !self.sharing.accepts_clipboard(*generation) || self.clipboard.receive(text)
@@ -752,6 +972,7 @@ impl ApplicationHandler<UiEvent> for App {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::control::Command;
     use winit::keyboard::{KeyCode, NamedKey, NativeKey, NativeKeyCode};
 
     fn app() -> (App, tokio::sync::mpsc::UnboundedReceiver<ClientMessage>) {
@@ -778,6 +999,260 @@ mod tests {
             pressed,
             repeat: false,
         }
+    }
+
+    fn sent(rx: &mut tokio::sync::mpsc::UnboundedReceiver<ClientMessage>) -> Vec<ClientMessage> {
+        std::iter::from_fn(|| rx.try_recv().ok()).collect()
+    }
+
+    fn with_mouse() -> (App, tokio::sync::mpsc::UnboundedReceiver<ClientMessage>) {
+        let (mut app, rx) = app();
+        app.settings.mouse = true;
+        app.sharing.mouse = true;
+        // Test control needs neither the focus nor the pointer in the window.
+        app.focused = false;
+        (app, rx)
+    }
+
+    const ANCHOR: PointerPosition = PointerPosition {
+        epoch: 7,
+        x: 60000,
+        y: 60000,
+        inside: true,
+    };
+
+    /// As the host turns a place back into a pixel.
+    fn denormalize(v: u16, len: u32) -> u32 {
+        (u64::from(v) * u64::from(len.max(1) - 1) / 65535) as u32
+    }
+
+    #[test]
+    fn a_pixel_named_is_the_pixel_the_host_gets() {
+        for len in [2, 100, 1080, 1366, 1600, 1920, 2560, 3840, 5120] {
+            for pixel in 0..len {
+                let place = crate::control::place(pixel, len);
+                assert_eq!(denormalize(place, len), pixel, "of {len}");
+            }
+        }
+        assert_eq!(crate::control::place(0, 1), 0);
+    }
+
+    #[test]
+    fn a_click_by_command_lands_on_the_pixel_named() {
+        let (mut app, mut rx) = with_mouse();
+        let button = MouseButton::Right;
+        app.command(Ok(Command::Click {
+            x: 30,
+            y: 40,
+            button,
+        }));
+        // Asked later, answered later.
+        app.command(Ok(Command::Size));
+        let request = u64::MAX - 1;
+        assert_eq!(sent(&mut rx), [ClientMessage::PointerSync { request }]);
+        assert!(app.test.answers.is_empty());
+
+        let position = ANCHOR;
+        app.host_message(ServerMessage::PointerAnchor { request, position });
+        let (x, y) = (
+            crate::control::place(30, 100),
+            crate::control::place(40, 100),
+        );
+        let events = [
+            InputEvent::MouseMove { x, y },
+            InputEvent::MouseButton {
+                button,
+                pressed: true,
+            },
+            InputEvent::MouseButton {
+                button,
+                pressed: false,
+            },
+        ];
+        let events = events.map(|event| ClientMessage::MouseInput { epoch: 7, event });
+        assert_eq!(sent(&mut rx), events);
+        assert_eq!(app.test.answers, ["ok click 30 40", "ok 100x100"]);
+        // The person's own pointer is where it was: no handoff of theirs.
+        assert_eq!(app.pointer.epoch(), None);
+    }
+
+    #[test]
+    fn a_drag_by_command_is_press_move_release() {
+        let (mut app, mut rx) = with_mouse();
+        let button = MouseButton::Left;
+        app.command(Ok(Command::Press {
+            x: 10,
+            y: 10,
+            button,
+        }));
+        app.command(Ok(Command::Move { x: 50, y: 10 }));
+        app.command(Ok(Command::Release { button }));
+        app.command(Ok(Command::Wheel { lines: -2 }));
+        // One at a time: each asks the host once the one before is done.
+        let mut events = Vec::new();
+        for asked in 1..=4 {
+            let request = u64::MAX - asked;
+            let mut now = sent(&mut rx);
+            assert_eq!(now.pop(), Some(ClientMessage::PointerSync { request }));
+            events.extend(now);
+            let position = ANCHOR;
+            app.host_message(ServerMessage::PointerAnchor { request, position });
+        }
+        events.extend(sent(&mut rx));
+        let place = |pixel| crate::control::place(pixel, 100);
+        let expected = [
+            InputEvent::MouseMove {
+                x: place(10),
+                y: place(10),
+            },
+            InputEvent::MouseButton {
+                button,
+                pressed: true,
+            },
+            InputEvent::MouseMove {
+                x: place(50),
+                y: place(10),
+            },
+            InputEvent::MouseButton {
+                button,
+                pressed: false,
+            },
+            InputEvent::MouseWheel { dx: 0, dy: -240 },
+        ];
+        let expected = expected.map(|event| ClientMessage::MouseInput { epoch: 7, event });
+        assert_eq!(events, expected);
+        let answers = [
+            "ok press 10 10",
+            "ok move 50 10",
+            "ok release",
+            "ok wheel -2",
+        ];
+        assert_eq!(app.test.answers, answers);
+    }
+
+    #[test]
+    fn a_mouse_command_that_cannot_be_done_says_why() {
+        let (mut app, mut rx) = with_mouse();
+        let button = MouseButton::Left;
+        app.command(Ok(Command::Click {
+            x: 100,
+            y: 40,
+            button,
+        }));
+        assert_eq!(
+            app.test.answers,
+            ["error: 100,40 is outside: the screen is 100x100"]
+        );
+
+        // The host's pointer is on a screen that is not shared.
+        app.test.answers.clear();
+        app.command(Ok(Command::Click { x: 1, y: 1, button }));
+        let request = u64::MAX - 1;
+        let position = PointerPosition {
+            inside: false,
+            ..ANCHOR
+        };
+        app.host_message(ServerMessage::PointerAnchor { request, position });
+        assert!(app.test.answers[0].starts_with("error: the host's pointer is"));
+
+        // The host does not answer: mouse control is not allowed there.
+        app.test.answers.clear();
+        app.command(Ok(Command::Click { x: 1, y: 1, button }));
+        app.command(Ok(Command::Size));
+        let asked = Instant::now();
+        app.give_up(asked + Duration::from_millis(1900));
+        assert!(app.test.answers.is_empty());
+        app.give_up(asked + Duration::from_millis(2100));
+        assert!(app.test.answers[0].starts_with("error: the host did not say"));
+        assert_eq!(app.test.answers[1], "ok 100x100");
+        // An answer that comes after all is for nobody.
+        let _ = sent(&mut rx);
+        let (request, position) = (u64::MAX - 2, ANCHOR);
+        app.host_message(ServerMessage::PointerAnchor { request, position });
+        assert_eq!(sent(&mut rx), []);
+
+        // Turned off at the viewer.
+        app.test.answers.clear();
+        app.settings.mouse = false;
+        app.command(Ok(Command::Move { x: 1, y: 1 }));
+        assert!(app.test.answers[0].starts_with("error: mouse control is off"));
+        assert_eq!(sent(&mut rx), []);
+    }
+
+    #[test]
+    fn quit_waits_its_turn() {
+        let (mut app, mut rx) = with_mouse();
+        let button = MouseButton::Left;
+        app.command(Ok(Command::Click { x: 1, y: 1, button }));
+        app.command(Ok(Command::Quit));
+        assert!(!app.test.quit, "the click is not done yet");
+        let (request, position) = (u64::MAX - 1, ANCHOR);
+        app.host_message(ServerMessage::PointerAnchor { request, position });
+        assert!(app.test.quit);
+        assert_eq!(app.test.answers, ["ok click 1 1", "ok quit"]);
+        assert_eq!(sent(&mut rx).len(), 4);
+        // What comes after it is not done.
+        app.command(Ok(Command::Size));
+        assert_eq!(app.test.answers.len(), 2);
+    }
+
+    #[test]
+    fn keys_by_command_go_by_scan_code() {
+        let (mut app, mut rx) = with_mouse();
+        let scancode = 0xE04D;
+        app.command(Ok(Command::Key {
+            scancode,
+            pressed: None,
+        }));
+        app.command(Ok(Command::Key {
+            scancode: 0x2A,
+            pressed: Some(true),
+        }));
+        app.command(Err("unknown command \"fly\"".into()));
+        let keys = [(scancode, true), (scancode, false), (0x2A, true)];
+        let keys = keys.map(|(scancode, pressed)| InputEvent::Key { scancode, pressed });
+        assert_eq!(sent(&mut rx), keys.map(ClientMessage::Input));
+        let answers = [
+            "ok key E04D",
+            "ok key 2A down",
+            "error: unknown command \"fly\"",
+        ];
+        assert_eq!(app.test.answers, answers);
+    }
+
+    #[test]
+    fn the_picture_is_told_of_and_cropped_by_command() {
+        let (mut app, _rx) = with_mouse();
+        app.command(Ok(Command::Frames));
+        assert_eq!(app.test.answers, ["ok 0 frames"]);
+        {
+            let mut picture = app.picture.lock().unwrap();
+            (picture.width, picture.height) = (4, 2);
+            picture.pixels = vec![0x00FF8040; 8];
+            picture.frames = 12;
+            picture.decoded = Some(Instant::now());
+        }
+        app.test.answers.clear();
+        app.command(Ok(Command::Size));
+        app.command(Ok(Command::Frames));
+        let file = std::env::temp_dir().join(format!("tidedesk-app-{}.png", std::process::id()));
+        let area = crate::control::Area {
+            x: 1,
+            y: 0,
+            width: 2,
+            height: 2,
+        };
+        let scale = crate::control::Scale::Times(3);
+        app.command(Ok(Command::Crop {
+            area,
+            file: file.clone(),
+            scale,
+        }));
+        assert_eq!(app.test.answers[0], "ok 4x2");
+        assert!(app.test.answers[1].starts_with("ok 12 frames, the last "));
+        assert_eq!(app.test.answers[2], format!("ok 6x6 {}", file.display()));
+        assert!(std::fs::metadata(&file).unwrap().len() > 0);
+        let _ = std::fs::remove_file(&file);
     }
 
     #[cfg(windows)]
