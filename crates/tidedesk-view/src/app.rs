@@ -22,7 +22,7 @@ use winit::platform::scancode::PhysicalKeyExtScancode;
 use winit::window::{CursorIcon, Window, WindowId};
 
 use crate::layout::{self, Placement};
-use crate::pointer::{Motion, PointerFlow};
+use crate::pointer::{Motion, PointerFlow, Press};
 use crate::settings::{self, ViewerSettings};
 use crate::stream::{Picture, UiEvent};
 use crate::window_placement::WindowMemory;
@@ -54,6 +54,8 @@ pub struct App {
     clipboard: ClipboardBridge,
     pending_clipboard: Option<(u64, String)>,
     pointer: PointerFlow,
+    /// Buttons pressed and let go of while the handoff was awaited.
+    waiting_buttons: Vec<InputEvent>,
     host_cursor: Option<PointerPosition>,
     handoff_started: Option<Instant>,
     next_tick: Instant,
@@ -93,6 +95,7 @@ impl App {
             clipboard: ClipboardBridge::default(),
             pending_clipboard: None,
             pointer: PointerFlow::default(),
+            waiting_buttons: Vec::new(),
             host_cursor: None,
             handoff_started: None,
             next_tick: Instant::now(),
@@ -116,11 +119,15 @@ impl App {
         {
             use windows::Win32::Foundation::POINT;
             use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
+            // Without a window, as in tests, the last position it was told.
+            let Some(surface) = &self.surface else {
+                return self.last_cursor;
+            };
             let mut point = POINT::default();
             unsafe {
                 GetCursorPos(&mut point).ok()?;
             }
-            let origin = self.surface.as_ref()?.window.inner_position().ok()?;
+            let origin = surface.window.inner_position().ok()?;
             Some(((point.x - origin.x) as f64, (point.y - origin.y) as f64))
         }
         #[cfg(not(windows))]
@@ -133,8 +140,55 @@ impl App {
             && self.sharing.request == self.sharing_request
     }
 
+    /// A mouse button pressed or let go of where the viewer's pointer is.
+    fn button(&mut self, button: MouseButton, pressed: bool) {
+        /// More than anyone presses while a handoff is awaited.
+        const MOST_WAITING: usize = 16;
+        if !self.focused || !self.mouse_enabled() {
+            return;
+        }
+        let event = InputEvent::MouseButton { button, pressed };
+        let to_host = |epoch, event| ClientMessage::MouseInput { epoch, event };
+        let wait = |waiting: &mut Vec<InputEvent>, event| {
+            if waiting.len() < MOST_WAITING {
+                waiting.push(event);
+            }
+        };
+        if !pressed {
+            // After its press: to the host, or into the wait.
+            match self.pointer.epoch() {
+                Some(epoch) => drop(self.control.send(to_host(epoch, event))),
+                None if !self.waiting_buttons.is_empty() => wait(&mut self.waiting_buttons, event),
+                None => {}
+            }
+            return;
+        }
+        let Some((x, y)) = self.cursor_position() else {
+            return;
+        };
+        if !self.placement.contains(x, y) {
+            return;
+        }
+        match self.pointer.pressed(x, y, self.placement) {
+            Press::Send { epoch, to } => {
+                if let Some((x, y)) = to {
+                    let moved = InputEvent::MouseMove { x, y };
+                    let _ = self.control.send(to_host(epoch, moved));
+                }
+                let _ = self.control.send(to_host(epoch, event));
+            }
+            Press::Request(request) => {
+                wait(&mut self.waiting_buttons, event);
+                self.handoff_started = Some(Instant::now());
+                let _ = self.control.send(ClientMessage::PointerSync { request });
+            }
+            Press::Wait => wait(&mut self.waiting_buttons, event),
+        }
+    }
+
     fn release_mouse(&mut self) {
         self.pointer.invalidate();
+        self.waiting_buttons.clear();
         self.handoff_started = None;
         let _ = self.control.send(ClientMessage::ReleaseMouse);
     }
@@ -316,6 +370,15 @@ impl App {
                         self.notice = Some(format!("Cannot align mouse: {e}"));
                     } else {
                         self.pointer.warp_completed();
+                    }
+                }
+                // A button pressed meanwhile: the host's pointer goes to it.
+                if let Some(Motion::Move { epoch, x, y }) = self.pointer.claim() {
+                    let moved = InputEvent::MouseMove { x, y };
+                    for event in std::iter::once(moved).chain(self.waiting_buttons.drain(..)) {
+                        let _ = self
+                            .control
+                            .send(ClientMessage::MouseInput { epoch, event });
                     }
                 }
                 if self.pointer.epoch().is_some() {
@@ -503,12 +566,6 @@ impl ApplicationHandler<UiEvent> for App {
                 }
             }
             WindowEvent::MouseInput { state, button, .. } => {
-                if !self.focused || !self.mouse_enabled() {
-                    return;
-                }
-                let Some(epoch) = self.pointer.epoch() else {
-                    return;
-                };
                 let button = match button {
                     winit::event::MouseButton::Left => MouseButton::Left,
                     winit::event::MouseButton::Right => MouseButton::Right,
@@ -517,13 +574,7 @@ impl ApplicationHandler<UiEvent> for App {
                     winit::event::MouseButton::Forward => MouseButton::Forward,
                     winit::event::MouseButton::Other(_) => return,
                 };
-                let _ = self.control.send(ClientMessage::MouseInput {
-                    epoch,
-                    event: InputEvent::MouseButton {
-                        button,
-                        pressed: state == ElementState::Pressed,
-                    },
-                });
+                self.button(button, state == ElementState::Pressed);
             }
             WindowEvent::MouseWheel { delta, .. } => {
                 if !self.focused || !self.mouse_enabled() {
@@ -663,6 +714,84 @@ impl ApplicationHandler<UiEvent> for App {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The pointer put somewhere in one step and clicked at once, as
+    /// tablets, pens and tools do: the host gets the click, where it was
+    /// made.
+    #[test]
+    fn a_click_made_at_once_reaches_the_host_where_it_was_made() {
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            "test".into(),
+            (100, 100),
+            Arc::new(Mutex::new(Picture::default())),
+            tx,
+            WindowMemory::default(),
+            Arc::new(AtomicBool::new(false)),
+        );
+        app.settings = ViewerSettings::default();
+        app.settings.mouse = true;
+        app.sharing.mouse = true;
+        app.focused = true;
+        app.placement = Placement::fit(100, 100, 100, 100);
+        app.last_cursor = Some((30.0, 40.0));
+        app.button(MouseButton::Left, true);
+        app.button(MouseButton::Left, false);
+        assert_eq!(
+            rx.try_recv().unwrap(),
+            ClientMessage::PointerSync { request: 1 }
+        );
+        assert!(rx.try_recv().is_err());
+
+        let position = PointerPosition {
+            epoch: 7,
+            x: 60000,
+            y: 60000,
+            inside: true,
+        };
+        let request = 1;
+        app.host_message(ServerMessage::PointerAnchor { request, position });
+        let (x, y) = app.placement.remote_coords(30.0, 40.0);
+        let button = MouseButton::Left;
+        for event in [
+            InputEvent::MouseMove { x, y },
+            InputEvent::MouseButton {
+                button,
+                pressed: true,
+            },
+            InputEvent::MouseButton {
+                button,
+                pressed: false,
+            },
+        ] {
+            let sent = rx.try_recv().unwrap();
+            assert_eq!(sent, ClientMessage::MouseInput { epoch: 7, event });
+        }
+        assert!(rx.try_recv().is_err());
+        // The next click there needs no movement.
+        app.button(MouseButton::Right, true);
+        let event = InputEvent::MouseButton {
+            button: MouseButton::Right,
+            pressed: true,
+        };
+        let sent = rx.try_recv().unwrap();
+        assert_eq!(sent, ClientMessage::MouseInput { epoch: 7, event });
+        assert!(rx.try_recv().is_err());
+
+        // A click that waited is forgotten when the mouse is let go of.
+        app.release_mouse();
+        assert_eq!(rx.try_recv().unwrap(), ClientMessage::ReleaseMouse);
+        app.button(MouseButton::Left, true);
+        let request = 2;
+        assert_eq!(
+            rx.try_recv().unwrap(),
+            ClientMessage::PointerSync { request }
+        );
+        app.release_mouse();
+        assert_eq!(rx.try_recv().unwrap(), ClientMessage::ReleaseMouse);
+        app.host_message(ServerMessage::PointerAnchor { request, position });
+        assert!(rx.try_recv().is_err());
+    }
 
     #[test]
     fn boost_waits_for_matching_ack_and_never_enables_mouse_or_clipboard() {

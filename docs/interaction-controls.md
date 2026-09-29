@@ -85,6 +85,10 @@ This behavior always applies when mouse control is enabled; it has no separate s
    the generated repositioning event are not sent as host mouse movement.
 4. Subsequent viewer movement controls the host from that position.
 
+A click says where it is meant. One made before the handoff, as when a tablet, a pen
+or a tool puts the pointer somewhere and clicks at once, is not lost: it waits for the
+host's answer, and then the host's pointer goes to the click while the viewer's stays.
+
 The host rejects events carrying an outdated pointer epoch, including events already
 in transit when someone moves the host mouse. Switching control back on, refocusing,
 or resizing also requires a fresh handoff. If the host pointer is on another monitor
