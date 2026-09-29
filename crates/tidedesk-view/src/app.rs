@@ -18,7 +18,6 @@ use winit::dpi::PhysicalPosition;
 use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow};
 use winit::keyboard::ModifiersState;
-use winit::platform::scancode::PhysicalKeyExtScancode;
 use winit::window::{CursorIcon, Window, WindowId};
 
 use crate::layout::{self, Placement};
@@ -572,11 +571,17 @@ impl ApplicationHandler<UiEvent> for App {
                 if is_synthetic {
                     return;
                 }
-                let Some(scancode) = event.physical_key.to_scancode() else {
+                let pressed = event.state == ElementState::Pressed;
+                let Some(scancode) = crate::keys::scancode(event.physical_key, &event.logical_key)
+                else {
+                    // No key, but what one would have typed, as tools do.
+                    if let (true, true, Some(text)) = (self.focused, pressed, &event.text) {
+                        for key in text.chars().flat_map(crate::keys::typed) {
+                            self.send(key);
+                        }
+                    }
                     return;
                 };
-                let scancode = scancode as u16;
-                let pressed = event.state == ElementState::Pressed;
                 if !self.focused {
                     return;
                 }
