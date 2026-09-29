@@ -7,6 +7,7 @@ mod child;
 mod computers;
 mod connect;
 mod icon;
+mod keys;
 pub mod launcher;
 mod layout;
 mod playback;
