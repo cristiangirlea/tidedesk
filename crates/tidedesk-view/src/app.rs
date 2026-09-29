@@ -59,6 +59,8 @@ pub struct App {
     next_tick: Instant,
     settings_window: Option<Child>,
     notice: Option<String>,
+    /// For how long the host has not answered.
+    silent: Option<Duration>,
     pub exit_message: Option<String>,
 }
 
@@ -98,6 +100,7 @@ impl App {
             next_tick: Instant::now(),
             settings_window: None,
             notice: None,
+            silent: None,
             exit_message: None,
         }
     }
@@ -175,7 +178,18 @@ impl App {
         self.configure_boost();
     }
 
+    fn host_silent(&mut self, silent: Option<Duration>) {
+        self.silent = silent;
+        self.update_title();
+    }
+
     fn update_title(&self) {
+        if let Some(surface) = &self.surface {
+            surface.window.set_title(&self.window_title());
+        }
+    }
+
+    fn window_title(&self) -> String {
         let status = |wanted: bool, enabled: bool| {
             if !wanted {
                 "off"
@@ -185,24 +199,32 @@ impl App {
                 "waiting/blocked by host"
             }
         };
-        if let Some(surface) = &self.surface {
-            surface.window.set_title(&format!(
-                "{} | Game Boost {} ({}) | Clipboard {} ({}) | Mouse {} ({}) | Settings Ctrl+Alt+S{}",
-                self.title,
-                self.boost_status.map(|s| {
-                    format!("{} ({} FPS target)", if s.game_boost { "on" } else { "off" }, s.fps)
-                }).unwrap_or_else(|| "applying".into()),
-                self.settings.game_boost_shortcut.label(),
-                status(self.settings.clipboard, self.clipboard_enabled()),
-                self.settings.clipboard_shortcut.label(),
-                status(self.settings.mouse, self.mouse_enabled()),
-                self.settings.mouse_shortcut.label(),
-                self.notice
-                    .as_ref()
-                    .map(|n| format!(" | {n}"))
-                    .unwrap_or_default()
-            ));
-        }
+        format!(
+            "{}{} | Game Boost {} ({}) | Clipboard {} ({}) | Mouse {} ({}) | Settings Ctrl+Alt+S{}",
+            self.title,
+            // First, where it shows in a title cut short.
+            self.silent
+                .map(|s| format!(" | No answer from the host for {} s", s.as_secs()))
+                .unwrap_or_default(),
+            self.boost_status
+                .map(|s| {
+                    format!(
+                        "{} ({} FPS target)",
+                        if s.game_boost { "on" } else { "off" },
+                        s.fps
+                    )
+                })
+                .unwrap_or_else(|| "applying".into()),
+            self.settings.game_boost_shortcut.label(),
+            status(self.settings.clipboard, self.clipboard_enabled()),
+            self.settings.clipboard_shortcut.label(),
+            status(self.settings.mouse, self.mouse_enabled()),
+            self.settings.mouse_shortcut.label(),
+            self.notice
+                .as_ref()
+                .map(|n| format!(" | {n}"))
+                .unwrap_or_default()
+        )
     }
 
     fn toggle(&mut self, clipboard: bool) {
@@ -426,6 +448,7 @@ impl ApplicationHandler<UiEvent> for App {
                     s.window.request_redraw();
                 }
             }
+            UiEvent::Silent(silent) => self.host_silent(silent),
             UiEvent::Disconnected(reason) => {
                 self.game_boost.store(false, Ordering::Relaxed);
                 self.release_keys();
@@ -663,6 +686,34 @@ impl ApplicationHandler<UiEvent> for App {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The picture stands still when the host has gone, as it does on a
+    /// screen where nothing moves: the window says which it is.
+    #[test]
+    fn the_window_says_when_the_host_does_not_answer() {
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            "office — TideDesk".into(),
+            (1920, 1080),
+            Arc::new(Mutex::new(Picture::default())),
+            tx,
+            WindowMemory::default(),
+            Arc::new(AtomicBool::new(false)),
+        );
+        let usual = app.window_title();
+        assert!(
+            usual.starts_with("office — TideDesk | Game Boost"),
+            "{usual}"
+        );
+        app.host_silent(Some(Duration::from_millis(5400)));
+        let silent = app.window_title();
+        assert!(
+            silent.starts_with("office — TideDesk | No answer from the host for 5 s | Game Boost"),
+            "{silent}"
+        );
+        app.host_silent(None);
+        assert_eq!(app.window_title(), usual);
+    }
 
     #[test]
     fn boost_waits_for_matching_ack_and_never_enables_mouse_or_clipboard() {
