@@ -32,7 +32,11 @@ The archive is tidedesk-VERSION-windows-x64.zip, containing these files at its r
   Cargo.lock by tools/package-third-party-notices.ps1 (index: licenses/third-party/INDEX.txt)
 
 The workflow attaches the ZIP and ZIP.sha256 to the release. Release notes also contain
-the executable's hash and a Code signing policy link. Hashes are calculated after
+the executable's hash and a Code signing policy link. Their text is
+assets/release-notes.md, and the ZIP's README is assets/release-README.txt: both are
+built from the tagged commit, so a pull request that changes what they describe
+changes them too. Before tagging, move what the last release introduced out of "New in
+this release" and bring the known issues up to date. Hashes are calculated after
 signing. Tags with a prerelease suffix produce a GitHub prerelease.
 
 Packaging checks Windows product/version metadata and rejects stale output directories.

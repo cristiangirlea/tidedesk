@@ -107,6 +107,24 @@ try {
         $releaseNotes -match 'free, open-source') {
         throw 'Release notes have stale license terms.'
     }
+    # Video runs on Windows' own codecs and the graphics card since v0.1.0-alpha.8.
+    foreach ($text in @($readme, $releaseNotes)) {
+        if ($text -notmatch 'graphics card' -or $text -match 'no GPU encoding|GPU video acceleration') {
+            throw 'Release text must describe encoding on the graphics card.'
+        }
+        if ($text -notmatch 'local addresses') {
+            throw 'Release text must say a viewer behind the same router tries the host''s local addresses.'
+        }
+    }
+    # The notes come from assets/release-notes.md: every placeholder filled, both checksums listed.
+    if ($releaseNotes -match '@[A-Z]+@') { throw 'Release notes have an unfilled placeholder.' }
+    $exeHash = $expected.ToLowerInvariant()
+    foreach ($line in @("$hash  $zipName", "$exeHash  tidedesk.exe")) {
+        if (-not $releaseNotes.Contains($line)) { throw "Release notes must list: $line" }
+    }
+    if ($releaseNotes -notmatch '(?m)^## New in this release\r?$') {
+        throw 'Release notes must start their changes with "New in this release".'
+    }
     Assert-Fails {
         ./tools/package-release.ps1 -Version $binaryVersion -OutputDirectory $output
     } 'Output already exists'

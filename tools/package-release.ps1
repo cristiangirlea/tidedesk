@@ -72,53 +72,10 @@ $binaryHashes = $files | ForEach-Object {
     $digest = (Get-FileHash -LiteralPath (Join-Path $stage $_) -Algorithm SHA256).Hash.ToLowerInvariant()
     "$digest  $_"
 }
-$notes = @(
-    "TideDesk ${Version}: remote desktop for Windows x64, free for personal, non-commercial use.",
-    '',
-    'License: TideDesk Personal Use Source License 1.0 (see LICENSE in the ZIP). Business use requires separate written permission. Previously published AGPL releases retain their original permissions.',
-    '',
-    "Download $stem and extract it. Run tidedesk.exe on both computers.",
-    '',
-    $signingText,
-    '',
-    '**Experimental alpha — not a stable release.** Game Boost is opt-in and off by default. Real-world two-computer gameplay and end-to-end latency validation are still pending.',
-    '',
-    'New in this build: tidedesk.exe is the only program. tidedesk-host.exe and tidedesk-view.exe, kept in v0.1.0-alpha.7 for existing shortcuts, are no longer included: a start-up entry that ran tidedesk-host.exe starts tidedesk.exe instead from its first run, and shortcuts to the old programs need to point to tidedesk.exe. tidedesk.exe opens one window with "Share this computer", "Connect to a computer" and "Settings"; `tidedesk host` and `tidedesk view` still run either side alone (`tidedesk host --headless` for servers).',
-    '',
-    'New in this build: experimental direct internet connections, computer to computer, with no relay. The host shows its internet address, learned from public STUN servers (configurable in Host Settings, Internet). In the viewer, tick "Over the internet", connect to that address, and give the viewer''s address to the person at the host, who types it under "Viewer on another network" and presses Open. Both computers then open a path through their routers and the session runs directly between them. Symmetric NAT, common on mobile data, cannot be traversed: use a VPN such as Tailscale there. Hosts with a forwarded port connect without the manual step.',
-    '',
-    "[Internet access](https://github.com/cristiangirlea/tidedesk/blob/v$Version/docs/internet-access.md) and [design notes](https://github.com/cristiangirlea/tidedesk/blob/v$Version/docs/design/nat-traversal.md)",
-    '',
-    '**Keep host and viewer on the same release.** This build uses protocol v3: it connects to v0.1.0-alpha.3 and later on a local network, but not to the earlier v1/v2 alpha releases. Internet connections need both computers on this release.',
-    '',
-    'Also experimental: connect by device ID, now out of the box. A viewer types the host''s device ID instead of anyone typing internet addresses, and headless hosts can be reached too. Hosts register with TideDesk''s connection service (rendezvous.tidedesk.app) unless that is turned off in Host Settings; it only introduces the two computers and never carries the session. What it sees is in the privacy notes of the code signing policy.',
-    '',
-    'New in this build: on the same local network a device ID works even without the internet or the connection service. The viewer also asks its network for the ID and the host answers directly; the session then takes the local path. Host Settings, Network can turn this off.',
-    '',
-    'Retained from v0.1.0-alpha.4: no Microsoft Visual C++ Redistributable needed, and third-party license notices in the licenses folder.',
-    '',
-    'Retained: experimental Game Boost, available in Viewer Settings or with Ctrl+Alt+G (customizable). Switch live without reconnecting: 60 FPS target, motion-oriented OpenH264 software encoding, a smaller pending decode queue and lower audio buffering. Turning Boost off restores the desktop profile. Actual FPS depends on both PCs and the connection; host resolution, bitrate and sharing permissions are unchanged.',
-    '',
-    'Keyboard and desktop/absolute mouse input only. Relative game-camera input, GPU video acceleration, controllers and USB forwarding are not implemented. Audio remains host system output to viewer only; no microphone forwarding or additional driver dependency.',
-    '',
-    "[Game Boost usage and limitations](https://github.com/cristiangirlea/tidedesk/blob/v$Version/docs/game-boost.md)",
-    '',
-    'Also retained: the viewer remembers each host window location and monitor. Sessions start at the host native pixel size, shrinking proportionally only when needed to fit the available screen. Neither display resolution is changed.',
-    '',
-    'Includes optional bidirectional text clipboard sharing, customizable clipboard/mouse shortcuts, safe mouse handoff, and separate host/viewer cursor indicators.',
-    '',
-    "[Clipboard and mouse controls](https://github.com/cristiangirlea/tidedesk/blob/v$Version/docs/interaction-controls.md)",
-    '',
-    'Alpha validation: automated checks pass; live multi-monitor and two-computer verification is still pending.',
-    '',
-    'Windows to Windows, one viewer at a time. Allow the host through Windows Firewall on private networks.',
-    '',
-    "[Code signing policy](https://github.com/cristiangirlea/tidedesk/blob/v$Version/docs/code-signing-policy.md) and [terms of use](https://github.com/cristiangirlea/tidedesk/blob/v$Version/docs/terms-of-use.md), which a new installation asks to accept before it shares anything",
-    '',
-    'SHA-256:',
-    '',
-    '~~~text',
-    "$hash  $stem"
-) + $binaryHashes + @('~~~')
-$notes | Set-Content -LiteralPath (Join-Path $output 'release-notes.md') -Encoding utf8NoBOM
+# The notes' text lives in assets/release-notes.md, next to the README's.
+$hashes = (@("$hash  $stem") + $binaryHashes) -join "`n"
+$notes = (Get-Content -LiteralPath (Join-Path $repo 'assets/release-notes.md') -Raw).
+    Replace('@VERSION@', $Version).Replace('@ZIP@', $stem).
+    Replace('@SIGNING@', $signingText).Replace('@HASHES@', $hashes)
+$notes | Set-Content -LiteralPath (Join-Path $output 'release-notes.md') -Encoding utf8NoBOM -NoNewline
 Write-Output "Packaged $zipPath"
