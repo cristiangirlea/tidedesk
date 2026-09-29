@@ -12,6 +12,8 @@
 //!   It is typed with the keys that make it on this computer's layout, which
 //!   gives the same character where the host's layout is the same.
 
+use std::collections::HashSet;
+
 use tidedesk_core::protocol::InputEvent;
 use winit::keyboard::{Key, NamedKey, PhysicalKey};
 use winit::platform::scancode::PhysicalKeyExtScancode;
@@ -58,15 +60,19 @@ fn strokes(scancode: u16, shift: bool, altgr: bool) -> Vec<InputEvent> {
 }
 
 /// The keys that type `character` on this computer's keyboard layout, as
-/// [`strokes`]; none where the layout has no key for it.
+/// [`strokes`]; none where the layout has no key for it. Keys that are
+/// `held` on the keyboard are left as they are: a Shift the user holds is
+/// not let go of on the host.
 #[cfg(windows)]
-pub fn typed(character: char) -> Vec<InputEvent> {
+pub fn typed(character: char, held: &HashSet<u16>) -> Vec<InputEvent> {
     use windows::Win32::UI::Input::KeyboardAndMouse::GetKeyboardLayout;
-    typed_on(character, unsafe { GetKeyboardLayout(0) })
+    let mut keys = typed_on(character, unsafe { GetKeyboardLayout(0) });
+    keys.retain(|key| !matches!(key, InputEvent::Key { scancode, .. } if held.contains(scancode)));
+    keys
 }
 
 #[cfg(not(windows))]
-pub fn typed(_: char) -> Vec<InputEvent> {
+pub fn typed(_: char, _: &HashSet<u16>) -> Vec<InputEvent> {
     Vec::new()
 }
 

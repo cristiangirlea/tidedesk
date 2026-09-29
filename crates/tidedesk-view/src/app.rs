@@ -17,7 +17,7 @@ use winit::application::ApplicationHandler;
 use winit::dpi::PhysicalPosition;
 use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow};
-use winit::keyboard::ModifiersState;
+use winit::keyboard::{Key, ModifiersState, PhysicalKey};
 use winit::window::{CursorIcon, Window, WindowId};
 
 use crate::layout::{self, Placement};
@@ -25,6 +25,16 @@ use crate::pointer::{Motion, PointerFlow, Press};
 use crate::settings::{self, ViewerSettings};
 use crate::stream::{Picture, UiEvent};
 use crate::window_placement::WindowMemory;
+
+/// What the window is told of a key.
+struct KeyPress<'a> {
+    physical: PhysicalKey,
+    logical: &'a Key,
+    /// What it types, when pressed.
+    text: Option<&'a str>,
+    pressed: bool,
+    repeat: bool,
+}
 
 struct Surface {
     window: Rc<Window>,
@@ -137,6 +147,73 @@ impl App {
         self.settings.clipboard
             && self.sharing.clipboard
             && self.sharing.request == self.sharing_request
+    }
+
+    /// A key pressed or let go of: the viewer's own shortcuts, and the rest
+    /// for the host.
+    fn key(&mut self, key: KeyPress<'_>) {
+        let KeyPress {
+            physical,
+            pressed,
+            repeat,
+            ..
+        } = key;
+        if !self.focused {
+            return;
+        }
+        let Some(scancode) = crate::keys::scancode(physical, key.logical) else {
+            // No key, but what one would have typed, as tools do.
+            if let (true, Some(text)) = (pressed, key.text) {
+                let typed = |character| crate::keys::typed(character, &self.held_keys);
+                for key in text.chars().flat_map(typed) {
+                    self.send(key);
+                }
+            }
+            return;
+        };
+        if self.suppressed_keys.contains(&scancode) {
+            if !pressed {
+                self.suppressed_keys.remove(&scancode);
+            }
+            return;
+        }
+        if repeat && !self.held_keys.contains(&scancode) {
+            return;
+        }
+        if pressed && !repeat {
+            let clipboard = self
+                .settings
+                .clipboard_shortcut
+                .matches(self.modifiers, physical);
+            let mouse = self
+                .settings
+                .mouse_shortcut
+                .matches(self.modifiers, physical);
+            let settings = settings::settings_shortcut().matches(self.modifiers, physical);
+            let boost = self
+                .settings
+                .game_boost_shortcut
+                .matches(self.modifiers, physical);
+            if clipboard || mouse || settings || boost {
+                self.release_keys();
+                self.suppressed_keys.insert(scancode);
+                if boost {
+                    self.toggle_boost();
+                } else if settings {
+                    self.open_settings();
+                } else {
+                    self.toggle(clipboard);
+                }
+                return;
+            }
+        }
+        if pressed {
+            self.held_keys.insert(scancode);
+        } else if !self.held_keys.remove(&scancode) {
+            return;
+        }
+        // Repeats are forwarded too: injected keys don't auto-repeat.
+        self.send(InputEvent::Key { scancode, pressed });
     }
 
     /// A mouse button pressed or let go of where the viewer's pointer is.
@@ -606,64 +683,13 @@ impl ApplicationHandler<UiEvent> for App {
                 if is_synthetic {
                     return;
                 }
-                let pressed = event.state == ElementState::Pressed;
-                let Some(scancode) = crate::keys::scancode(event.physical_key, &event.logical_key)
-                else {
-                    // No key, but what one would have typed, as tools do.
-                    if let (true, true, Some(text)) = (self.focused, pressed, &event.text) {
-                        for key in text.chars().flat_map(crate::keys::typed) {
-                            self.send(key);
-                        }
-                    }
-                    return;
-                };
-                if !self.focused {
-                    return;
-                }
-                if self.suppressed_keys.contains(&scancode) {
-                    if !pressed {
-                        self.suppressed_keys.remove(&scancode);
-                    }
-                    return;
-                }
-                if event.repeat && !self.held_keys.contains(&scancode) {
-                    return;
-                }
-                if pressed && !event.repeat {
-                    let clipboard = self
-                        .settings
-                        .clipboard_shortcut
-                        .matches(self.modifiers, event.physical_key);
-                    let mouse = self
-                        .settings
-                        .mouse_shortcut
-                        .matches(self.modifiers, event.physical_key);
-                    let settings =
-                        settings::settings_shortcut().matches(self.modifiers, event.physical_key);
-                    let boost = self
-                        .settings
-                        .game_boost_shortcut
-                        .matches(self.modifiers, event.physical_key);
-                    if clipboard || mouse || settings || boost {
-                        self.release_keys();
-                        self.suppressed_keys.insert(scancode);
-                        if boost {
-                            self.toggle_boost();
-                        } else if settings {
-                            self.open_settings();
-                        } else {
-                            self.toggle(clipboard);
-                        }
-                        return;
-                    }
-                }
-                if pressed {
-                    self.held_keys.insert(scancode);
-                } else if !self.held_keys.remove(&scancode) {
-                    return;
-                }
-                // Repeats are forwarded too: injected keys don't auto-repeat.
-                self.send(InputEvent::Key { scancode, pressed });
+                self.key(KeyPress {
+                    physical: event.physical_key,
+                    logical: &event.logical_key,
+                    text: event.text.as_deref(),
+                    pressed: event.state == ElementState::Pressed,
+                    repeat: event.repeat,
+                });
             }
             _ => {}
         }
@@ -726,6 +752,86 @@ impl ApplicationHandler<UiEvent> for App {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use winit::keyboard::{KeyCode, NamedKey, NativeKey, NativeKeyCode};
+
+    fn app() -> (App, tokio::sync::mpsc::UnboundedReceiver<ClientMessage>) {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut app = App::new(
+            "test".into(),
+            (100, 100),
+            Arc::new(Mutex::new(Picture::default())),
+            tx,
+            WindowMemory::default(),
+            Arc::new(AtomicBool::new(false)),
+        );
+        app.settings = ViewerSettings::default();
+        app.focused = true;
+        (app, rx)
+    }
+
+    /// A character as a tool types it: no key, only what one would type.
+    fn typed(text: &str, pressed: bool) -> KeyPress<'_> {
+        KeyPress {
+            physical: PhysicalKey::Unidentified(NativeKeyCode::Windows(0)),
+            logical: &Key::Unidentified(NativeKey::Windows(0xE7)),
+            text: pressed.then_some(text),
+            pressed,
+            repeat: false,
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn characters_from_tools_are_typed_on_the_host() {
+        let (mut app, mut rx) = app();
+        let none = HashSet::new();
+        // Whatever this computer's layout is, it has keys for these.
+        for character in ['a', 'Q', '7', ' ', '\r'] {
+            let keys = crate::keys::typed(character, &none);
+            assert!(!keys.is_empty(), "{character:?}");
+            app.key(typed(&character.to_string(), true));
+            app.key(typed(&character.to_string(), false));
+            for key in keys {
+                let sent = rx.try_recv().unwrap();
+                assert_eq!(sent, ClientMessage::Input(key), "{character:?}");
+            }
+            assert!(rx.try_recv().is_err(), "{character:?}");
+        }
+        assert!(app.held_keys.is_empty());
+
+        // A Shift that is held on the keyboard stays held on the host.
+        const SHIFT: u16 = 0x2A;
+        app.held_keys.insert(SHIFT);
+        app.key(typed("Q", true));
+        let is_shift = |sent: &ClientMessage| matches!(sent, ClientMessage::Input(InputEvent::Key { scancode, .. }) if *scancode == SHIFT);
+        let sent: Vec<_> = std::iter::from_fn(|| rx.try_recv().ok()).collect();
+        assert_eq!(sent.len(), 2, "{sent:?}");
+        assert!(!sent.iter().any(is_shift), "{sent:?}");
+
+        // Not into a window that has not got the focus.
+        app.focused = false;
+        app.key(typed("a", true));
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn an_arrow_from_a_tool_is_an_arrow_on_the_host() {
+        let (mut app, mut rx) = app();
+        for pressed in [true, false] {
+            // As Windows names the key of a right arrow without a scan code.
+            app.key(KeyPress {
+                physical: PhysicalKey::Code(KeyCode::Numpad6),
+                logical: &Key::Named(NamedKey::ArrowRight),
+                text: None,
+                pressed,
+                repeat: false,
+            });
+            let scancode = 0xE04D;
+            let key = InputEvent::Key { scancode, pressed };
+            assert_eq!(rx.try_recv().unwrap(), ClientMessage::Input(key));
+        }
+        assert!(rx.try_recv().is_err());
+    }
 
     /// The picture stands still when the host has gone, as it does on a
     /// screen where nothing moves: the window says which it is.

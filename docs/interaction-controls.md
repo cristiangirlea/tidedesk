@@ -73,7 +73,9 @@ tools, and pens that write, make key events of other kinds:
 - A key named by its virtual-key code is sent as the key that Windows gives for it.
   The arrows, Home, End, Page Up, Page Down, Insert and Delete are sent as those keys,
   also when they come from the number pad with NumLock off on the viewer's keyboard:
-  the host's NumLock does not turn them into digits.
+  the host's NumLock does not turn them into digits. A program on the host that tells
+  the number pad's keys from the arrows, as some games do, gets the number pad's keys
+  while NumLock is on at the viewer.
 - A character given as text is typed with the keys that make it on the viewer's
   keyboard layout, with Shift or AltGr as needed. It comes out the same where the
   host's layout is the same. A character that no key of the viewer's layout makes
