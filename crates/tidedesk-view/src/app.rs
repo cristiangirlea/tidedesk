@@ -54,8 +54,6 @@ pub struct App {
     clipboard: ClipboardBridge,
     pending_clipboard: Option<(u64, String)>,
     pointer: PointerFlow,
-    /// Buttons pressed and let go of while the handoff was awaited.
-    waiting_buttons: Vec<InputEvent>,
     host_cursor: Option<PointerPosition>,
     handoff_started: Option<Instant>,
     next_tick: Instant,
@@ -95,7 +93,6 @@ impl App {
             clipboard: ClipboardBridge::default(),
             pending_clipboard: None,
             pointer: PointerFlow::default(),
-            waiting_buttons: Vec::new(),
             host_cursor: None,
             handoff_started: None,
             next_tick: Instant::now(),
@@ -142,24 +139,14 @@ impl App {
 
     /// A mouse button pressed or let go of where the viewer's pointer is.
     fn button(&mut self, button: MouseButton, pressed: bool) {
-        /// More than anyone presses while a handoff is awaited.
-        const MOST_WAITING: usize = 16;
         if !self.focused || !self.mouse_enabled() {
             return;
         }
         let event = InputEvent::MouseButton { button, pressed };
         let to_host = |epoch, event| ClientMessage::MouseInput { epoch, event };
-        let wait = |waiting: &mut Vec<InputEvent>, event| {
-            if waiting.len() < MOST_WAITING {
-                waiting.push(event);
-            }
-        };
         if !pressed {
-            // After its press: to the host, or into the wait.
-            match self.pointer.epoch() {
-                Some(epoch) => drop(self.control.send(to_host(epoch, event))),
-                None if !self.waiting_buttons.is_empty() => wait(&mut self.waiting_buttons, event),
-                None => {}
+            if let Some(epoch) = self.pointer.released(event) {
+                let _ = self.control.send(to_host(epoch, event));
             }
             return;
         }
@@ -169,7 +156,7 @@ impl App {
         if !self.placement.contains(x, y) {
             return;
         }
-        match self.pointer.pressed(x, y, self.placement) {
+        match self.pointer.pressed(x, y, self.placement, event) {
             Press::Send { epoch, to } => {
                 if let Some((x, y)) = to {
                     let moved = InputEvent::MouseMove { x, y };
@@ -178,17 +165,15 @@ impl App {
                 let _ = self.control.send(to_host(epoch, event));
             }
             Press::Request(request) => {
-                wait(&mut self.waiting_buttons, event);
                 self.handoff_started = Some(Instant::now());
                 let _ = self.control.send(ClientMessage::PointerSync { request });
             }
-            Press::Wait => wait(&mut self.waiting_buttons, event),
+            Press::Wait => {}
         }
     }
 
     fn release_mouse(&mut self) {
         self.pointer.invalidate();
-        self.waiting_buttons.clear();
         self.handoff_started = None;
         let _ = self.control.send(ClientMessage::ReleaseMouse);
     }
@@ -372,10 +357,9 @@ impl App {
                         self.pointer.warp_completed();
                     }
                 }
-                // A button pressed meanwhile: the host's pointer goes to it.
-                if let Some(Motion::Move { epoch, x, y }) = self.pointer.claim() {
-                    let moved = InputEvent::MouseMove { x, y };
-                    for event in std::iter::once(moved).chain(self.waiting_buttons.drain(..)) {
+                // Buttons pressed meanwhile: the host's pointer goes to them.
+                if let Some((epoch, waited)) = self.pointer.claim() {
+                    for event in waited {
                         let _ = self
                             .control
                             .send(ClientMessage::MouseInput { epoch, event });
