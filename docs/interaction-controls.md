@@ -42,6 +42,10 @@ Each toggle shortcut can use Ctrl and/or Alt, optional Shift, and a letter or F1
 The shortcuts must differ; Ctrl+Alt+S is reserved for settings. Shortcuts only act
 while the remote window is focused. Holding a shortcut does not repeatedly toggle it.
 The remote window title shows the current state and configured shortcuts.
+When nothing has come from the host for three seconds, the title says
+"No answer from the host for 3 s" and counts on; the picture is the last one
+received. The session goes on if the host answers again, as after a network that
+failed for a moment, and ends after about 20 seconds if it does not.
 
 ## Host permissions
 

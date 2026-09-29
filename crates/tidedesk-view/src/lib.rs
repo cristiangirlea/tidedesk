@@ -371,6 +371,11 @@ fn run(program: &str, argv: Vec<OsString>) -> Result<()> {
         runtime.spawn(tidedesk_core::stats::log_path(conn.clone(), "path to host"));
     }
     {
+        let ui = ui.clone();
+        let tell = move |silent| ui.notify(UiEvent::Silent(silent));
+        runtime.spawn(tidedesk_core::stats::watch_silence(conn.clone(), tell));
+    }
+    {
         let stats = args.stats;
         let conn = conn.clone();
         let ui = ui.clone();

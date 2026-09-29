@@ -25,6 +25,9 @@ pub struct Picture {
 pub enum UiEvent {
     NewPicture,
     Control(ServerMessage),
+    /// Nothing has come from the host for this long, or, with `None`, it
+    /// answers again.
+    Silent(Option<std::time::Duration>),
     Disconnected(String),
 }
 
