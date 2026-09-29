@@ -3619,6 +3619,7 @@ dependencies = [
  "egui_software_backend",
  "if-addrs",
  "opus",
+ "png",
  "quinn",
  "serde",
  "softbuffer",
