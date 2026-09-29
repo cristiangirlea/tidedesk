@@ -56,14 +56,28 @@ pub const SILENT_AFTER: Duration = Duration::from_secs(3);
 /// How often a connection is looked at for whether its peer answers.
 const LOOK: Duration = Duration::from_millis(250);
 
+/// Looks every [`LOOK`], the first one after that time. Looks missed while
+/// this computer stood still are not made up for.
+fn looks() -> tokio::time::Interval {
+    let mut every = tokio::time::interval_at(tokio::time::Instant::now() + LOOK, LOOK);
+    every.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    every
+}
+
 /// Looks between two lines of [`log_path`].
 const LOOKS_A_LINE: u32 = (Meter::WINDOW.as_millis() / LOOK.as_millis()) as u32;
 
+/// A look that comes this long after the last says nothing about the time
+/// between them: this computer slept or stood still itself, and could not
+/// have heard the peer.
+const LATE: Duration = Duration::from_secs(1);
+
 /// For how long nothing has come from a connection's peer, from the number
-/// of datagrams received from it.
+/// of datagrams received from it, looked at several times a second.
 pub struct Silence {
     received: u64,
     last: Instant,
+    looked: Instant,
 }
 
 impl Silence {
@@ -71,13 +85,17 @@ impl Silence {
         Self {
             received: 0,
             last: now,
+            looked: now,
         }
     }
 
     /// Takes note of the datagrams `received` so far: for how long none has
-    /// come, once that is [`SILENT_AFTER`] or longer.
+    /// come, once that is [`SILENT_AFTER`] or longer. After a look that
+    /// comes [`LATE`], the time counts from that look.
     pub fn observe(&mut self, received: u64, now: Instant) -> Option<Duration> {
-        if received != self.received {
+        let late = now.saturating_duration_since(self.looked) >= LATE;
+        self.looked = now;
+        if received != self.received || late {
             self.received = received;
             self.last = now;
         }
@@ -106,16 +124,16 @@ pub fn path_line(
 /// Logs [`path_line`] every two seconds until the connection closes.
 pub async fn log_path(conn: quinn::Connection, label: &'static str) {
     let mut silence = Silence::new(Instant::now());
-    let mut every = tokio::time::interval_at(tokio::time::Instant::now() + LOOK, LOOK);
-    let mut looks = 0;
+    let mut every = looks();
+    let mut looked = 0;
     loop {
         tokio::select! {
             _ = conn.closed() => return,
             _ = every.tick() => {
                 let stats = conn.stats();
                 let silent = silence.observe(stats.udp_rx.datagrams, Instant::now());
-                looks += 1;
-                if looks % LOOKS_A_LINE != 0 {
+                looked += 1;
+                if looked % LOOKS_A_LINE != 0 {
                     continue;
                 }
                 let (remote, path) = (conn.remote_address(), stats.path);
@@ -132,7 +150,7 @@ pub async fn log_path(conn: quinn::Connection, label: &'static str) {
 /// network that fails for a moment does not end a session.
 pub async fn watch_silence(conn: quinn::Connection, mut tell: impl FnMut(Option<Duration>)) {
     let mut silence = Silence::new(Instant::now());
-    let mut every = tokio::time::interval(LOOK);
+    let mut every = looks();
     let mut told: Option<Duration> = None;
     loop {
         tokio::select! {
@@ -190,22 +208,48 @@ mod tests {
         );
     }
 
+    /// Looks every 250 ms, with `received` datagrams so far, from `from` to
+    /// `to` milliseconds after `start`: what the last look gave.
+    fn looks(
+        silence: &mut Silence,
+        start: Instant,
+        received: u64,
+        (from, to): (u64, u64),
+    ) -> Option<Duration> {
+        let at = |ms| start + Duration::from_millis(ms);
+        let mut last = None;
+        for ms in (from..=to).step_by(250) {
+            last = silence.observe(received, at(ms));
+        }
+        last
+    }
+
     #[test]
     fn a_peer_is_silent_after_three_seconds_without_a_datagram() {
         let start = Instant::now();
-        let at = |ms| start + Duration::from_millis(ms);
-        let mut silence = Silence::new(at(0));
-        assert_eq!(silence.observe(10, at(500)), None);
-        assert_eq!(silence.observe(10, at(3400)), None);
-        assert_eq!(silence.observe(10, at(3500)), Some(Duration::from_secs(3)));
-        assert_eq!(silence.observe(10, at(9500)), Some(Duration::from_secs(9)));
+        let mut silence = Silence::new(start);
+        assert_eq!(looks(&mut silence, start, 10, (250, 3000)), None);
+        let three = Some(Duration::from_secs(3));
+        assert_eq!(looks(&mut silence, start, 10, (3250, 3250)), three);
+        let nine = Some(Duration::from_secs(9));
+        assert_eq!(looks(&mut silence, start, 10, (3500, 9250)), nine);
         // It answers again.
-        assert_eq!(silence.observe(11, at(9600)), None);
-        assert_eq!(silence.observe(11, at(12_500)), None);
-        assert_eq!(
-            silence.observe(11, at(12_600)),
-            Some(Duration::from_secs(3))
-        );
+        assert_eq!(looks(&mut silence, start, 11, (9500, 12_250)), None);
+        assert_eq!(looks(&mut silence, start, 11, (12_500, 12_500)), three);
+    }
+
+    /// A viewer whose own computer slept, or stood still, could not have
+    /// heard the host meanwhile: that is not the host's silence.
+    #[test]
+    fn a_look_that_comes_late_starts_the_count_anew() {
+        let start = Instant::now();
+        let mut silence = Silence::new(start);
+        assert_eq!(looks(&mut silence, start, 10, (250, 2000)), None);
+        // A minute without a look.
+        assert_eq!(looks(&mut silence, start, 10, (62_000, 64_750)), None);
+        // Still nothing from a host that has gone meanwhile.
+        let three = Some(Duration::from_secs(3));
+        assert_eq!(looks(&mut silence, start, 10, (65_000, 65_000)), three);
     }
 
     /// Passes datagrams between a viewer and `host` while it is open: a
