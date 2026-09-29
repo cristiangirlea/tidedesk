@@ -24,7 +24,8 @@ Toggle shortcuts are customizable.
 Game Boost is EXPERIMENTAL and off by default. Its Settings button applies live,
 targeting 60 FPS with smaller audio/video buffers; actual performance varies.
 Switch it off to restore desktop settings. Host resolution and bitrate are unchanged.
-Software encoding and desktop mouse only: no GPU encoding or relative game-camera input.
+The host encodes on the graphics card where it has an H.264 encoder, otherwise on the
+processor. Desktop mouse only: no relative game-camera input.
 Audio is host system output to viewer only; microphone forwarding is not supported.
 Clipboard sharing must also be allowed in Host Settings; it shares new text copies.
 An amber arrow shows the host pointer; a separate crosshair is your local pointer.
@@ -60,6 +61,8 @@ computers and never carries the session. Hosts register with it unless that is t
 in Host Settings; another service can be named in Host and Viewer Settings.
 On the same local network a device ID works even without the internet: the viewer also
 asks the network, and the host answers directly (Host Settings, Network can turn it off).
+Behind the same router, the viewer also tries the host's local addresses: the host gives
+them to the connection service sealed with its access code, so the service cannot read them.
 
 Windows to Windows, one viewer at a time. For internet connections, see:
 https://github.com/cristiangirlea/tidedesk/blob/main/docs/internet-access.md
