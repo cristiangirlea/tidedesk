@@ -36,7 +36,10 @@ the executable's hash and a Code signing policy link. Their text is
 assets/release-notes.md, and the ZIP's README is assets/release-README.txt: both are
 built from the tagged commit, so a pull request that changes what they describe
 changes them too. Before tagging, move what the last release introduced out of "New in
-this release" and bring the known issues up to date. Hashes are calculated after
+this release" and bring the known issues up to date. A release whose hosts or viewers
+send the connection service messages it has to understand goes out after the service
+understands them: until then they fall back to the earlier messages, a round later,
+and what the new ones bring does nothing. Hashes are calculated after
 signing. Tags with a prerelease suffix produce a GitHub prerelease.
 
 Packaging checks Windows product/version metadata and rejects stale output directories.

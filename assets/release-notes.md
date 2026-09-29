@@ -61,11 +61,13 @@ Experimental Game Boost, in Viewer Settings or with Ctrl+Alt+G (customizable), s
 
 Keyboard and desktop/absolute mouse input only. Relative game-camera input, controllers and USB forwarding are not implemented. The viewer decodes on the processor. Audio remains host system output to viewer only; no microphone forwarding or additional driver dependency.
 
-The viewer remembers each host's window location and monitor. Optional two-way text clipboard sharing, customizable clipboard and mouse shortcuts, safe mouse handoff, and separate host and viewer cursor indicators are included.
+The viewer remembers each host's window location and monitor. Sessions start at the host's native pixel size and shrink proportionally only when needed to fit the available screen. Neither display resolution is changed. Optional two-way text clipboard sharing, customizable clipboard and mouse shortcuts, safe mouse handoff, and separate host and viewer cursor indicators are included.
 
 [Clipboard and mouse controls](https://github.com/cristiangirlea/tidedesk/blob/v@VERSION@/docs/interaction-controls.md)
 
 No Microsoft Visual C++ Redistributable is needed, and third-party license notices are in the licenses folder.
+
+Alpha validation: automated checks pass; live multi-monitor and two-computer verification is still pending.
 
 Windows to Windows, one viewer at a time. Allow the host through Windows Firewall on private networks.
 

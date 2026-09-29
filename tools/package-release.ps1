@@ -73,9 +73,11 @@ $binaryHashes = $files | ForEach-Object {
     "$digest  $_"
 }
 # The notes' text lives in assets/release-notes.md, next to the README's.
-$hashes = (@("$hash  $stem") + $binaryHashes) -join "`n"
-$notes = (Get-Content -LiteralPath (Join-Path $repo 'assets/release-notes.md') -Raw).
-    Replace('@VERSION@', $Version).Replace('@ZIP@', $stem).
+$notes = Get-Content -LiteralPath (Join-Path $repo 'assets/release-notes.md') -Raw
+# The checksums take the line ending the text was checked out with.
+$newline = if ($notes.Contains("`r`n")) { "`r`n" } else { "`n" }
+$hashes = (@("$hash  $stem") + $binaryHashes) -join $newline
+$notes = $notes.Replace('@VERSION@', $Version).Replace('@ZIP@', $stem).
     Replace('@SIGNING@', $signingText).Replace('@HASHES@', $hashes)
 $notes | Set-Content -LiteralPath (Join-Path $output 'release-notes.md') -Encoding utf8NoBOM -NoNewline
 Write-Output "Packaged $zipPath"

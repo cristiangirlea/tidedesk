@@ -71,7 +71,7 @@ try {
         if (-not (Test-Path -LiteralPath (Join-Path $extract $notice) -PathType Leaf)) { throw "Archive is missing $notice." }
     }
     if ($readme -notmatch 'licenses/third-party/INDEX.txt') { throw 'README must point to the bundled notices.' }
-    if ($readme -notmatch 'tidedesk\.exe is unsigned' -or $readme -match '@VERSION@|@SIGNING@') {
+    if ($readme -notmatch 'tidedesk\.exe is unsigned' -or $readme -match '@[A-Z]+@') {
         throw 'README has incorrect signing/version text.'
     }
     $sourceLicense = Get-FileHash -LiteralPath (Join-Path $repo 'LICENSE') -Algorithm SHA256
