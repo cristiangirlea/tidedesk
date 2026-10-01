@@ -61,6 +61,13 @@ try {
     $expected = (Get-FileHash -LiteralPath 'target/release/tidedesk.exe').Hash
     $actual = (Get-FileHash -LiteralPath (Join-Path $extract 'tidedesk.exe')).Hash
     if ($expected -cne $actual) { throw 'Archive changed tidedesk.exe.' }
+    # Output sent to a file arrives there, also from a terminal: the program is
+    # a windowed one and borrows the terminal's console to print.
+    $said = Join-Path $output 'version.txt'
+    cmd /c "`"$(Join-Path $extract 'tidedesk.exe')`" --version > `"$said`" 2>&1"
+    if ([string](Get-Content -LiteralPath $said -Raw) -notmatch '^TideDesk \d') {
+        throw 'Output sent to a file did not arrive there.'
+    }
     # One program: the two it replaced are gone.
     foreach ($old in @('tidedesk-host.exe', 'tidedesk-view.exe')) {
         if (Test-Path -LiteralPath (Join-Path $extract $old)) { throw "Archive still ships $old." }
