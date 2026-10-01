@@ -7,6 +7,8 @@
 //! the other, which keeps the code safe even on a first, not-yet-pinned
 //! connection.
 
+use std::collections::{HashMap, VecDeque};
+use std::net::IpAddr;
 use std::time::{Duration, Instant};
 
 use anyhow::{Result, anyhow};
@@ -73,34 +75,105 @@ pub fn verify_tag(conn: &quinn::Connection, code: &str, tag: &[u8; 32]) -> Resul
     Ok(hmac::verify(&key, &session_binding(conn)?, tag).is_ok())
 }
 
-/// Global throttle on failed attempts. A 10-character code from a 31-symbol
-/// alphabet has ~49 bits of entropy; with exponential lock-outs online guessing
-/// is hopeless.
+/// Wrong codes, counted per address: one address that guesses is locked
+/// out, with waits that grow, while viewers elsewhere (the owner's) still
+/// get in. Many addresses guessing at once slow everyone down for a minute.
+/// A 10-character code from a 31-symbol alphabet has ~49 bits of entropy;
+/// online guessing is hopeless either way.
 #[derive(Debug, Default)]
 pub struct Throttle {
-    failures: u32,
+    addresses: HashMap<IpAddr, Failures>,
+    /// When the recent wrong codes from any address came.
+    recent: VecDeque<Instant>,
+}
+
+#[derive(Debug)]
+struct Failures {
+    count: u32,
+    last: Instant,
     locked_until: Option<Instant>,
+}
+
+/// An address that is locked out, for the host to show.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Blocked {
+    pub address: IpAddr,
+    pub failures: u32,
+    pub for_another: Duration,
 }
 
 impl Throttle {
     const FREE_ATTEMPTS: u32 = 5;
-    const MAX_LOCKOUT: Duration = Duration::from_secs(15 * 60);
+    const MAX_LOCKOUT: Duration = Duration::from_secs(60 * 60);
+    /// An address that has not guessed for this long starts afresh.
+    const FORGET_AFTER: Duration = Duration::from_secs(60 * 60);
+    /// Wrong codes from all addresses together within [`Self::WINDOW`]
+    /// that make everyone wait for the rest of it.
+    const CEILING: usize = 30;
+    const WINDOW: Duration = Duration::from_secs(60);
 
-    pub fn is_locked(&self, now: Instant) -> bool {
-        self.locked_until.is_some_and(|t| now < t)
+    pub fn is_locked(&mut self, address: IpAddr, now: Instant) -> bool {
+        self.forget(now);
+        self.recent.len() >= Self::CEILING
+            || self
+                .addresses
+                .get(&address)
+                .and_then(|f| f.locked_until)
+                .is_some_and(|until| now < until)
     }
 
-    pub fn record_failure(&mut self, now: Instant) {
-        self.failures += 1;
-        if self.failures >= Self::FREE_ATTEMPTS {
-            let exp = (self.failures - Self::FREE_ATTEMPTS).min(10);
+    pub fn record_failure(&mut self, address: IpAddr, now: Instant) {
+        self.forget(now);
+        self.recent.push_back(now);
+        let failures = self.addresses.entry(address).or_insert(Failures {
+            count: 0,
+            last: now,
+            locked_until: None,
+        });
+        failures.count += 1;
+        failures.last = now;
+        if failures.count >= Self::FREE_ATTEMPTS {
+            let exp = (failures.count - Self::FREE_ATTEMPTS).min(12);
             let lock = Duration::from_secs(2u64 << exp).min(Self::MAX_LOCKOUT);
-            self.locked_until = Some(now + lock);
+            failures.locked_until = Some(now + lock);
         }
     }
 
-    pub fn record_success(&mut self) {
-        *self = Self::default();
+    pub fn record_success(&mut self, address: IpAddr) {
+        self.addresses.remove(&address);
+    }
+
+    /// The addresses locked out now, the longest wait first.
+    pub fn blocked(&mut self, now: Instant) -> Vec<Blocked> {
+        self.forget(now);
+        let mut blocked: Vec<_> = self
+            .addresses
+            .iter()
+            .filter_map(|(address, f)| {
+                let until = f.locked_until.filter(|until| now < *until)?;
+                Some(Blocked {
+                    address: *address,
+                    failures: f.count,
+                    for_another: until - now,
+                })
+            })
+            .collect();
+        blocked.sort_by_key(|b| std::cmp::Reverse(b.for_another));
+        blocked
+    }
+
+    fn forget(&mut self, now: Instant) {
+        while self
+            .recent
+            .front()
+            .is_some_and(|at| now.saturating_duration_since(*at) >= Self::WINDOW)
+        {
+            self.recent.pop_front();
+        }
+        self.addresses.retain(|_, f| {
+            f.locked_until.is_some_and(|until| now < until)
+                || now.saturating_duration_since(f.last) < Self::FORGET_AFTER
+        });
     }
 }
 
@@ -136,18 +209,71 @@ mod tests {
         );
     }
 
+    fn ip(last: u8) -> IpAddr {
+        IpAddr::from([203, 0, 113, last])
+    }
+
     #[test]
-    fn throttle_locks_after_free_attempts_and_resets() {
+    fn an_address_that_guesses_is_locked_out_and_others_are_not() {
         let now = Instant::now();
         let mut t = Throttle::default();
         for _ in 0..Throttle::FREE_ATTEMPTS - 1 {
-            t.record_failure(now);
-            assert!(!t.is_locked(now));
+            t.record_failure(ip(9), now);
+            assert!(!t.is_locked(ip(9), now));
         }
-        t.record_failure(now);
-        assert!(t.is_locked(now));
-        assert!(!t.is_locked(now + Duration::from_secs(3)));
-        t.record_success();
-        assert!(!t.is_locked(now));
+        t.record_failure(ip(9), now);
+        assert!(t.is_locked(ip(9), now));
+        // The owner, somewhere else, still gets in.
+        assert!(!t.is_locked(ip(1), now));
+        assert!(!t.is_locked(ip(9), now + Duration::from_secs(3)));
+        // The right code from one address forgets that address only.
+        t.record_failure(ip(1), now);
+        t.record_success(ip(1));
+        t.record_failure(ip(9), now + Duration::from_secs(3));
+        assert!(t.is_locked(ip(9), now + Duration::from_secs(3)));
+        t.record_success(ip(9));
+        assert!(!t.is_locked(ip(9), now + Duration::from_secs(3)));
+    }
+
+    #[test]
+    fn the_wait_grows_to_an_hour() {
+        let now = Instant::now();
+        let mut t = Throttle::default();
+        let mut waits = Vec::new();
+        for _ in 0..30 {
+            t.record_failure(ip(9), now);
+            waits.push(t.blocked(now).first().map(|b| b.for_another));
+        }
+        assert_eq!(waits[3], None);
+        assert_eq!(waits[4], Some(Duration::from_secs(2)));
+        assert_eq!(waits[5], Some(Duration::from_secs(4)));
+        assert_eq!(waits[29], Some(Duration::from_secs(60 * 60)));
+        let blocked = &t.blocked(now)[0];
+        assert_eq!((blocked.address, blocked.failures), (ip(9), 30));
+    }
+
+    #[test]
+    fn many_addresses_guessing_at_once_slow_everyone_for_a_minute() {
+        let now = Instant::now();
+        let mut t = Throttle::default();
+        for n in 0..Throttle::CEILING {
+            assert!(!t.is_locked(ip(1), now));
+            t.record_failure(ip(100 + n as u8), now);
+        }
+        assert!(t.is_locked(ip(1), now), "everyone waits");
+        assert!(!t.is_locked(ip(1), now + Throttle::WINDOW));
+    }
+
+    #[test]
+    fn an_address_that_stopped_guessing_is_forgotten() {
+        let now = Instant::now();
+        let mut t = Throttle::default();
+        for _ in 0..Throttle::FREE_ATTEMPTS - 1 {
+            t.record_failure(ip(9), now);
+        }
+        let later = now + Throttle::FORGET_AFTER;
+        t.record_failure(ip(9), later);
+        assert!(!t.is_locked(ip(9), later), "starts afresh");
+        assert!(t.blocked(later).is_empty());
     }
 }

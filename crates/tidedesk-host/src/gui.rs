@@ -29,6 +29,20 @@ use crate::{icon, platform};
 pub const WINDOW_TITLE: &str = "TideDesk Host";
 
 const ERROR_RED: Color32 = Color32::from_rgb(220, 60, 50);
+
+/// An address locked out for wrong access codes, as the host window says it.
+fn blocked_line(blocked: &tidedesk_core::auth::Blocked) -> String {
+    let seconds = blocked.for_another.as_secs().max(1);
+    let wait = if seconds < 120 {
+        format!("{seconds} s")
+    } else {
+        format!("{} min", seconds.div_ceil(60))
+    };
+    format!(
+        "{} wrong codes from {}: refused for {wait} more",
+        blocked.failures, blocked.address
+    )
+}
 const WARNING_AMBER: Color32 = Color32::from_rgb(180, 110, 0);
 
 pub struct HostInfo {
@@ -275,6 +289,14 @@ impl HostApp {
             )
             .color(WARNING_AMBER),
         );
+        // Who guessed wrong, for the person at the host to see.
+        let blocked = state.throttle.lock().unwrap().blocked(Instant::now());
+        for address in &blocked {
+            ui.colored_label(ERROR_RED, blocked_line(address));
+        }
+        if !blocked.is_empty() {
+            ui.ctx().request_repaint_after(Duration::from_secs(1));
+        }
         ui.add_space(6.0);
 
         ui.label("This computer's addresses");
@@ -623,4 +645,26 @@ fn display_label(d: &DisplayInfo) -> String {
         d.rect.height,
         if d.primary { " (main)" } else { "" }
     )
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_blocked_address_is_named_with_its_wait() {
+        use std::time::Duration;
+        use tidedesk_core::auth::Blocked;
+        let blocked = |s| Blocked {
+            address: [203, 0, 113, 9].into(),
+            failures: 7,
+            for_another: Duration::from_secs(s),
+        };
+        assert_eq!(
+            super::blocked_line(&blocked(8)),
+            "7 wrong codes from 203.0.113.9: refused for 8 s more"
+        );
+        assert_eq!(
+            super::blocked_line(&blocked(3599)),
+            "7 wrong codes from 203.0.113.9: refused for 60 min more"
+        );
+    }
 }
