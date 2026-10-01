@@ -65,7 +65,7 @@ guarantees. Lower 4K memory use remains planned.
 
 The first time, TideDesk asks you to accept its [terms of use](docs/terms-of-use.md), which
 include the rules for its connection service, and the license; nothing is shared before that.
-Settings, About shows both at any time.
+The About tab shows both at any time, with the version.
 
 **On the computer you want to reach**, run `tidedesk`. The **Share this computer** tab shows
 the **access code**, this computer's addresses and its **device ID**; TideDesk also sits in the

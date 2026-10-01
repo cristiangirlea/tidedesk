@@ -49,7 +49,7 @@ builds use unmodified (its source is on crates.io). GPL, LGPL and AGPL code is
 not allowed. Where a crate offers a choice, TideDesk uses the permissive one,
 such as self_cell under Apache-2.0. Every ZIP and MSIX carries the crates'
 license texts in `licenses/third-party`, generated from `Cargo.lock`; the app
-opens them from Settings, About, **Third-party notices**.
+opens them from the About tab, **Third-party notices**.
 
 The license grants no rights in third-party patents (LICENSE, section 5).
 

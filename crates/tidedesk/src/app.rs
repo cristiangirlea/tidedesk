@@ -18,6 +18,7 @@ use crate::terms::{self, Block, Consent};
 /// Also the name tray and taskbar handling find the window by.
 pub const WINDOW_TITLE: &str = "TideDesk";
 
+const RELEASES_URL: &str = "https://github.com/cristiangirlea/tidedesk/releases";
 const PRIVACY_URL: &str =
     "https://github.com/cristiangirlea/tidedesk/blob/main/docs/code-signing-policy.md#privacy";
 
@@ -27,16 +28,18 @@ pub enum Tab {
     Share,
     Connect,
     Settings,
+    About,
 }
 
 impl Tab {
-    pub const ALL: [Tab; 3] = [Tab::Share, Tab::Connect, Tab::Settings];
+    pub const ALL: [Tab; 4] = [Tab::Share, Tab::Connect, Tab::Settings, Tab::About];
 
     pub fn label(self) -> &'static str {
         match self {
             Tab::Share => "Share this computer",
             Tab::Connect => "Connect to a computer",
             Tab::Settings => "Settings",
+            Tab::About => "About",
         }
     }
 }
@@ -269,14 +272,19 @@ impl Shell {
             ui.separator();
         }
         self.viewer_settings.ui(ui);
-        ui.add_space(8.0);
-        ui.separator();
-        self.about(ui);
     }
 
     fn about(&mut self, ui: &mut egui::Ui) {
-        ui.label(RichText::new("About").strong());
-        ui.label(format!("TideDesk {}", crate::VERSION));
+        ui.label(RichText::new("TideDesk").size(22.0).strong());
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(format!("Version {}", crate::VERSION)).size(16.0));
+            copy_version(ui);
+        });
+        ui.small("Remote access to your own computers.");
+        if ui.button("Is there a newer version?").clicked() {
+            tidedesk_host::open_link(RELEASES_URL);
+        }
+        ui.add_space(8.0);
         ui.small(
             "Free for personal, non-commercial use under the TideDesk Personal Use Source \
              License 1.0. Business use needs separate written permission.",
@@ -317,6 +325,17 @@ impl Shell {
     }
 }
 
+/// A button that copies the version, for a question or a report.
+fn copy_version(ui: &mut egui::Ui) {
+    if ui
+        .small_button("Copy")
+        .on_hover_text("Copies the version, for a question or a problem report.")
+        .clicked()
+    {
+        ui.ctx().copy_text(format!("TideDesk {}", crate::VERSION));
+    }
+}
+
 impl egui_software_backend::App for Shell {
     fn ui(&mut self, ui: &mut egui::Ui, _backend: &mut SoftwareBackend) {
         if let Some(host) = self.host() {
@@ -352,6 +371,9 @@ impl egui_software_backend::App for Shell {
             Tab::Settings => {
                 egui::ScrollArea::vertical().show(ui, |ui| self.settings_tab(ui));
             }
+            Tab::About => {
+                egui::ScrollArea::vertical().show(ui, |ui| self.about(ui));
+            }
         });
         let ctx = ui.ctx().clone();
         self.reading_window(&ctx);
@@ -368,7 +390,12 @@ mod tests {
         let labels: Vec<_> = Tab::ALL.iter().map(|t| t.label()).collect();
         assert_eq!(
             labels,
-            ["Share this computer", "Connect to a computer", "Settings"]
+            [
+                "Share this computer",
+                "Connect to a computer",
+                "Settings",
+                "About"
+            ]
         );
     }
 }
