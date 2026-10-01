@@ -8,7 +8,7 @@
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
-use windows::Win32::Foundation::{HMODULE, RECT};
+use windows::Win32::Foundation::{E_ACCESSDENIED, HMODULE, RECT};
 use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_UNKNOWN;
 use windows::Win32::Graphics::Direct3D11::{
     D3D11_BIND_RENDER_TARGET, D3D11_BIND_SHADER_RESOURCE, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
@@ -17,11 +17,11 @@ use windows::Win32::Graphics::Direct3D11::{
     ID3D11DeviceContext, ID3D11Texture2D,
 };
 use windows::Win32::Graphics::Dxgi::{
-    CreateDXGIFactory1, DXGI_ERROR_ACCESS_LOST, DXGI_ERROR_NOT_FOUND, DXGI_ERROR_WAIT_TIMEOUT,
-    DXGI_OUTDUPL_FRAME_INFO, IDXGIAdapter1, IDXGIFactory1, IDXGIOutput, IDXGIOutput1,
-    IDXGIOutputDuplication, IDXGIResource,
+    CreateDXGIFactory1, DXGI_ERROR_ACCESS_LOST, DXGI_ERROR_INVALID_CALL, DXGI_ERROR_NOT_FOUND,
+    DXGI_ERROR_WAIT_TIMEOUT, DXGI_OUTDUPL_FRAME_INFO, IDXGIAdapter1, IDXGIFactory1, IDXGIOutput,
+    IDXGIOutput1, IDXGIOutputDuplication, IDXGIResource,
 };
-use windows::core::Interface;
+use windows::core::{HRESULT, Interface};
 
 use tidedesk_codec::Image;
 
@@ -82,6 +82,18 @@ pub fn list_displays() -> Result<Vec<DisplayInfo>> {
             })
         })
         .collect()
+}
+
+/// Whether an error from the duplication says that it is gone and another
+/// has to be made, which succeeds once the desktop can be seen again. Some
+/// drivers call it an invalid call rather than lost access.
+fn lost(code: HRESULT) -> bool {
+    [
+        DXGI_ERROR_ACCESS_LOST,
+        DXGI_ERROR_INVALID_CALL,
+        E_ACCESSDENIED,
+    ]
+    .contains(&code)
 }
 
 pub struct DxgiCapturer {
@@ -188,8 +200,9 @@ impl Capturer for DxgiCapturer {
         let Some(dup) = self.duplication.clone() else {
             // Duplication is lost across mode changes and while the secure
             // desktop (UAC, lock screen) is up; keep retrying quietly.
-            if self.duplicate().is_err() {
-                std::thread::sleep(timeout.max(Duration::from_millis(50)));
+            match self.duplicate() {
+                Ok(()) => tracing::info!("the screen is captured again"),
+                Err(_) => std::thread::sleep(timeout.max(Duration::from_millis(50))),
             }
             return Ok(false);
         };
@@ -200,7 +213,8 @@ impl Capturer for DxgiCapturer {
         match unsafe { dup.AcquireNextFrame(timeout_ms, &mut info, &mut resource) } {
             Ok(()) => {}
             Err(e) if e.code() == DXGI_ERROR_WAIT_TIMEOUT => return Ok(false),
-            Err(e) if e.code() == DXGI_ERROR_ACCESS_LOST => {
+            Err(e) if lost(e.code()) => {
+                tracing::info!("the screen cannot be captured until the desktop is back: {e}");
                 self.duplication = None;
                 return Ok(false);
             }
@@ -243,8 +257,23 @@ mod tests {
 
     use windows::Win32::Graphics::Direct3D11::ID3D11VideoDevice;
     use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
+    use windows::Win32::Graphics::Dxgi::DXGI_ERROR_DEVICE_REMOVED;
 
     use super::*;
+
+    /// The duplication goes across mode changes and while Windows shows a
+    /// desktop of its own (a permission prompt, the lock screen). Drivers say
+    /// so in more than one way; anything else is an error.
+    #[test]
+    fn a_duplication_that_is_gone_is_told_from_an_error() {
+        assert!(lost(DXGI_ERROR_ACCESS_LOST));
+        // Intel graphics, as a permission prompt comes up.
+        assert!(lost(DXGI_ERROR_INVALID_CALL));
+        // What making a duplication answers while the prompt is up.
+        assert!(lost(E_ACCESSDENIED));
+        assert!(!lost(DXGI_ERROR_WAIT_TIMEOUT));
+        assert!(!lost(DXGI_ERROR_DEVICE_REMOVED));
+    }
 
     /// The screen, captured, stays on the card on a device the graphics
     /// card's encoder can share, and encodes to a picture every viewer
