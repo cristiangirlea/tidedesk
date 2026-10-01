@@ -40,6 +40,8 @@ pub struct HostConfig {
     /// Answer viewers on the local network that look for this computer's
     /// device ID, so they find it without the service or the internet.
     pub lan_discovery: bool,
+    /// A new access code once a session ends.
+    pub new_code_after_session: bool,
 }
 
 impl Default for HostConfig {
@@ -60,6 +62,7 @@ impl Default for HostConfig {
             rendezvous: true,
             rendezvous_server: String::new(),
             lan_discovery: true,
+            new_code_after_session: true,
         }
     }
 }

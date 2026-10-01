@@ -70,11 +70,14 @@ Settings, About shows both at any time.
 **On the computer you want to reach**, run `tidedesk`. The **Share this computer** tab shows
 the **access code**, this computer's addresses and its **device ID**; TideDesk also sits in the
 notification area (tray). Closing the window keeps it sharing there; quit from the tray menu.
+When a session ends the host makes a new access code; the old one works for five more minutes,
+so a dropped connection comes straight back (turn this off under the code; a host started with
+`--headless` keeps its code).
 
 **On the computer you are sitting at**, run `tidedesk`, open **Connect to a computer**, type the
 device ID (or the address on a local network) and the access code, and press **Connect**. Save
 computers you use often under **My computers** for one-click connections; access codes you
-choose to remember are encrypted for your Windows account.
+choose to remember are encrypted for your Windows account, and work until the host makes a new one.
 
 > **Give the access code only to someone you know and trust.** If a stranger asked you to
 > install TideDesk or to read out the code, stop: they may be trying to take control of your

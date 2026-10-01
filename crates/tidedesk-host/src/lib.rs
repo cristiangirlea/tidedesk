@@ -3,6 +3,7 @@
 
 mod audio;
 mod capture;
+pub mod codes;
 pub mod config;
 pub mod gui;
 mod icon;
@@ -169,6 +170,8 @@ pub struct StartOptions {
     pub new_code: bool,
     /// Start with the window hidden in the tray.
     pub tray: bool,
+    /// No window shows a new code: keep the one there is.
+    pub headless: bool,
 }
 
 impl From<&Args> for StartOptions {
@@ -184,6 +187,7 @@ impl From<&Args> for StartOptions {
             stats: args.stats,
             new_code: args.new_code,
             tray: args.tray,
+            headless: args.headless,
         }
     }
 }
@@ -219,7 +223,11 @@ pub fn start(options: &StartOptions) -> Result<Started> {
     let code = load_code(options.new_code)?;
     let state = Arc::new(session::HostState {
         host_name,
-        code: Mutex::new(code.clone()),
+        codes: Mutex::new(codes::Codes::new(code.clone())),
+        new_code_after_session: AtomicBool::new(config.new_code_after_session && !options.headless),
+        registration: Mutex::new(None),
+        register: Mutex::new(None),
+        code_note: Mutex::new(None),
         video: Mutex::new(video::VideoSettings {
             display: options.display.unwrap_or(config.display),
             fps: options.fps.unwrap_or(config.fps),
@@ -266,6 +274,15 @@ pub fn start(options: &StartOptions) -> Result<Started> {
         let sealed = registration_credentials(&credentials, &code, listen.port());
         agent.start_rendezvous(service.clone(), sealed);
     }
+    // Local addresses are sealed with the code: a new code registers again.
+    *state.registration.lock().unwrap() = rendezvous.clone();
+    {
+        let (agent, credentials, port) = (agent.clone(), credentials.clone(), listen.port());
+        *state.register.lock().unwrap() = Some(Box::new(move |service: &str, code: &str| {
+            let sealed = registration_credentials(&credentials, code, port);
+            agent.start_rendezvous(service.to_string(), sealed);
+        }));
+    }
     // Needs no service: viewers on this network ask the network itself.
     if config.lan_discovery {
         agent.start_lan_discovery(identity.device_id());
@@ -283,7 +300,6 @@ pub fn start(options: &StartOptions) -> Result<Started> {
         state,
         agent,
         identity: credentials,
-        service: rendezvous,
         runtime: runtime.handle().clone(),
         start_hidden: options.tray || config.start_in_tray,
         config,
@@ -371,7 +387,7 @@ fn run(args: Args) -> Result<()> {
         let _ = tokio::time::timeout(Duration::from_secs(5), settled).await;
         (agent.public(), agent.rendezvous())
     });
-    let code = state.code.lock().unwrap().clone();
+    let code = state.codes.lock().unwrap().current().to_string();
     println!();
     println!(
         "  TideDesk host \"{}\" is listening on UDP {listen}",
