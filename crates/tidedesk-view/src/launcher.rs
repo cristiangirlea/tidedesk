@@ -586,7 +586,7 @@ impl Launcher {
                     }
                 });
             if connect::parse_device_id(&self.address).is_some() {
-                ui.small("Device ID: found through TideDesk's connection service (or the one under Settings, Advanced).");
+                ui.small("Device ID: found through TideDesk's connection service.");
             }
             ui.checkbox(&mut self.sound, "Play sound from the remote computer");
             ui.checkbox(&mut self.internet, INTERNET_OPTION);
