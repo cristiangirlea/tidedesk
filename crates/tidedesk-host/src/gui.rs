@@ -74,6 +74,8 @@ pub struct HostApp {
     show_all_addresses: bool,
     /// A viewer's internet address as typed, and why it was not accepted.
     viewer_text: String,
+    /// A password being set: the two fields, while open.
+    new_password: Option<(String, String)>,
     viewer_error: Option<String>,
     notice: Option<String>,
     settings_error: Option<String>,
@@ -172,6 +174,7 @@ impl HostApp {
             addresses,
             show_all_addresses: false,
             viewer_text: String::new(),
+            new_password: None,
             viewer_error: None,
             notice: None,
             settings_error: None,
@@ -214,6 +217,70 @@ impl HostApp {
             .save()
             .err()
             .map(|e| format!("Could not save settings: {e:#}"));
+    }
+
+    /// A password for the owner's own computers: viewers that have
+    /// connected before use it instead of the access code.
+    fn password_ui(&mut self, ui: &mut egui::Ui, state: &HostState) {
+        ui.add_space(4.0);
+        let set = state.password.lock().unwrap().is_some();
+        match &mut self.new_password {
+            None => {
+                ui.horizontal(|ui| {
+                    if set {
+                        ui.label("Password: set");
+                        if ui.small_button("Change").clicked() {
+                            self.new_password = Some(Default::default());
+                        }
+                        if ui.small_button("Remove").clicked() {
+                            match crate::saved_password::remove() {
+                                Ok(()) => *state.password.lock().unwrap() = None,
+                                Err(e) => self.notice = Some(format!("{e:#}")),
+                            }
+                        }
+                    } else {
+                        ui.label("Password: none");
+                        if ui.small_button("Set a password").clicked() {
+                            self.new_password = Some(Default::default());
+                        }
+                    }
+                });
+                ui.small(
+                    "For your own computers: a viewer that has connected here before can use \
+                     the password instead of the access code.",
+                );
+            }
+            Some((first, again)) => {
+                ui.label("New password");
+                ui.add(egui::TextEdit::singleline(first).password(true));
+                ui.label("The same again");
+                ui.add(egui::TextEdit::singleline(again).password(true));
+                let problem = tidedesk_core::password::problem(first)
+                    .or((!again.is_empty() && first != again).then_some("The two differ."));
+                if let Some(problem) = problem.filter(|_| !first.is_empty()) {
+                    ui.colored_label(ERROR_RED, problem);
+                }
+                let ready = problem.is_none() && first == again;
+                let mut close = false;
+                ui.horizontal(|ui| {
+                    if ui.add_enabled(ready, egui::Button::new("Save")).clicked() {
+                        match crate::saved_password::save(first, &self.info.fingerprint) {
+                            Ok(key) => {
+                                *state.password.lock().unwrap() = Some(key);
+                                close = true;
+                            }
+                            Err(e) => self.notice = Some(format!("{e:#}")),
+                        }
+                    }
+                    if ui.button("Cancel").clicked() {
+                        close = true;
+                    }
+                });
+                if close {
+                    self.new_password = None;
+                }
+            }
+        }
     }
 
     /// Access code, addresses, device ID and who is connected.
@@ -290,6 +357,7 @@ impl HostApp {
             )
             .color(WARNING_AMBER),
         );
+        self.password_ui(ui, &state);
         // Who guessed wrong, for the person at the host to see.
         let blocked = state.throttle.lock().unwrap().blocked(Instant::now());
         for address in &blocked {

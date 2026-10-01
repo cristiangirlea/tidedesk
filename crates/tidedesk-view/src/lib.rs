@@ -46,7 +46,7 @@ struct Args {
     /// connect window.
     host: Option<String>,
 
-    /// Access code shown by the host (prompted for if omitted).
+    /// Access code shown by the host, or its saved password (prompted for if omitted).
     #[arg(long, env = "TIDEDESK_CODE", hide_env_values = true)]
     code: Option<String>,
 
@@ -192,7 +192,7 @@ async fn confirm_with_launcher(
 }
 
 fn prompt_code() -> Result<String> {
-    print!("Access code: ");
+    print!("Access code or password: ");
     std::io::stdout().flush()?;
     let mut line = String::new();
     std::io::stdin().read_line(&mut line)?;

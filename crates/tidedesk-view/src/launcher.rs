@@ -212,7 +212,7 @@ impl Launcher {
             self.focus_code = true;
             self.message = Some((
                 false,
-                "Enter the access code shown on that computer.".into(),
+                "Enter the access code shown on that computer, or its password.".into(),
             ));
             return;
         }
@@ -472,7 +472,10 @@ impl Launcher {
                 ui.end_row();
             });
         ui.checkbox(&mut ed.internet, INTERNET_OPTION);
-        ui.checkbox(&mut ed.remember_code, "Remember the access code");
+        ui.checkbox(
+            &mut ed.remember_code,
+            "Remember the access code or password",
+        );
         if ed.remember_code {
             let hint = if ed.had_code {
                 "(unchanged)"
@@ -566,7 +569,7 @@ impl Launcher {
                             .desired_width(240.0),
                     );
                     ui.end_row();
-                    ui.label("Access code");
+                    ui.label("Access code or password");
                     let code = ui.add(
                         egui::TextEdit::singleline(&mut self.code)
                             .hint_text("XXXX-XXXX-XX")

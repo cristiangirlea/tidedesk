@@ -74,6 +74,12 @@ When a session ends the host makes a new access code; the old one works for five
 so a dropped connection comes straight back (turn this off under the code; a host started with
 `--headless` keeps its code).
 
+**For your own computers**, set a password under the access code (Set a password), or with
+`tidedesk host --set-password`. A viewer that has connected to that computer before, or reaches
+it by device ID, can then type the password where the code goes. Neither side sends the password:
+they prove to each other that they know it, and the host keeps only a key derived from it.
+Three wrong passwords lock the address out for a while.
+
 **On the computer you are sitting at**, run `tidedesk`, open **Connect to a computer**, type the
 device ID (or the address on a local network) and the access code, and press **Connect**. Save
 computers you use often under **My computers** for one-click connections; access codes you
@@ -114,6 +120,7 @@ tidedesk view 192.168.1.50 --code K7QM-3XPA-WZ
 | `--bitrate 8000` | Video bitrate in kbit/s (default: set by the screen's size, 4000 to 20000) |
 | `--no-audio` | Don't share sound |
 | `--new-code` | Replace the access code |
+| `--set-password` / `--remove-password` | Set the password for your own computers (read from standard input), or remove it |
 | `--stats` | Print fps, bitrate and encode time |
 
 Host options override the saved settings for that run only.

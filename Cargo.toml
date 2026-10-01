@@ -28,6 +28,7 @@ tidedesk-view = { path = "crates/tidedesk-view" }
 tidedesk-rendezvous-proto = { path = "crates/tidedesk-rendezvous-proto" }
 anyhow = "1"
 arboard = { version = "3.6.1", default-features = false }
+argon2 = "0.5"
 bytes = "1"
 clap = { version = "4.6", features = ["derive", "env"] }
 cpal = "0.18"
@@ -39,6 +40,7 @@ rcgen = "0.14"
 ring = "0.17"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 serde = { version = "1", features = ["derive"] }
+spake2 = "0.4"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"

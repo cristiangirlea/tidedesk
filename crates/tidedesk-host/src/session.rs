@@ -33,6 +33,8 @@ pub type Register = Box<dyn Fn(&str, &str) + Send + Sync>;
 pub struct HostState {
     pub host_name: String,
     pub codes: Mutex<crate::codes::Codes>,
+    /// The saved password's key, if one is set.
+    pub password: Mutex<Option<tidedesk_core::password::Key>>,
     /// A new code once a session ends (the window's host; a headless one
     /// keeps its code, as nobody sees a new one there).
     pub new_code_after_session: AtomicBool,
@@ -121,6 +123,40 @@ async fn reject(
     bail!("rejected viewer: {reason}");
 }
 
+/// What a viewer says it knows.
+enum Knows {
+    /// The proof of the access code.
+    Code([u8; 32]),
+    /// The first SPAKE2 message for the saved password.
+    Password(Vec<u8>),
+}
+
+/// The password exchange: whether the viewer knows the saved password, or
+/// None when this host has none.
+async fn password_admits(
+    conn: &quinn::Connection,
+    state: &HostState,
+    send: &mut quinn::SendStream,
+    recv: &mut quinn::RecvStream,
+    start: &[u8],
+) -> Result<Option<bool>> {
+    let Some(key) = *state.password.lock().unwrap() else {
+        return Ok(None);
+    };
+    let binding = auth::session_binding(conn)?;
+    let Ok((host, answer, proof)) = tidedesk_core::password::Host::answer(&key, binding, start)
+    else {
+        return Ok(Some(false));
+    };
+    protocol::write_message(send, &ServerMessage::PasswordAnswer { answer, proof }).await?;
+    // A viewer whose password is wrong finds out from the answer and leaves.
+    let reply = timeout(Duration::from_secs(10), protocol::read_message(recv)).await;
+    Ok(Some(matches!(
+        reply,
+        Ok(Ok(Some(ClientMessage::PasswordProof { proof }))) if host.accepts(&proof)
+    )))
+}
+
 pub async fn run(conn: quinn::Connection, state: Arc<HostState>) -> Result<()> {
     let remote = conn.remote_address();
     let (mut send, mut recv) = timeout(Duration::from_secs(10), conn.accept_bi())
@@ -130,14 +166,31 @@ pub async fn run(conn: quinn::Connection, state: Arc<HostState>) -> Result<()> {
     let hello = timeout(Duration::from_secs(10), protocol::read_message(&mut recv))
         .await
         .context("viewer never sent Hello")??;
-    let Some(ClientMessage::Hello {
-        protocol_version,
-        client_name,
-        auth_tag,
-        want_audio,
-    }) = hello
-    else {
-        bail!("expected Hello from {remote}");
+    // What the viewer proves it knows: the access code or the saved password.
+    let (protocol_version, client_name, want_audio, proof) = match hello {
+        Some(ClientMessage::Hello {
+            protocol_version,
+            client_name,
+            auth_tag,
+            want_audio,
+        }) => (
+            protocol_version,
+            client_name,
+            want_audio,
+            Knows::Code(auth_tag),
+        ),
+        Some(ClientMessage::PasswordHello {
+            protocol_version,
+            client_name,
+            want_audio,
+            start,
+        }) => (
+            protocol_version,
+            client_name,
+            want_audio,
+            Knows::Password(start),
+        ),
+        _ => bail!("expected Hello from {remote}"),
     };
 
     if protocol_version != PROTOCOL_VERSION {
@@ -157,24 +210,42 @@ pub async fn run(conn: quinn::Connection, state: Arc<HostState>) -> Result<()> {
     {
         return reject(&mut send, &conn, RejectReason::TooManyAttempts).await;
     }
-    let codes = state.codes.lock().unwrap().valid(Instant::now());
-    let mut right = false;
-    for code in &codes {
-        if auth::verify_tag(&conn, code, &auth_tag)? {
-            right = true;
-            break;
+    let right = match &proof {
+        Knows::Code(tag) => {
+            let codes = state.codes.lock().unwrap().valid(Instant::now());
+            let mut right = false;
+            for code in &codes {
+                if auth::verify_tag(&conn, code, tag)? {
+                    right = true;
+                    break;
+                }
+            }
+            right
         }
-    }
+        Knows::Password(start) => {
+            match password_admits(&conn, &state, &mut send, &mut recv, start).await? {
+                Some(right) => right,
+                None => return reject(&mut send, &conn, RejectReason::NoPassword).await,
+            }
+        }
+    };
     if !right {
-        state
-            .throttle
-            .lock()
-            .unwrap()
-            .record_failure(remote.ip(), Instant::now());
+        {
+            let mut throttle = state.throttle.lock().unwrap();
+            throttle.record_failure(remote.ip(), Instant::now());
+            // A password counts double: three wrong ones lock the address out.
+            if matches!(proof, Knows::Password(_)) {
+                throttle.record_failure(remote.ip(), Instant::now());
+            }
+        }
         state.changed();
-        tracing::warn!("wrong access code from {remote}");
         tokio::time::sleep(Duration::from_secs(1)).await;
-        return reject(&mut send, &conn, RejectReason::BadCode).await;
+        let reason = match proof {
+            Knows::Code(_) => RejectReason::BadCode,
+            Knows::Password(_) => RejectReason::BadPassword,
+        };
+        tracing::warn!("{reason} from {remote}");
+        return reject(&mut send, &conn, reason).await;
     }
     state.throttle.lock().unwrap().record_success(remote.ip());
     if state.busy.swap(true, Ordering::SeqCst) {
@@ -366,7 +437,10 @@ pub async fn run(conn: quinn::Connection, state: Arc<HostState>) -> Result<()> {
                     *control.boost_request.lock().unwrap() = (request, enabled);
                 }
                 ClientMessage::RequestKeyframe => control.keyframe.store(true, Ordering::Relaxed),
-                ClientMessage::Hello { .. } => bail!("duplicate Hello"),
+                ClientMessage::Hello { .. } | ClientMessage::PasswordHello { .. } => {
+                    bail!("duplicate Hello")
+                }
+                ClientMessage::PasswordProof { .. } => bail!("password proof after the handshake"),
             }
         }
         anyhow::Ok(())
