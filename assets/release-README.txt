@@ -58,7 +58,7 @@ Addresses are looked up from public STUN servers, which see the public IP addres
 A viewer can instead connect by the host's device ID (TD-XXXX-XXXX-XXXX-XXXX), headless
 hosts too: TideDesk's connection service (rendezvous.tidedesk.app) introduces the two
 computers and never carries the session. Hosts register with it unless that is turned off
-in Host Settings; another service can be named in Host and Viewer Settings.
+in Host Settings.
 On the same local network a device ID works even without the internet: the viewer also
 asks the network, and the host answers directly (Host Settings, Network can turn it off).
 Behind the same router, the viewer also tries the host's local addresses: the host gives

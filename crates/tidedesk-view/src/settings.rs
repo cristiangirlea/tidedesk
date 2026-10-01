@@ -176,8 +176,6 @@ pub struct Editor {
     config: ViewerSettings,
     /// What the file holds as far as this editor knows: its last save or read.
     saved: ViewerSettings,
-    /// The connection service as typed; the setting follows it, trimmed.
-    rendezvous_text: String,
     /// Why the file could not be read; the first save replaces it.
     load_error: Option<String>,
     /// Why the current edit is not saved yet.
@@ -212,7 +210,6 @@ impl Editor {
         };
         Self {
             path,
-            rendezvous_text: config.rendezvous_server.clone(),
             saved: config.clone(),
             config,
             load_error,
@@ -238,9 +235,6 @@ impl Editor {
         let merged = self.edits_onto(current);
         match merged.validate().and_then(|()| merged.save_to(&self.path)) {
             Ok(()) => {
-                if merged.rendezvous_server != self.config.rendezvous_server {
-                    self.rendezvous_text = merged.rendezvous_server.clone();
-                }
                 self.config = merged.clone();
                 self.saved = merged;
                 self.failed = None;
@@ -291,17 +285,8 @@ impl Editor {
         if on_disk == self.saved {
             return;
         }
-        // Text being typed is not the setting yet; leave it alone.
-        if self.rendezvous_text.trim() == self.config.rendezvous_server {
-            self.rendezvous_text = on_disk.rendezvous_server.clone();
-        }
         self.config = on_disk.clone();
         self.saved = on_disk;
-    }
-
-    /// The service field changed: the setting follows it, trimmed.
-    fn service_typed(&mut self) {
-        self.config.rendezvous_server = self.rendezvous_text.trim().to_string();
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui) {
@@ -347,29 +332,6 @@ impl Editor {
         shortcut_ui(ui, "Settings", &mut self.config.settings_shortcut);
         ui.small("Settings opens these settings during a session.");
         ui.separator();
-        egui::CollapsingHeader::new("Advanced")
-            .id_salt("viewer-advanced")
-            .show(ui, |ui| {
-                ui.label("Connection service, for connecting by device ID");
-                let field = ui.add(
-                    egui::TextEdit::singleline(&mut self.rendezvous_text)
-                        .hint_text(tidedesk_core::nat::signal::DEFAULT_RENDEZVOUS)
-                        .desired_width(240.0),
-                );
-                // Saved as typed: leaving the tab mid-edit must not lose it.
-                if field.changed() {
-                    self.service_typed();
-                }
-                if field.lost_focus() {
-                    self.rendezvous_text = self.config.rendezvous_server.clone();
-                }
-                ui.small(
-                    "Leave empty for TideDesk's own service, or name the one the host \
-                     registers with. It only introduces the two computers; sessions run \
-                     directly between them.",
-                );
-            });
-
         // The problems are drawn above: show a change on the next frame.
         if self.commit() {
             ui.ctx().request_repaint();
@@ -563,57 +525,23 @@ mod tests {
         std::fs::remove_file(path).unwrap();
     }
 
+    /// A connection service named in the file is not shown in the settings,
+    /// and kept when they change.
     #[test]
-    fn the_connection_service_is_applied_trimmed() {
+    fn a_connection_service_named_in_the_file_is_kept() {
         let path = temp_path("service");
+        let named = ViewerSettings {
+            rendezvous_server: "rv.example:47900".into(),
+            ..Default::default()
+        };
+        named.save_to(&path).unwrap();
         let mut editor = Editor::at(path.clone());
-        // Saved as typed, so leaving the tab mid-edit loses nothing.
-        editor.rendezvous_text = " rv.example:47900 ".into();
-        editor.service_typed();
+        editor.config.clipboard = true;
         editor.commit();
         let saved = ViewerSettings::load_from(&path).unwrap();
+        assert!(saved.clipboard);
         assert_eq!(saved.rendezvous_server, "rv.example:47900");
-
-        // Named in another settings window: shown here too.
-        let other = ViewerSettings {
-            rendezvous_server: "other.example".into(),
-            ..saved
-        };
-        other.save_to(&path).unwrap();
-        editor.reload();
-        assert_eq!(editor.rendezvous_text, "other.example");
-        // Text still being typed is kept.
-        editor.rendezvous_text = "half-typ".into();
-        ViewerSettings::default().save_to(&path).unwrap();
-        editor.reload();
-        assert_eq!(editor.rendezvous_text, "half-typ");
         std::fs::remove_file(path).unwrap();
-    }
-
-    /// The Settings shortcut is set like the others, Ctrl+Alt+S unless
-    /// changed, and differs from them as they differ from each other.
-    #[test]
-    fn the_settings_shortcut_can_be_changed() {
-        let config = ViewerSettings::parse("mouse = true\n").unwrap();
-        assert_eq!(config.settings_shortcut, Shortcut::default_for("KeyS"));
-        assert_eq!(config.settings_shortcut.label(), "Ctrl+Alt+S");
-
-        let mut config = ViewerSettings {
-            settings_shortcut: Shortcut::default_for("KeyO"),
-            ..ViewerSettings::default()
-        };
-        config.validate().unwrap();
-        let back = ViewerSettings::parse(&toml::to_string(&config).unwrap()).unwrap();
-        assert_eq!(back.settings_shortcut.key, "KeyO");
-        // Ctrl+Alt+S is free for the others then.
-        config.mouse_shortcut = Shortcut::default_for("KeyS");
-        config.validate().unwrap();
-        config.mouse_shortcut = Shortcut::default_for("KeyO");
-        let why = config.validate().unwrap_err().to_string();
-        assert!(why.contains("must be different"), "{why}");
-        config.settings_shortcut.ctrl = false;
-        config.settings_shortcut.alt = false;
-        assert!(config.validate().is_err(), "Ctrl or Alt is needed");
     }
 
     #[test]

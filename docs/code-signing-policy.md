@@ -60,10 +60,10 @@ about every 25 seconds, so that it can introduce viewers who ask for that ID, an
 host's local network addresses sealed with the access code, which it cannot read and
 passes only to a viewer at the host's own public address. It keeps this in memory
 only, logs counts rather than IDs or addresses, and never carries sessions, access
-codes or anything else. Turn it off, or name another service, under
-Settings, Internet (or with `rendezvous = false` or `rendezvous_server` in `host.toml`;
-`--no-rendezvous` for a headless host). A viewer connecting by device ID asks the same
-service (or the one in Viewer Settings) for that ID, which tells the service the
+codes or anything else. Turn it off under Settings, Internet (or with
+`rendezvous = false` in `host.toml`; `--no-rendezvous` for a headless host); another
+service can be named with `rendezvous_server` there. A viewer connecting by device ID
+asks the same service (or the one named in `viewer.toml`) for that ID, which tells the service the
 viewer's public address and which ID it asked for; a viewer that never connects by ID
 never contacts it. Using the service is subject to the [terms of use](terms-of-use.md).
 
