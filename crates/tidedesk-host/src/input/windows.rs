@@ -1,7 +1,7 @@
 //! `SendInput`-based injection.
 //!
 //! Keys are sent as hardware scancodes rather than virtual-key codes, so the
-//! host's own keyboard layout decides which character a key produces — exactly
+//! host's own keyboard layout decides which character a key produces, exactly
 //! as if the keyboard were plugged into the host.
 
 use anyhow::Result;

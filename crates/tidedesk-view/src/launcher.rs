@@ -893,7 +893,7 @@ fn identity_prompt(ui: &mut egui::Ui, probe: &Probe) -> Option<bool> {
         let label = if mismatch {
             "Trust new identity"
         } else {
-            "It matches — connect"
+            "It matches, connect"
         };
         if ui.button(label).clicked() {
             decision = Some(true);

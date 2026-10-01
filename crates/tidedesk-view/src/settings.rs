@@ -316,9 +316,9 @@ impl Editor {
         }
         ui.add_space(8.0);
         let boost_label = if self.config.game_boost {
-            "Game Boost: ON — return to Desktop"
+            "Game Boost: ON (click to return to Desktop)"
         } else {
-            "Game Boost: OFF — enable"
+            "Game Boost: OFF (click to enable)"
         };
         if ui.button(boost_label).clicked() {
             self.config.game_boost = !self.config.game_boost;

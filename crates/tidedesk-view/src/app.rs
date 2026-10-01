@@ -1349,7 +1349,7 @@ mod tests {
     fn the_window_says_when_the_host_does_not_answer() {
         let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
         let mut app = App::new(
-            "office — TideDesk".into(),
+            "office | TideDesk".into(),
             (1920, 1080),
             Arc::new(Mutex::new(Picture::default())),
             tx,
@@ -1358,13 +1358,13 @@ mod tests {
         );
         let usual = app.window_title();
         assert!(
-            usual.starts_with("office — TideDesk | Game Boost"),
+            usual.starts_with("office | TideDesk | Game Boost"),
             "{usual}"
         );
         app.host_silent(Some(Duration::from_millis(5400)));
         let silent = app.window_title();
         assert!(
-            silent.starts_with("office — TideDesk | No answer from the host for 5 s | Game Boost"),
+            silent.starts_with("office | TideDesk | No answer from the host for 5 s | Game Boost"),
             "{silent}"
         );
         app.host_silent(None);

@@ -73,7 +73,7 @@ Every session runs directly between the two computers; TideDesk never relays.
   `tidedesk view` still run either side alone. Linux follows (viewer first, then host),
   then Android and iOS viewers.
 
-## Next: Game mode — keyboard, mouse and streaming
+## Next: Game mode: keyboard, mouse and streaming
 
 The first gaming milestone is fast, responsive screen/audio streaming with
 keyboard and mouse input. Controller forwarding, USB passthrough and their
@@ -108,7 +108,7 @@ virtual-device drivers are outside this milestone and must not delay it.
 - Team administration, shared device lists and ticketing integration.
 - Windows service mode and secure-desktop support, subject to security review.
 
-### Optional controller forwarding — later, not part of initial Game mode
+### Optional controller forwarding (later, not part of initial Game mode)
 
 - Consider gamepad forwarding with a compatible virtual controller on the host
   after the keyboard/mouse streaming milestone. This is also separate from generic

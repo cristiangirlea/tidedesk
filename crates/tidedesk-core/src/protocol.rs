@@ -3,12 +3,12 @@
 //! One QUIC connection carries three channels, chosen so that each kind of data
 //! gets the delivery guarantee it needs and none can stall the others:
 //!
-//! * **Control** — a bidirectional stream opened by the viewer. Length-prefixed
+//! * **Control**: a bidirectional stream opened by the viewer. Length-prefixed
 //!   postcard messages: handshake, input events, keyframe requests.
-//! * **Video** — a unidirectional stream opened by the host. Reliable and
+//! * **Video**: a unidirectional stream opened by the host. Reliable and
 //!   ordered, because H.264 frames reference each other. Latency is kept low by
 //!   dropping frames *before* encoding when the network falls behind.
-//! * **Audio** — QUIC datagrams. Unreliable: a late audio packet is useless,
+//! * **Audio**: QUIC datagrams. Unreliable: a late audio packet is useless,
 //!   and Opus conceals a lost one.
 
 use anyhow::{Context, Result, bail};

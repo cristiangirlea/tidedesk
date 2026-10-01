@@ -4,7 +4,7 @@
 //! sending it. The proof is an HMAC keyed by the code over keying material
 //! exported from *this* TLS session. A machine-in-the-middle terminates two
 //! different TLS sessions, so a proof it relays from one side is worthless on
-//! the other — which keeps the code safe even on a first, not-yet-pinned
+//! the other, which keeps the code safe even on a first, not-yet-pinned
 //! connection.
 
 use std::time::{Duration, Instant};
