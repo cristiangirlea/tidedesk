@@ -24,6 +24,8 @@ pub struct Injector {
     held_keys: HashSet<u16>,
     held_buttons: HashSet<MouseButton>,
     pointer: PointerAuthority,
+    /// Windows shows a desktop of its own, where the pointer cannot be seen.
+    away: bool,
 }
 
 impl Injector {
@@ -41,6 +43,7 @@ impl Injector {
             held_keys: HashSet::new(),
             held_buttons: HashSet::new(),
             pointer,
+            away: false,
         })
     }
 
@@ -75,21 +78,31 @@ impl Injector {
 
     /// Always samples the visible position, even without mouse-control permission.
     /// The boolean distinguishes external movement from our own injected movement.
-    pub fn poll_pointer(&mut self) -> Result<(bool, PointerPosition)> {
-        let raw = self.backend.position()?;
-        let external = self.pointer.observe(raw);
-        Ok((external, self.position(raw)))
+    ///
+    /// For a permission prompt and for the lock screen Windows shows a desktop
+    /// of its own, and will not say where the pointer is while it does. The
+    /// pointer then counts as off the shared screen, where it was last seen;
+    /// going there and coming back both count as external movement.
+    pub fn poll_pointer(&mut self) -> (bool, PointerPosition) {
+        let raw = self.backend.position().ok();
+        let mut external = raw.is_some_and(|raw| self.pointer.observe(raw));
+        if self.away != raw.is_none() {
+            self.away = raw.is_none();
+            self.pointer.invalidate();
+            external = true;
+        }
+        let mut position = self.position(self.pointer.position());
+        position.inside &= !self.away;
+        (external, position)
     }
 
     /// A read-only handoff. Never injects a cursor move.
-    pub fn anchor(&mut self) -> Result<PointerPosition> {
-        let raw = self.backend.position()?;
-        self.pointer.observe(raw);
-        let position = self.position(raw);
+    pub fn anchor(&mut self) -> PointerPosition {
+        let (_, position) = self.poll_pointer();
         if position.inside {
             self.pointer.arm();
         }
-        Ok(position)
+        position
     }
 
     pub fn inject_mouse(
@@ -111,13 +124,16 @@ impl Injector {
         if matches!(event, InputEvent::Key { .. }) {
             anyhow::bail!("keyboard event in mouse message");
         }
-        let raw = self.backend.position()?;
-        self.pointer.observe(raw);
-        let position = self.position(raw);
+        let (_, position) = self.poll_pointer();
         if !self.pointer.accepts(epoch) || !position.inside {
             return Ok(Some(position));
         }
-        self.backend.inject(event, self.display)?;
+        if self.backend.inject(event, self.display).is_err() {
+            // Refused: Windows put up a desktop of its own since the look.
+            self.pointer.invalidate();
+            let epoch = self.pointer.epoch();
+            return Ok(Some(PointerPosition { epoch, ..position }));
+        }
         if let InputEvent::MouseMove { x, y } = event {
             // Record only our requested destination. A physical movement during
             // injection must still be detected by the next observation.
@@ -183,14 +199,19 @@ mod tests {
     struct Mouse {
         point: (i32, i32),
         events: Vec<InputEvent>,
+        /// Windows shows a desktop of its own and answers nothing about ours.
+        hidden: bool,
     }
     struct FakeBackend(Arc<Mutex<Mouse>>);
     impl Backend for FakeBackend {
         fn position(&self) -> Result<(i32, i32)> {
-            Ok(self.0.lock().unwrap().point)
+            let mouse = self.0.lock().unwrap();
+            anyhow::ensure!(!mouse.hidden, "access is denied");
+            Ok(mouse.point)
         }
         fn inject(&mut self, event: InputEvent, display: DisplayRect) -> Result<()> {
             let mut mouse = self.0.lock().unwrap();
+            anyhow::ensure!(!mouse.hidden, "access is denied");
             mouse.events.push(event);
             if let InputEvent::MouseMove { x, y } = event {
                 mouse.point = (
@@ -205,7 +226,7 @@ mod tests {
     fn mock() -> (Injector, Arc<Mutex<Mouse>>) {
         let mouse = Arc::new(Mutex::new(Mouse {
             point: (10, 20),
-            events: Vec::new(),
+            ..Mouse::default()
         }));
         let injector = Injector {
             backend: Box::new(FakeBackend(mouse.clone())),
@@ -218,6 +239,7 @@ mod tests {
             held_keys: HashSet::new(),
             held_buttons: HashSet::new(),
             pointer: PointerAuthority::new((10, 20)),
+            away: false,
         };
         (injector, mouse)
     }
@@ -225,7 +247,7 @@ mod tests {
     #[test]
     fn real_handoff_path_drops_stale_input_even_before_polling() {
         let (mut injector, mouse) = mock();
-        let first = injector.anchor().unwrap();
+        let first = injector.anchor();
         assert!(mouse.lock().unwrap().events.is_empty());
         // Local host movement happens immediately before an old remote event.
         mouse.lock().unwrap().point = (800, 900);
@@ -236,13 +258,13 @@ mod tests {
         assert!(mouse.lock().unwrap().events.is_empty());
         assert_eq!(mouse.lock().unwrap().point, (800, 900));
         assert_ne!(first.epoch, update.epoch);
-        let fresh = injector.anchor().unwrap();
+        let fresh = injector.anchor();
         assert!(mouse.lock().unwrap().events.is_empty());
         injector
             .inject_mouse(fresh.epoch, InputEvent::MouseMove { x: 53000, y: 59000 })
             .unwrap();
         assert_eq!(mouse.lock().unwrap().events.len(), 1);
-        let (external, visible) = injector.poll_pointer().unwrap();
+        let (external, visible) = injector.poll_pointer();
         assert!(!external);
         assert_eq!(visible.epoch, fresh.epoch);
         assert!(visible.x > 52000 && visible.y > 58000);
@@ -251,7 +273,7 @@ mod tests {
     #[test]
     fn disabling_releases_buttons_and_invalidates_old_coordinates() {
         let (mut injector, mouse) = mock();
-        let epoch = injector.anchor().unwrap().epoch;
+        let epoch = injector.anchor().epoch;
         let down = InputEvent::MouseButton {
             button: MouseButton::Left,
             pressed: true,
@@ -274,7 +296,7 @@ mod tests {
     fn host_pointer_on_another_monitor_is_not_pulled_onto_shared_screen() {
         let (mut injector, mouse) = mock();
         mouse.lock().unwrap().point = (-100, 20);
-        let anchor = injector.anchor().unwrap();
+        let anchor = injector.anchor();
         assert!(!anchor.inside);
         assert!(
             injector
@@ -289,21 +311,76 @@ mod tests {
     #[test]
     fn cursor_observation_without_control_never_arms_or_moves_the_host() {
         let (mut injector, mouse) = mock();
-        let (external, initial) = injector.poll_pointer().unwrap();
+        let (external, initial) = injector.poll_pointer();
         assert!(!external);
         assert!(initial.inside);
         assert!(!injector.pointer.accepts(initial.epoch));
         mouse.lock().unwrap().point = (800, 900);
-        let (external, moved) = injector.poll_pointer().unwrap();
+        let (external, moved) = injector.poll_pointer();
         assert!(external);
         assert!(moved.x > initial.x && moved.y > initial.y);
         assert!(!injector.pointer.accepts(moved.epoch));
         injector.release_mouse();
-        assert_eq!(injector.poll_pointer().unwrap().1.x, moved.x);
+        assert_eq!(injector.poll_pointer().1.x, moved.x);
         assert_eq!(mouse.lock().unwrap().point, (800, 900));
         assert!(mouse.lock().unwrap().events.is_empty());
         mouse.lock().unwrap().point = (-50, 20);
-        assert!(!injector.poll_pointer().unwrap().1.inside);
+        assert!(!injector.poll_pointer().1.inside);
+    }
+
+    /// Windows shows a desktop of its own for a permission prompt and for the
+    /// lock screen, and says nothing about the pointer while it does.
+    #[test]
+    fn a_pointer_that_cannot_be_seen_is_off_the_screen() {
+        let (mut injector, mouse) = mock();
+        let held = injector.anchor().epoch;
+        mouse.lock().unwrap().hidden = true;
+
+        // Going there counts as moved, once: the viewer lets go of it.
+        let (moved, gone) = injector.poll_pointer();
+        assert!(moved && !gone.inside);
+        assert_ne!(gone.epoch, held);
+        assert_eq!(injector.poll_pointer(), (false, gone));
+        // Nothing reaches it there, and it cannot be taken hold of.
+        let to = InputEvent::MouseMove { x: 500, y: 500 };
+        assert_eq!(injector.inject_mouse(held, to).unwrap(), Some(gone));
+        assert_eq!(injector.anchor(), gone);
+        assert_eq!(injector.inject_mouse(gone.epoch, to).unwrap(), Some(gone));
+        assert!(mouse.lock().unwrap().events.is_empty());
+
+        // Back where it was, it is the viewer's to take again.
+        mouse.lock().unwrap().hidden = false;
+        let (moved, back) = injector.poll_pointer();
+        assert!(moved && back.inside);
+        assert_eq!((back.x, back.y), (gone.x, gone.y));
+        let anchor = injector.anchor();
+        assert_eq!(injector.inject_mouse(anchor.epoch, to).unwrap(), None);
+        assert_eq!(mouse.lock().unwrap().events, [to]);
+    }
+
+    /// The prompt can come up between looking at the pointer and moving it.
+    #[test]
+    fn a_move_that_is_refused_ends_the_viewers_hold() {
+        struct Refusing(FakeBackend);
+        impl Backend for Refusing {
+            fn position(&self) -> Result<(i32, i32)> {
+                Ok(self.0.0.lock().unwrap().point)
+            }
+            fn inject(&mut self, event: InputEvent, display: DisplayRect) -> Result<()> {
+                self.0.inject(event, display)
+            }
+        }
+        let (mut injector, mouse) = mock();
+        injector.backend = Box::new(Refusing(FakeBackend(mouse.clone())));
+        let held = injector.anchor().epoch;
+        mouse.lock().unwrap().hidden = true;
+
+        let to = InputEvent::MouseMove { x: 500, y: 500 };
+        let told = injector.inject_mouse(held, to).unwrap().unwrap();
+        assert_ne!(told.epoch, held);
+        mouse.lock().unwrap().hidden = false;
+        assert!(injector.inject_mouse(held, to).unwrap().is_some());
+        assert!(mouse.lock().unwrap().events.is_empty());
     }
 
     #[test]

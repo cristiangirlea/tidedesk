@@ -175,6 +175,7 @@ host answers directly. See
 
 - Windows only, one viewer at a time.
 - The host runs as a normal app: UAC prompts and the sign-in screen can't be seen or controlled.
+  The picture stands still while one is up, and the session goes on once it is answered at the host.
 - An amber arrow shows the host pointer position even with mouse control off;
   the viewer's independent local pointer is a crosshair. Native host cursor shapes
   (such as text-selection and resize cursors) are not yet mirrored.

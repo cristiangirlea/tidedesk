@@ -71,6 +71,10 @@ impl PointerAuthority {
     pub fn epoch(&self) -> u64 {
         self.epoch
     }
+    /// Where the pointer was last seen, or sent.
+    pub fn position(&self) -> (i32, i32) {
+        self.position
+    }
     pub fn accepts(&self, epoch: u64) -> bool {
         self.armed && self.epoch == epoch
     }
