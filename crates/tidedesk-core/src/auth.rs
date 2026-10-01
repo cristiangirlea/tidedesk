@@ -51,7 +51,16 @@ pub fn normalize_code(code: &str) -> String {
         .collect()
 }
 
-fn session_binding(conn: &quinn::Connection) -> Result<[u8; 32]> {
+/// Whether `text` is an access code, as typed (any case, separators or
+/// none), rather than a password.
+pub fn is_code(text: &str) -> bool {
+    let code = normalize_code(text);
+    code.len() == CODE_LEN && code.bytes().all(|c| CODE_ALPHABET.contains(&c))
+}
+
+/// Keying material only this TLS session has: proofs bound to it are
+/// worthless on any other.
+pub fn session_binding(conn: &quinn::Connection) -> Result<[u8; 32]> {
     let mut out = [0u8; 32];
     conn.export_keying_material(&mut out, EXPORTER_LABEL, b"")
         .map_err(|_| anyhow!("TLS keying material export failed"))?;
@@ -193,6 +202,15 @@ mod tests {
                 .all(|c| CODE_ALPHABET.contains(&c))
         );
         assert_ne!(a, b);
+    }
+
+    #[test]
+    fn a_code_is_told_from_a_password() {
+        assert!(is_code(&generate_code()));
+        assert!(is_code("k7qm 3xpa wz"));
+        assert!(!is_code("K7QM-3XPA-W"), "too short");
+        assert!(!is_code("K7QM-3XPA-W0"), "0 is not in the alphabet");
+        assert!(!is_code("correct horse battery"));
     }
 
     #[test]

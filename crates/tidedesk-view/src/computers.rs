@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use tidedesk_core::paths;
+use tidedesk_core::{paths, secret};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Computer {
@@ -49,13 +49,13 @@ impl Computer {
 
     pub fn code(&self) -> Option<String> {
         let bytes = from_hex(self.protected_code.as_deref()?)?;
-        String::from_utf8(unprotect(&bytes)?).ok()
+        String::from_utf8(secret::unprotect(&bytes)?).ok()
     }
 
     /// Remembers `code` (encrypted), or forgets it when `None` or empty.
     pub fn set_code(&mut self, code: Option<&str>) -> Result<()> {
         self.protected_code = match code.map(str::trim).filter(|c| !c.is_empty()) {
-            Some(c) => Some(to_hex(&protect(c.as_bytes())?)),
+            Some(c) => Some(to_hex(&secret::protect(c.as_bytes())?)),
             None => None,
         };
         Ok(())
@@ -121,74 +121,6 @@ fn from_hex(s: &str) -> Option<Vec<u8>> {
         .step_by(2)
         .map(|i| u8::from_str_radix(&s[i..i + 2], 16).ok())
         .collect()
-}
-
-#[cfg(windows)]
-fn protect(data: &[u8]) -> Result<Vec<u8>> {
-    use windows::Win32::Foundation::{HLOCAL, LocalFree};
-    use windows::Win32::Security::Cryptography::{
-        CRYPT_INTEGER_BLOB, CRYPTPROTECT_UI_FORBIDDEN, CryptProtectData,
-    };
-    let input = CRYPT_INTEGER_BLOB {
-        cbData: data.len() as u32,
-        pbData: data.as_ptr() as *mut u8,
-    };
-    let mut output = CRYPT_INTEGER_BLOB::default();
-    unsafe {
-        CryptProtectData(
-            &input,
-            None,
-            None,
-            None,
-            None,
-            CRYPTPROTECT_UI_FORBIDDEN,
-            &mut output,
-        )
-    }
-    .context("encrypting the access code")?;
-    let bytes =
-        unsafe { std::slice::from_raw_parts(output.pbData, output.cbData as usize) }.to_vec();
-    unsafe { LocalFree(Some(HLOCAL(output.pbData.cast()))) };
-    Ok(bytes)
-}
-
-#[cfg(windows)]
-fn unprotect(data: &[u8]) -> Option<Vec<u8>> {
-    use windows::Win32::Foundation::{HLOCAL, LocalFree};
-    use windows::Win32::Security::Cryptography::{
-        CRYPT_INTEGER_BLOB, CRYPTPROTECT_UI_FORBIDDEN, CryptUnprotectData,
-    };
-    let input = CRYPT_INTEGER_BLOB {
-        cbData: data.len() as u32,
-        pbData: data.as_ptr() as *mut u8,
-    };
-    let mut output = CRYPT_INTEGER_BLOB::default();
-    unsafe {
-        CryptUnprotectData(
-            &input,
-            None,
-            None,
-            None,
-            None,
-            CRYPTPROTECT_UI_FORBIDDEN,
-            &mut output,
-        )
-    }
-    .ok()?;
-    let bytes =
-        unsafe { std::slice::from_raw_parts(output.pbData, output.cbData as usize) }.to_vec();
-    unsafe { LocalFree(Some(HLOCAL(output.pbData.cast()))) };
-    Some(bytes)
-}
-
-#[cfg(not(windows))]
-fn protect(_data: &[u8]) -> Result<Vec<u8>> {
-    anyhow::bail!("remembering access codes is not supported on this platform yet")
-}
-
-#[cfg(not(windows))]
-fn unprotect(_data: &[u8]) -> Option<Vec<u8>> {
-    None
 }
 
 #[cfg(test)]

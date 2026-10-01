@@ -65,6 +65,20 @@ pub enum ClientMessage {
         request: u64,
         enabled: bool,
     },
+    // New messages go after the others: an enum travels as its position.
+    /// First message instead of `Hello`, with the host's saved password
+    /// instead of the access code (see [`crate::password`]): the viewer's
+    /// first SPAKE2 message. Hosts before it close the connection.
+    PasswordHello {
+        protocol_version: u16,
+        client_name: String,
+        want_audio: bool,
+        start: Vec<u8>,
+    },
+    /// The viewer's proof, once the host's answer checked out.
+    PasswordProof {
+        proof: [u8; 32],
+    },
 }
 
 /// Host → viewer control messages.
@@ -93,6 +107,12 @@ pub enum ServerMessage {
     Cursor(crate::sharing::PointerPosition),
     /// Acknowledged only after the encoder has produced a frame with this preset.
     Streaming(crate::streaming::StreamingStatus),
+    /// The host's answer to `PasswordHello` and its proof; `Welcome` or
+    /// `Rejected` follows the viewer's proof.
+    PasswordAnswer {
+        answer: Vec<u8>,
+        proof: [u8; 32],
+    },
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -105,6 +125,9 @@ pub enum RejectReason {
     },
     /// The host is running but has paused accepting viewers.
     NotAccepting,
+    /// The host has no saved password: use its access code.
+    NoPassword,
+    BadPassword,
 }
 
 impl std::fmt::Display for RejectReason {
@@ -114,6 +137,8 @@ impl std::fmt::Display for RejectReason {
             Self::TooManyAttempts => write!(f, "too many failed attempts, try again later"),
             Self::Busy => write!(f, "host already has a viewer connected"),
             Self::NotAccepting => write!(f, "host is not accepting connections right now"),
+            Self::NoPassword => write!(f, "the host has no saved password; use its access code"),
+            Self::BadPassword => write!(f, "wrong password"),
             Self::IncompatibleVersion { host_version } => write!(
                 f,
                 "protocol mismatch (host speaks v{host_version}, viewer speaks v{PROTOCOL_VERSION})"
@@ -288,6 +313,59 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    /// Messages travel as their position in the enum: the ones viewers and
+    /// hosts already know keep theirs, and the password's come after.
+    #[test]
+    fn messages_keep_their_place_on_the_wire() {
+        let first = |bytes: Vec<u8>| bytes[0];
+        let hello = ClientMessage::Hello {
+            protocol_version: PROTOCOL_VERSION,
+            client_name: "v".into(),
+            auth_tag: [0; 32],
+            want_audio: false,
+        };
+        assert_eq!(first(postcard::to_stdvec(&hello).unwrap()), 0);
+        let boost = ClientMessage::SetGameBoost {
+            request: 1,
+            enabled: true,
+        };
+        assert_eq!(first(postcard::to_stdvec(&boost).unwrap()), 8);
+        let password = ClientMessage::PasswordHello {
+            protocol_version: PROTOCOL_VERSION,
+            client_name: "v".into(),
+            want_audio: true,
+            start: vec![1, 2, 3],
+        };
+        let encoded = postcard::to_stdvec(&password).unwrap();
+        assert_eq!(first(encoded.clone()), 9);
+        assert_eq!(
+            postcard::from_bytes::<ClientMessage>(&encoded).unwrap(),
+            password
+        );
+        let proof = ClientMessage::PasswordProof { proof: [5; 32] };
+        assert_eq!(first(postcard::to_stdvec(&proof).unwrap()), 10);
+
+        let streaming = ServerMessage::Streaming(crate::streaming::StreamingStatus::requested(
+            1, false, 30, 8_000_000,
+        ));
+        assert_eq!(first(postcard::to_stdvec(&streaming).unwrap()), 7);
+        let answer = ServerMessage::PasswordAnswer {
+            answer: vec![4],
+            proof: [6; 32],
+        };
+        let encoded = postcard::to_stdvec(&answer).unwrap();
+        assert_eq!(first(encoded.clone()), 8);
+        assert_eq!(
+            postcard::from_bytes::<ServerMessage>(&encoded).unwrap(),
+            answer
+        );
+
+        let reason = |r| postcard::to_stdvec(&r).unwrap()[0];
+        assert_eq!(reason(RejectReason::NotAccepting), 4);
+        assert_eq!(reason(RejectReason::NoPassword), 5);
+        assert_eq!(reason(RejectReason::BadPassword), 6);
     }
 
     #[tokio::test]

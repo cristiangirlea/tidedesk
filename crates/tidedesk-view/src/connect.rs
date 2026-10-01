@@ -20,8 +20,8 @@ use tidedesk_core::nat::stun::{DEFAULT_STUN_SERVERS, resolve_servers};
 use tidedesk_core::nat::{
     Agent, DeviceId, NatKind, NotPublic, PunchError, Punched, SharedSocket, check_public,
 };
-use tidedesk_core::protocol::{self, ClientMessage, PROTOCOL_VERSION, ServerMessage};
-use tidedesk_core::{DEFAULT_PORT, auth, net, paths};
+use tidedesk_core::protocol::{self, ClientMessage, PROTOCOL_VERSION, RejectReason, ServerMessage};
+use tidedesk_core::{DEFAULT_PORT, auth, net, password, paths};
 
 /// How long to punch towards the host: the person there has this long to
 /// type this computer's address and press Open.
@@ -687,7 +687,17 @@ impl Dialer {
         }
         let display = &self.address;
         let mut known = self.known_hosts()?;
-        match self.pin_status(&known, &fp) {
+        let status = self.pin_status(&known, &fp);
+        // A password goes only to a host verified before this connection:
+        // met before, reached by device ID, or its fingerprint given.
+        let verified = match &status {
+            PinStatus::Trusted => true,
+            PinStatus::Unknown => opts.expected_fingerprint.as_ref().is_some_and(|expected| {
+                normalize_fingerprint(expected) == normalize_fingerprint(&fp)
+            }),
+            PinStatus::Mismatch { .. } => false,
+        };
+        match status {
             // An internet address and port can change with every restart, so
             // one trusted by its fingerprint is not remembered. A device ID
             // is stable: remember it, so the launcher lists it as recent.
@@ -724,17 +734,63 @@ impl Dialer {
         }
 
         let (mut send, mut recv) = conn.open_bi().await?;
-        let hello = ClientMessage::Hello {
-            protocol_version: PROTOCOL_VERSION,
-            client_name: std::env::var("COMPUTERNAME")
-                .or_else(|_| std::env::var("HOSTNAME"))
-                .unwrap_or_else(|_| "viewer".into()),
-            auth_tag: auth::client_tag(&conn, &opts.code)?,
-            want_audio: opts.want_audio,
+        let client_name = std::env::var("COMPUTERNAME")
+            .or_else(|_| std::env::var("HOSTNAME"))
+            .unwrap_or_else(|_| "viewer".into());
+        let answer = if !password::is_password(&opts.code) {
+            let hello = ClientMessage::Hello {
+                protocol_version: PROTOCOL_VERSION,
+                client_name,
+                auth_tag: auth::client_tag(&conn, &opts.code)?,
+                want_audio: opts.want_audio,
+            };
+            protocol::write_message(&mut send, &hello).await?;
+            protocol::read_message::<_, ServerMessage>(&mut recv).await?
+        } else {
+            if !verified {
+                conn.close(0u32.into(), b"password for an unverified host");
+                bail!(
+                    "a password is only used with a computer this viewer has connected to \
+                     before: connect once with its access code"
+                );
+            }
+            let password = opts.code.clone();
+            let key = tokio::task::spawn_blocking({
+                let fp = fp.clone();
+                move || password::derive_key(&password, &fp)
+            })
+            .await??;
+            let (viewer, start) = password::Viewer::start(&key, auth::session_binding(&conn)?);
+            let hello = ClientMessage::PasswordHello {
+                protocol_version: PROTOCOL_VERSION,
+                client_name,
+                want_audio: opts.want_audio,
+                start,
+            };
+            protocol::write_message(&mut send, &hello).await?;
+            match protocol::read_message::<_, ServerMessage>(&mut recv).await {
+                Ok(Some(ServerMessage::PasswordAnswer { answer, proof })) => {
+                    let Ok(mine) = viewer.finish(&answer, &proof) else {
+                        conn.close(0u32.into(), b"wrong password");
+                        bail!("host refused the connection: {}", RejectReason::BadPassword);
+                    };
+                    protocol::write_message(
+                        &mut send,
+                        &ClientMessage::PasswordProof { proof: mine },
+                    )
+                    .await?;
+                    protocol::read_message::<_, ServerMessage>(&mut recv).await?
+                }
+                Ok(Some(other)) => Some(other),
+                // A host from before passwords cannot read the message.
+                Ok(None) | Err(_) => bail!(
+                    "the host closed the connection: it may run a TideDesk without passwords. \
+                     Use its access code, or update TideDesk there"
+                ),
+            }
         };
-        protocol::write_message(&mut send, &hello).await?;
 
-        match protocol::read_message::<_, ServerMessage>(&mut recv).await? {
+        match answer {
             Some(ServerMessage::Welcome {
                 host_name,
                 width,
@@ -805,6 +861,7 @@ pub async fn probe(host: &str) -> Result<Probe> {
 mod tests {
     use std::net::{IpAddr, Ipv4Addr};
     use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     use tidedesk_core::identity::HostIdentity;
     use tidedesk_core::nat::stun::{self, TransactionId};
@@ -918,11 +975,139 @@ mod tests {
                             audio: false,
                         };
                         let _ = protocol::write_message(&mut send, &welcome).await;
+                    } else {
+                        // As a host from before passwords: it cannot read the
+                        // message, and the session ends.
+                        conn.close(0u32.into(), b"");
                     }
                     conn.closed().await;
                 });
             }
         });
+    }
+
+    /// A host with the saved password `key`: welcomes a viewer that proves
+    /// it, and counts the password hellos it got.
+    fn password_host(endpoint: quinn::Endpoint, key: password::Key) -> Arc<AtomicUsize> {
+        let hellos = Arc::new(AtomicUsize::new(0));
+        let counted = hellos.clone();
+        tokio::spawn(async move {
+            while let Some(incoming) = net::accept_validated(&endpoint).await {
+                let counted = counted.clone();
+                tokio::spawn(async move {
+                    let Ok(conn) = incoming.await else { return };
+                    let Ok((mut send, mut recv)) = conn.accept_bi().await else {
+                        return;
+                    };
+                    let Ok(Some(ClientMessage::PasswordHello { start, .. })) =
+                        protocol::read_message::<_, ClientMessage>(&mut recv).await
+                    else {
+                        return;
+                    };
+                    counted.fetch_add(1, Ordering::SeqCst);
+                    let binding = auth::session_binding(&conn).unwrap();
+                    let (host, answer, proof) =
+                        password::Host::answer(&key, binding, &start).unwrap();
+                    let message = ServerMessage::PasswordAnswer { answer, proof };
+                    let _ = protocol::write_message(&mut send, &message).await;
+                    let reply = protocol::read_message::<_, ClientMessage>(&mut recv).await;
+                    let reply = match reply {
+                        Ok(Some(ClientMessage::PasswordProof { proof }))
+                            if host.accepts(&proof) =>
+                        {
+                            ServerMessage::Welcome {
+                                host_name: "own-pc".into(),
+                                width: 640,
+                                height: 480,
+                                audio: false,
+                            }
+                        }
+                        _ => ServerMessage::Rejected {
+                            reason: RejectReason::BadPassword,
+                        },
+                    };
+                    let _ = protocol::write_message(&mut send, &reply).await;
+                    conn.closed().await;
+                });
+            }
+        });
+        hellos
+    }
+
+    /// A host this viewer has met takes the saved password; a wrong one is
+    /// refused; one never met gets no password at all; one from before
+    /// passwords is named as such.
+    #[tokio::test]
+    async fn a_saved_password_opens_a_host_met_before() {
+        let dir = temp_dir("password");
+        let identity = HostIdentity::load_or_create(&dir).unwrap();
+        let fingerprint = identity.fingerprint();
+        let key = password::derive_key("correct horse battery", &fingerprint).unwrap();
+        let (socket, _) = SharedSocket::bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        let host = socket.local_addr().unwrap();
+        let hellos = password_host(net::server_endpoint_on(socket, &identity).unwrap(), key);
+        let connect = |code: &str, dir: PathBuf| {
+            let code = code.to_string();
+            async move {
+                let dialer = Dialer::new(&host.to_string(), &Route::Direct, None, |_| {})
+                    .await
+                    .unwrap()
+                    .with_config_dir(dir);
+                let options = ConnectOptions {
+                    code,
+                    ..options(host, Route::Direct)
+                };
+                dialer.connect(&options).await
+            }
+        };
+
+        // Never met: no password goes out.
+        let why = connect("correct horse battery", dir.clone())
+            .await
+            .err()
+            .unwrap();
+        assert!(
+            format!("{why:#}").contains("connect once with its access code"),
+            "{why:#}"
+        );
+        assert_eq!(hellos.load(Ordering::SeqCst), 0);
+
+        // Met before.
+        KnownHosts::load(&dir)
+            .unwrap()
+            .pin(&host.to_string(), &fingerprint)
+            .unwrap();
+        let session = connect("correct horse battery", dir.clone()).await.unwrap();
+        assert_eq!(session.host_name, "own-pc");
+        session.conn.close(0u32.into(), b"done");
+
+        let why = connect("battery horse correct", dir.clone())
+            .await
+            .err()
+            .unwrap();
+        assert!(format!("{why:#}").contains("wrong password"), "{why:#}");
+        assert_eq!(hellos.load(Ordering::SeqCst), 2);
+
+        // A host from before passwords.
+        let old_dir = temp_dir("password-old-host");
+        let old_identity = HostIdentity::load_or_create(&old_dir).unwrap();
+        let (socket, _) = SharedSocket::bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        let old = socket.local_addr().unwrap();
+        fake_host(net::server_endpoint_on(socket, &old_identity).unwrap());
+        KnownHosts::load(&old_dir)
+            .unwrap()
+            .pin(&old.to_string(), &old_identity.fingerprint())
+            .unwrap();
+        let dialer = Dialer::new(&old.to_string(), &Route::Direct, None, |_| {})
+            .await
+            .unwrap()
+            .with_config_dir(old_dir);
+        let options = ConnectOptions {
+            code: "correct horse battery".into(),
+            ..options(old, Route::Direct)
+        };
+        let why = dialer.connect(&options).await.err().unwrap();
+        assert!(format!("{why:#}").contains("without passwords"), "{why:#}");
     }
 
     fn options(host: SocketAddr, route: Route) -> ConnectOptions {

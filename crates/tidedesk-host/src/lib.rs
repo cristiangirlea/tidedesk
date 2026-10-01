@@ -10,6 +10,7 @@ mod icon;
 mod input;
 mod internet;
 mod platform;
+pub mod saved_password;
 pub mod session;
 mod tray;
 mod video;
@@ -20,7 +21,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::{CommandFactory, FromArgMatches, Parser};
 use tidedesk_core::identity::HostIdentity;
 use tidedesk_core::nat::signal::{Credentials, RendezvousStatus};
@@ -81,6 +82,15 @@ struct Args {
     /// Replace the saved access code with a new random one.
     #[arg(long)]
     new_code: bool,
+
+    /// Set the password for viewers that have met this host before, read
+    /// from standard input, and exit.
+    #[arg(long, conflicts_with = "remove_password")]
+    set_password: bool,
+
+    /// Remove the saved password and exit.
+    #[arg(long)]
+    remove_password: bool,
 
     /// Print the available displays and exit.
     #[arg(long)]
@@ -224,6 +234,7 @@ pub fn start(options: &StartOptions) -> Result<Started> {
     let state = Arc::new(session::HostState {
         host_name,
         codes: Mutex::new(codes::Codes::new(code.clone())),
+        password: Mutex::new(saved_password::load()),
         new_code_after_session: AtomicBool::new(config.new_code_after_session && !options.headless),
         registration: Mutex::new(None),
         register: Mutex::new(None),
@@ -349,6 +360,13 @@ fn run(args: Args) -> Result<()> {
 
     platform::enable_dpi_awareness();
 
+    if args.set_password || args.remove_password {
+        if let Err(e) = password_from_console(args.set_password) {
+            eprintln!("error: {e:#}");
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
     if args.list_displays {
         for d in capture::list_displays()? {
             println!(
@@ -404,6 +422,37 @@ fn run(args: Args) -> Result<()> {
     println!("  Terms of use: {}", tidedesk_core::TERMS_URL);
     println!();
     runtime.block_on(std::future::pending::<()>());
+    Ok(())
+}
+
+/// `--set-password` and `--remove-password`: for a host without a window.
+/// The password is read from standard input, twice when typed.
+fn password_from_console(set: bool) -> Result<()> {
+    if !set {
+        saved_password::remove()?;
+        println!("The saved password is removed; viewers need the access code.");
+        return Ok(());
+    }
+    use std::io::IsTerminal;
+    let typed = std::io::stdin().is_terminal();
+    let read = |prompt: &str| -> Result<String> {
+        if typed {
+            eprint!("{prompt}");
+        }
+        let mut line = String::new();
+        std::io::stdin().read_line(&mut line)?;
+        Ok(line.trim_end_matches(['\r', '\n']).to_string())
+    };
+    let password = read("New password: ")?;
+    if typed && read("The same again: ")? != password {
+        bail!("the two passwords differ; nothing was saved");
+    }
+    let fingerprint = HostIdentity::load_or_create(&paths::config_dir()?)?.fingerprint();
+    saved_password::save(&password, &fingerprint)?;
+    println!(
+        "Password saved. Viewers that have met this host before can use it instead of the \
+         access code; restart a running host to apply it."
+    );
     Ok(())
 }
 
