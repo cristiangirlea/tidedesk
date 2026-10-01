@@ -10,6 +10,10 @@ Download @ZIP@ and extract it. Run tidedesk.exe on both computers.
 
 ## New in this release
 
+- **An About tab with the version.** About used to sit at the bottom of the Settings tab; it is a tab of its own now, with the version, a button that copies it for a question or a report, and one that opens the releases page to look for a newer version. License, terms of use, privacy and third-party notices are there as before. (#82)
+
+## Introduced in v0.1.0-alpha.10
+
 ### Access
 
 - **Your own computers without the code.** Set a password under the access code on the host (or `tidedesk host --set-password`). A viewer that has connected to that computer before, or reaches it by device ID, types the password where the code goes. Neither computer sends the password: both prove to each other that they know it, and the host keeps only a key derived from it. Both computers need this release.
@@ -24,40 +28,15 @@ Download @ZIP@ and extract it. Run tidedesk.exe on both computers.
 - **Simpler settings.** The fields for naming STUN servers and a connection service are gone from Host and Viewer Settings; servers named in the settings files or on the command line still apply.
 - **Cleaner text.** Window titles and labels use a bar or a colon instead of long dashes (`OBLIVION5080U9 | TideDesk`). (#70)
 
-## Introduced in v0.1.0-alpha.9
-
-### Sessions that last
-
-- **A permission prompt on the host no longer ends the session.** When Windows asked "Do you want to allow this app to make changes?" on the host, or showed the lock screen, the viewer was disconnected. Now the picture stands still while the prompt is up, the viewer says that the host's pointer is outside the shared screen, and the session goes on once the prompt is answered at the host. The prompt itself still cannot be seen or answered from the viewer. Programs that ask for permission when they start (installers, Docker Desktop) ended sessions this way. (#58)
-- **A host that has gone is noticed within seconds.** After three seconds without an answer, the viewer's title says "No answer from the host" and counts up; it goes away when the host answers again. The session is still given up only after 20 seconds, so a network that fails for a moment does not end it. (#42)
-
-### Video
-
-- **Intel graphics reach the frame rate.** On Intel's encoder each picture took 31 ms, whatever its size: Windows' timers tick every 15.6 ms unless a program asks for finer ones, and the encoder waited on them. The host now asks while it encodes on a graphics card. On a laptop with Intel graphics at 2560x1600, a moving screen went from 32 to 60 frames a second, and from 45 to 14 ms between the screen and the encoded picture. (#43, #65)
-- **The graphics card's encoder gets the next picture while it works on the last** where that helps, and one picture at a time where the card takes them in turn anyway, which it finds out by itself in the first seconds. (#43)
-
-### Mouse and keyboard
-
-- **The first click after the pointer jumps reaches the host**, where it was made: tablets, pens and tools that put the pointer somewhere and click at once lost that click. (#41)
-- **Keys from tools and on-screen keyboards work**: keys that arrive without a hardware scan code, including arrows and the viewer's own shortcuts, were ignored. Text a tool types as characters is typed on the host with the keys that make it. (#40)
-
-### Connecting
-
-- **Two computers behind one router find each other without broadcasts.** The host gives its local addresses to the connection service, sealed with its access code so that the service cannot read them. A viewer at the same internet address opens them with the code and connects directly, before it tries a path through the router. Hosts and viewers from earlier releases keep working. (#44)
-
-### For scripts
-
-- **Output sent to a file arrives there.** `tidedesk host --headless --stats > host.log` from a terminal or a batch file wrote nothing to the file. (#62)
-
 ## Known issues
 
 - When a session ends, the viewer's window closes without saying why. (#60)
 - Automation tools that mark every key as an extended one (Python's `uiautomation`) send some letters with Ctrl or Alt as media keys: Ctrl+Alt+C turns the host's volume down. (#66)
-- A password or a trust needs the host on this release; a code works with every host from v0.1.0-alpha.3 on.
+- A password or a trust needs the host on v0.1.0-alpha.10 or later; a code works with every host from v0.1.0-alpha.3 on.
 
 ## Good to know
 
-A device ID also works on the same local network, even without the internet: the viewer asks its own network too, and the host answers directly. The host encodes video on the graphics card where it has an H.264 encoder (AMD, Intel or NVIDIA) and falls back to Windows' software encoder by itself.
+A device ID also works on the same local network, even without the internet: the viewer asks its own network too, and the host answers directly. Two computers behind one router also find each other through the host's local addresses, which it gives the connection service sealed with its access code. The host encodes video on the graphics card where it has an H.264 encoder (AMD, Intel or NVIDIA) and falls back to Windows' software encoder by itself.
 
 **Keep host and viewer on the same release.** This build uses protocol v3: it connects to v0.1.0-alpha.3 and later on a local network, but not to the earlier v1/v2 alpha releases. Internet connections need both computers on this release.
 
