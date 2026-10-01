@@ -14,12 +14,12 @@ use anyhow::{Result, anyhow};
 use egui::{Color32, RichText};
 use egui_software_backend::{SoftwareBackend, SoftwareBackendAppConfiguration};
 use tidedesk_core::nat::signal::Credentials;
-use tidedesk_core::nat::signal::{DEFAULT_RENDEZVOUS, RendezvousStatus};
-use tidedesk_core::nat::stun::{DEFAULT_STUN_SERVERS, STUN_REFRESH};
+use tidedesk_core::nat::signal::RendezvousStatus;
+use tidedesk_core::nat::stun::STUN_REFRESH;
 use tidedesk_core::nat::{Agent, NatKind, PublicStatus};
 
 use crate::capture::{self, DisplayInfo};
-use crate::config::{HostConfig, parse_stun_servers};
+use crate::config::HostConfig;
 use crate::internet::{self, PathState};
 use crate::session::HostState;
 use crate::tray::Tray;
@@ -75,10 +75,6 @@ pub struct HostApp {
     displays: Vec<DisplayInfo>,
     addresses: Vec<Address>,
     show_all_addresses: bool,
-    /// The STUN server list as typed; applied when the field loses focus.
-    stun_text: String,
-    /// The rendezvous service as typed; applied when the field loses focus.
-    rendezvous_text: String,
     /// A viewer's internet address as typed, and why it was not accepted.
     viewer_text: String,
     viewer_error: Option<String>,
@@ -171,8 +167,6 @@ impl HostApp {
     pub fn new(info: HostInfo, title: &'static str) -> Self {
         let displays = capture::list_displays().unwrap_or_default();
         let addresses = local_addresses(info.port);
-        let stun_text = info.config.stun_servers.join(", ");
-        let rendezvous_text = info.config.rendezvous_server.clone();
         Self {
             info,
             title,
@@ -180,8 +174,6 @@ impl HostApp {
             displays,
             addresses,
             show_all_addresses: false,
-            stun_text,
-            rendezvous_text,
             viewer_text: String::new(),
             viewer_error: None,
             notice: None,
@@ -553,45 +545,17 @@ impl HostApp {
         )
         .on_hover_text(
             "Registers this computer's device ID and public address with TideDesk's \
-             connection service (or the one under Advanced), which introduces viewers \
-             and never carries a session.",
+             connection service, which introduces viewers and never carries a session.",
         );
-        egui::CollapsingHeader::new("Advanced")
-            .id_salt("internet-advanced")
-            .show(ui, |ui| {
-                ui.checkbox(
-                    &mut cfg.discover_public_address,
-                    "Look up this computer's internet address (STUN)",
-                )
-                .on_hover_text(
-                    "Asks public STUN servers which address and port your router gives \
-                     TideDesk. They see this computer's public IP address and a 20-byte \
-                     request, nothing else.",
-                );
-                ui.horizontal(|ui| {
-                    ui.label("STUN servers");
-                    let field = egui::TextEdit::singleline(&mut self.stun_text)
-                        .hint_text(DEFAULT_STUN_SERVERS.join(", "));
-                    if ui
-                        .add_enabled(cfg.discover_public_address, field)
-                        .lost_focus()
-                    {
-                        cfg.stun_servers = parse_stun_servers(&self.stun_text);
-                        self.stun_text = cfg.stun_servers.join(", ");
-                    }
-                });
-                ui.small("host:port, separated by commas. Leave empty for the defaults.");
-                ui.horizontal(|ui| {
-                    ui.label("Connection service");
-                    let field = egui::TextEdit::singleline(&mut self.rendezvous_text)
-                        .hint_text(DEFAULT_RENDEZVOUS);
-                    if ui.add_enabled(cfg.rendezvous, field).lost_focus() {
-                        cfg.rendezvous_server = self.rendezvous_text.trim().to_string();
-                        self.rendezvous_text = cfg.rendezvous_server.clone();
-                    }
-                });
-                ui.small("host:port. Leave empty for TideDesk's own service.");
-            });
+        ui.checkbox(
+            &mut cfg.discover_public_address,
+            "Look up this computer's internet address (STUN)",
+        )
+        .on_hover_text(
+            "Asks public STUN servers which address and port your router gives \
+             TideDesk. They see this computer's public IP address and a 20-byte \
+             request, nothing else.",
+        );
 
         if *cfg != before {
             {
