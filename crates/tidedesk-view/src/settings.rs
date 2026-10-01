@@ -397,7 +397,26 @@ fn shortcut_ui(ui: &mut egui::Ui, label: &str, shortcut: &mut Shortcut) {
     });
 }
 
-pub fn run() -> Result<()> {
+/// The settings window's size, in points.
+const SIZE: [f32; 2] = [550.0, 590.0];
+
+/// Where a session asks the settings window to open: the centre of its own
+/// window, in points, as `x,y`.
+pub fn parse_near(text: &str) -> Option<[f32; 2]> {
+    let (x, y) = text.split_once(',')?;
+    let (x, y) = (x.trim().parse::<f32>().ok()?, y.trim().parse::<f32>().ok()?);
+    (x.is_finite() && y.is_finite()).then_some([x, y])
+}
+
+/// The top left corner that centres the settings window on `centre`.
+fn centred_on(centre: [f32; 2]) -> [f32; 2] {
+    [centre[0] - SIZE[0] / 2.0, centre[1] - SIZE[1] / 2.0]
+}
+
+/// Opens the settings window, centred on `near` when a session gives it:
+/// in front of the session, on its monitor, rather than where Windows puts
+/// new windows.
+pub fn run(near: Option<[f32; 2]>) -> Result<()> {
     struct Window(Editor);
     impl egui_software_backend::App for Window {
         fn ui(&mut self, ui: &mut egui::Ui, _: &mut egui_software_backend::SoftwareBackend) {
@@ -409,9 +428,12 @@ pub fn run() -> Result<()> {
     let mut config = egui_software_backend::SoftwareBackendAppConfiguration::new();
     config.viewport_builder = egui::ViewportBuilder::default()
         .with_title("TideDesk Viewer Settings")
-        .with_inner_size([550.0, 590.0])
+        .with_inner_size(SIZE)
         .with_min_inner_size([420.0, 350.0])
         .with_icon(crate::icon::egui_icon());
+    if let Some(centre) = near {
+        config.viewport_builder = config.viewport_builder.with_position(centred_on(centre));
+    }
     egui_software_backend::run_app_with_software_backend(config, |_| Window(Editor::default()))
         .map_err(|e| anyhow::anyhow!("cannot open settings: {e}"))
 }
@@ -420,6 +442,17 @@ pub fn run() -> Result<()> {
 mod tests {
     use super::*;
     use winit::keyboard::KeyCode;
+
+    /// A session gives the centre of its window; settings open centred on it.
+    #[test]
+    fn settings_open_centred_on_the_session() {
+        assert_eq!(parse_near("3200,1080"), Some([3200.0, 1080.0]));
+        assert_eq!(parse_near(" -1280.5 , 300 "), Some([-1280.5, 300.0]));
+        for bad in ["", "3200", "x,1", "1,NaN", "1,inf"] {
+            assert_eq!(parse_near(bad), None, "{bad}");
+        }
+        assert_eq!(centred_on([3200.0, 1080.0]), [2925.0, 785.0]);
+    }
 
     #[test]
     fn defaults_and_old_partial_configs() {

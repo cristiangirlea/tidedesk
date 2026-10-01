@@ -39,6 +39,9 @@ struct Args {
     /// Open viewer settings without connecting.
     #[arg(long)]
     settings: bool,
+    /// With --settings: the centre to open the window on, `x,y` in points.
+    #[arg(long, hide = true, requires = "settings")]
+    settings_near: Option<String>,
     /// Host to connect to: name or IP, optionally with :port. Omit to open the
     /// connect window.
     host: Option<String>,
@@ -237,7 +240,7 @@ fn run(program: &str, argv: Vec<OsString>) -> Result<()> {
     let matches = Args::command().bin_name(program).get_matches_from(argv);
     let args = Args::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
     if args.settings {
-        return settings::run();
+        return settings::run(args.settings_near.as_deref().and_then(settings::parse_near));
     }
     if args.relay.is_some() {
         eprintln!(
