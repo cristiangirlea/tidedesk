@@ -67,6 +67,13 @@ service (or the one in Viewer Settings) for that ID, which tells the service the
 viewer's public address and which ID it asked for; a viewer that never connects by ID
 never contacts it. Using the service is subject to the [terms of use](terms-of-use.md).
 
+The build installed from the Microsoft Store asks the Store whether an update waits:
+a minute after it starts and every six hours while it runs, through Windows' own
+Store service, as the Store app does. Microsoft learns what it learns when the Store
+looks for updates itself; TideDesk sends nothing of its own and contacts no other
+server for this. Turn it off under Settings, Updates ("Leave it to the Store", or
+`updates = "off"` in `host.toml`). The ZIP build does not look for updates at all.
+
 A viewer connecting by device ID also broadcasts a 24-byte query for that ID on its
 local network (UDP port 47800), so other computers on that network can see which ID
 it looks for. TideDesk Host answers only queries for its own ID from computers on its

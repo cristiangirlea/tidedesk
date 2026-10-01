@@ -40,16 +40,29 @@ pub struct HostState {
     pub viewer: Mutex<Option<ViewerInfo>>,
     /// A viewer on another network this host opens a path to.
     pub expected_viewer: Mutex<Option<crate::internet::ExpectedViewer>>,
+    /// What is known and wanted about updates from the Store.
+    pub updates: Mutex<crate::updates::Board>,
     /// Called whenever something the UI shows has changed.
     pub on_change: Mutex<Option<Box<dyn Fn() + Send + Sync>>>,
 }
 
 impl HostState {
+    /// Whether a viewer is connected, or about to be.
+    pub fn connected(&self) -> bool {
+        self.busy.load(Ordering::SeqCst) || self.viewer.lock().unwrap().is_some()
+    }
+
     pub fn changed(&self) {
         if let Some(notify) = self.on_change.lock().unwrap().as_ref() {
             notify();
         }
     }
+}
+
+/// Whether a viewer may connect: not while the host is paused, nor while the
+/// Store installs an update, at the end of which Windows ends the program.
+fn takes_viewers(accepting: bool, updates: &crate::updates::Board) -> bool {
+    accepting && !updates.installing
 }
 
 /// Clears the busy flag and the viewer shown in the UI however the session ends.
@@ -100,7 +113,8 @@ pub async fn run(conn: quinn::Connection, state: Arc<HostState>) -> Result<()> {
         };
         return reject(&mut send, &conn, reason).await;
     }
-    if !state.accepting.load(Ordering::SeqCst) {
+    let accepting = state.accepting.load(Ordering::SeqCst);
+    if !takes_viewers(accepting, &state.updates.lock().unwrap()) {
         return reject(&mut send, &conn, RejectReason::NotAccepting).await;
     }
     if state.throttle.lock().unwrap().is_locked(Instant::now()) {
@@ -332,5 +346,22 @@ struct StopOnDrop<'a>(&'a AtomicBool);
 impl Drop for StopOnDrop<'_> {
     fn drop(&mut self) {
         self.0.store(true, Ordering::Relaxed);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::updates::{Board, Updates};
+
+    #[test]
+    fn viewers_are_refused_while_an_update_is_installed() {
+        let mut board = Board::new(Updates::Automatic);
+        assert!(super::takes_viewers(true, &board));
+        assert!(!super::takes_viewers(false, &board), "paused by hand");
+        // Windows ends the program when the Store is done.
+        board.installing();
+        assert!(!super::takes_viewers(true, &board));
+        board.installed(Err("no network".into()), std::time::Instant::now());
+        assert!(super::takes_viewers(true, &board));
     }
 }

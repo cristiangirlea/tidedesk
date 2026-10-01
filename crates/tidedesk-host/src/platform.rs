@@ -165,7 +165,8 @@ mod windows_impl {
     const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
     const RUN_VALUE: &str = "TideDesk Host";
 
-    fn is_packaged() -> bool {
+    /// Whether this is the build the Microsoft Store installed.
+    pub fn is_packaged() -> bool {
         use windows::Win32::Foundation::ERROR_INSUFFICIENT_BUFFER;
         use windows::Win32::Storage::Packaging::Appx::GetCurrentPackageFullName;
         let mut length = 0;
@@ -310,6 +311,9 @@ mod fallback {
     pub fn set_window_visible(_title: &str, _visible: bool) {}
     pub fn set_taskbar_button(_title: &str, _show: bool) {}
     pub fn hide_on_close(_title: &str) {}
+    pub fn is_packaged() -> bool {
+        false
+    }
     pub fn autostart_enabled() -> bool {
         false
     }
