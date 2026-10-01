@@ -173,6 +173,46 @@ impl KnownHosts {
 }
 
 /// A host identity in a temporary directory, for tests elsewhere in the crate.
+/// This viewer's own identity: a self-signed certificate it shows hosts, so
+/// that a host that trusts it lets it in without the access code. Its key
+/// is sealed for this Windows account.
+pub struct ViewerIdentity {
+    pub cert: CertificateDer<'static>,
+    pub key: PrivateKeyDer<'static>,
+}
+
+impl ViewerIdentity {
+    /// Loads the identity from `dir`, making and saving one on first run.
+    pub fn load_or_create(dir: &Path) -> Result<Self> {
+        let cert_path = dir.join("viewer-cert.der");
+        let key_path = dir.join("viewer-key.sealed");
+        if let (Ok(cert), Ok(sealed)) = (std::fs::read(&cert_path), std::fs::read(&key_path))
+            && let Some(key) = crate::secret::unprotect(&sealed)
+        {
+            return Ok(Self {
+                cert: CertificateDer::from(cert),
+                key: PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key)),
+            });
+        }
+        let generated = rcgen::generate_simple_self_signed(vec!["tidedesk-viewer".to_string()])
+            .context("making the viewer's certificate")?;
+        let cert = generated.cert.der().to_vec();
+        let key = generated.signing_key.serialize_der();
+        std::fs::write(&key_path, crate::secret::protect(&key)?)
+            .context("saving the viewer's key")?;
+        std::fs::write(&cert_path, &cert).context("saving the viewer's certificate")?;
+        Ok(Self {
+            cert: CertificateDer::from(cert),
+            key: PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key)),
+        })
+    }
+
+    /// What a host lists it by.
+    pub fn fingerprint(&self) -> String {
+        fingerprint(&self.cert)
+    }
+}
+
 #[cfg(test)]
 pub(crate) fn test_identity(name: &str) -> HostIdentity {
     let dir = std::env::temp_dir().join(format!("tidedesk-test-{name}-{}", std::process::id()));

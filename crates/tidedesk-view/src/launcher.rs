@@ -111,6 +111,8 @@ pub struct Launcher {
     sound: bool,
     internet: bool,
     focus_code: bool,
+    /// A computer being tried without a code, in case it asks for one.
+    without_code: Option<Target>,
 
     book: AddressBook,
     recent: Vec<String>,
@@ -153,6 +155,7 @@ impl Launcher {
             sound: true,
             internet: false,
             focus_code: false,
+            without_code: None,
             book: AddressBook::load(),
             recent: load_recent(),
             editor: None,
@@ -203,19 +206,9 @@ impl Launcher {
     }
 
     fn connect(&mut self, ctx: &egui::Context, target: Target) {
-        if target.code.trim().is_empty() {
-            // No saved code: collect it in the quick-connect form.
-            self.address = target.address;
-            self.sound = target.sound;
-            self.internet = target.internet;
-            self.code.clear();
-            self.focus_code = true;
-            self.message = Some((
-                false,
-                "Enter the access code shown on that computer, or its password.".into(),
-            ));
-            return;
-        }
+        // Without a code: a host that trusts this viewer lets it in; any
+        // other asks for the code, collected in the quick-connect form then.
+        self.without_code = target.code.trim().is_empty().then(|| target.clone());
         self.message = None;
         let host = target.address.trim().to_string();
         // Internet and device-ID sessions open their path and probe the host
@@ -406,6 +399,21 @@ impl Launcher {
                 Update::Child(line) => self.on_child_line(ctx, line),
                 Update::SessionEnded { host, outcome } => {
                     self.phase = Phase::Idle;
+                    let without_code = self.without_code.take();
+                    if let (Err(e), Some(target)) = (&outcome, without_code)
+                        && e.contains("wrong access code")
+                    {
+                        self.address = target.address;
+                        self.sound = target.sound;
+                        self.internet = target.internet;
+                        self.code.clear();
+                        self.focus_code = true;
+                        self.message = Some((
+                            false,
+                            "Enter the access code shown on that computer, or its password.".into(),
+                        ));
+                        continue;
+                    }
                     self.message = Some(match outcome {
                         Ok(()) => (false, format!("Session with {host} ended.")),
                         Err(e) if e == child::CANCELLED => (false, "Cancelled.".into()),
@@ -579,7 +587,7 @@ impl Launcher {
                         code.request_focus();
                     }
                     ui.end_row();
-                    let ready = !self.address.trim().is_empty() && !self.code.trim().is_empty();
+                    let ready = !self.address.trim().is_empty();
                     if ready && code.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                         let target = self.quick_target();
                         self.connect(&ctx, target);
@@ -591,7 +599,7 @@ impl Launcher {
             ui.checkbox(&mut self.sound, "Play sound from the remote computer");
             ui.checkbox(&mut self.internet, INTERNET_OPTION);
             ui.horizontal(|ui| {
-                let ready = !self.address.trim().is_empty() && !self.code.trim().is_empty();
+                let ready = !self.address.trim().is_empty();
                 if ui
                     .add_enabled(ready, egui::Button::new("Connect"))
                     .clicked()
@@ -965,6 +973,7 @@ mod tests {
             sound: true,
             internet: false,
             focus_code: false,
+            without_code: None,
             book: AddressBook::default(),
             recent: Vec::new(),
             editor: None,
@@ -1029,6 +1038,45 @@ mod tests {
             Some((false, "Cancelled.".into())),
             "not shown as an error"
         );
+    }
+
+    /// A saved computer without a code is tried as it is: one that trusts
+    /// this viewer lets it in, any other asks for its code.
+    #[test]
+    fn a_computer_tried_without_a_code_asks_for_one_when_it_must() {
+        let ctx = egui::Context::default();
+        let mut l = launcher();
+        let wrong = || "host refused the connection: wrong access code".to_string();
+        l.without_code = Some(Target {
+            address: "office-pc".into(),
+            code: String::new(),
+            sound: false,
+            internet: false,
+        });
+        let ended = Update::SessionEnded {
+            host: "office-pc".into(),
+            outcome: Err(wrong()),
+        };
+        Launcher::post(&l.inbox, &ctx, ended);
+        l.handle_updates(&ctx);
+        assert_eq!(l.address, "office-pc");
+        assert!(l.focus_code);
+        assert_eq!(
+            l.message,
+            Some((
+                false,
+                "Enter the access code shown on that computer, or its password.".into()
+            ))
+        );
+
+        // A wrong code that was typed is an error, as before.
+        let ended = Update::SessionEnded {
+            host: "office-pc".into(),
+            outcome: Err(wrong()),
+        };
+        Launcher::post(&l.inbox, &ctx, ended);
+        l.handle_updates(&ctx);
+        assert_eq!(l.message, Some((true, wrong())));
     }
 
     #[test]

@@ -80,6 +80,13 @@ it by device ID, can then type the password where the code goes. Neither side se
 they prove to each other that they know it, and the host keeps only a key derived from it.
 Three wrong passwords lock the address out for a while.
 
+**To let a viewer come back without any code**, press **Trust this viewer** on the host while it
+is connected. That viewer then connects with the code left empty, until you remove it from
+**Trusted viewers** on the host. Each viewer has its own certificate, whose key never leaves that
+computer; the host recognises it by the certificate's fingerprint. Without a window:
+`tidedesk view --my-fingerprint` on the viewer, `tidedesk host --trust-viewer FINGERPRINT` on the
+host.
+
 **On the computer you are sitting at**, run `tidedesk`, open **Connect to a computer**, type the
 device ID (or the address on a local network) and the access code, and press **Connect**. Save
 computers you use often under **My computers** for one-click connections; access codes you
@@ -121,6 +128,7 @@ tidedesk view 192.168.1.50 --code K7QM-3XPA-WZ
 | `--no-audio` | Don't share sound |
 | `--new-code` | Replace the access code |
 | `--set-password` / `--remove-password` | Set the password for your own computers (read from standard input), or remove it |
+| `--trust-viewer FP` / `--untrust-viewer FP` / `--trusted-viewers` | Let a viewer in without a code, stop, or list them |
 | `--stats` | Print fps, bitrate and encode time |
 
 Host options override the saved settings for that run only.
@@ -129,6 +137,7 @@ Host options override the saved settings for that run only.
 |---|---|
 | `--no-audio` | Don't play the host's sound |
 | `--fingerprint "3F2A 91C0 …"` | Verify the host on the very first connection |
+| `--my-fingerprint` | Print this viewer's fingerprint, for a host to trust it |
 | `--stats` | Print fps, bitrate and decode time |
 
 The access code can also be supplied through the `TIDEDESK_CODE` environment variable.

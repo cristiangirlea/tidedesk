@@ -219,6 +219,34 @@ impl HostApp {
             .map(|e| format!("Could not save settings: {e:#}"));
     }
 
+    /// The viewers this host trusts, each with a way to stop trusting it.
+    fn trusted_ui(&mut self, ui: &mut egui::Ui, state: &HostState) {
+        let mut trusted = state.trusted.lock().unwrap();
+        if trusted.list().is_empty() {
+            return;
+        }
+        ui.label("Trusted viewers: they connect without the access code");
+        let mut remove = None;
+        for viewer in trusted.list() {
+            ui.horizontal(|ui| {
+                let short: String = viewer.fingerprint.chars().take(8).collect();
+                ui.label(format!(
+                    "{} ({short}…, since {})",
+                    viewer.name, viewer.since
+                ));
+                if ui.small_button("Remove").clicked() {
+                    remove = Some(viewer.fingerprint.clone());
+                }
+            });
+        }
+        if let Some(fingerprint) = remove {
+            trusted.remove(&fingerprint);
+            if let Err(e) = trusted.save() {
+                self.notice = Some(format!("{e:#}"));
+            }
+        }
+    }
+
     /// A password for the owner's own computers: viewers that have
     /// connected before use it instead of the access code.
     fn password_ui(&mut self, ui: &mut egui::Ui, state: &HostState) {
@@ -296,6 +324,25 @@ impl HostApp {
                 if ui.button("Disconnect").clicked() {
                     v.connection.close(2u32.into(), b"disconnected by host");
                 }
+                // An invitation: this viewer comes back without the code.
+                if let Some(fingerprint) = &v.fingerprint {
+                    let mut trusted = state.trusted.lock().unwrap();
+                    if trusted.trusts(fingerprint) {
+                        ui.label("Trusted");
+                    } else if ui
+                        .button("Trust this viewer")
+                        .on_hover_text(
+                            "It can connect again without the access code, until you remove \
+                             it below.",
+                        )
+                        .clicked()
+                    {
+                        trusted.add(fingerprint, &v.name, &crate::trusted::today());
+                        if let Err(e) = trusted.save() {
+                            self.notice = Some(format!("{e:#}"));
+                        }
+                    }
+                }
             }
             None if accepting => {
                 status_dot(ui, Color32::from_rgb(60, 140, 230));
@@ -358,6 +405,7 @@ impl HostApp {
             .color(WARNING_AMBER),
         );
         self.password_ui(ui, &state);
+        self.trusted_ui(ui, &state);
         // Who guessed wrong, for the person at the host to see.
         let blocked = state.throttle.lock().unwrap().blocked(Instant::now());
         for address in &blocked {

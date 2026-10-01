@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use tidedesk_core::auth::{self, Throttle};
+use tidedesk_core::net;
 use tidedesk_core::protocol::{self, ClientMessage, PROTOCOL_VERSION, RejectReason, ServerMessage};
 use tokio::io::AsyncWriteExt;
 use tokio::time::timeout;
@@ -21,6 +22,9 @@ use tidedesk_core::sharing::SharingState;
 #[derive(Clone)]
 pub struct ViewerInfo {
     pub name: String,
+    /// Its certificate's fingerprint, when it showed one (viewers from
+    /// before invitations show none).
+    pub fingerprint: Option<String>,
     pub address: SocketAddr,
     pub connection: quinn::Connection,
 }
@@ -33,6 +37,8 @@ pub type Register = Box<dyn Fn(&str, &str) + Send + Sync>;
 pub struct HostState {
     pub host_name: String,
     pub codes: Mutex<crate::codes::Codes>,
+    /// Viewers that come back without the access code.
+    pub trusted: Mutex<crate::trusted::TrustedViewers>,
     /// The saved password's key, if one is set.
     pub password: Mutex<Option<tidedesk_core::password::Key>>,
     /// A new code once a session ends (the window's host; a headless one
@@ -202,33 +208,40 @@ pub async fn run(conn: quinn::Connection, state: Arc<HostState>) -> Result<()> {
     if !state.accepting.load(Ordering::SeqCst) {
         return reject(&mut send, &conn, RejectReason::NotAccepting).await;
     }
-    if state
-        .throttle
-        .lock()
-        .unwrap()
-        .is_locked(remote.ip(), Instant::now())
+    // A viewer this host trusts holds its certificate's key: no code needed.
+    let fingerprint = net::peer_fingerprint(&conn);
+    let trusted = fingerprint
+        .as_deref()
+        .is_some_and(|fp| state.trusted.lock().unwrap().trusts(fp));
+    if !trusted
+        && state
+            .throttle
+            .lock()
+            .unwrap()
+            .is_locked(remote.ip(), Instant::now())
     {
         return reject(&mut send, &conn, RejectReason::TooManyAttempts).await;
     }
-    let right = match &proof {
-        Knows::Code(tag) => {
-            let codes = state.codes.lock().unwrap().valid(Instant::now());
-            let mut right = false;
-            for code in &codes {
-                if auth::verify_tag(&conn, code, tag)? {
-                    right = true;
-                    break;
+    let right = trusted
+        || match &proof {
+            Knows::Code(tag) => {
+                let codes = state.codes.lock().unwrap().valid(Instant::now());
+                let mut right = false;
+                for code in &codes {
+                    if auth::verify_tag(&conn, code, tag)? {
+                        right = true;
+                        break;
+                    }
+                }
+                right
+            }
+            Knows::Password(start) => {
+                match password_admits(&conn, &state, &mut send, &mut recv, start).await? {
+                    Some(right) => right,
+                    None => return reject(&mut send, &conn, RejectReason::NoPassword).await,
                 }
             }
-            right
-        }
-        Knows::Password(start) => {
-            match password_admits(&conn, &state, &mut send, &mut recv, start).await? {
-                Some(right) => right,
-                None => return reject(&mut send, &conn, RejectReason::NoPassword).await,
-            }
-        }
-    };
+        };
     if !right {
         {
             let mut throttle = state.throttle.lock().unwrap();
@@ -254,11 +267,13 @@ pub async fn run(conn: quinn::Connection, state: Arc<HostState>) -> Result<()> {
     let _session = SessionGuard(&state);
     *state.viewer.lock().unwrap() = Some(ViewerInfo {
         name: client_name.clone(),
+        fingerprint,
         address: remote,
         connection: conn.clone(),
     });
     state.changed();
-    tracing::info!("viewer \"{client_name}\" connected from {remote}");
+    let how = if trusted { " (trusted)" } else { "" };
+    tracing::info!("viewer \"{client_name}\" connected from {remote}{how}");
 
     // Video.
     let control = Arc::new(VideoControl::default());

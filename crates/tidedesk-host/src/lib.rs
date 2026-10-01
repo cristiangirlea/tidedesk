@@ -13,6 +13,7 @@ mod platform;
 pub mod saved_password;
 pub mod session;
 mod tray;
+pub mod trusted;
 mod video;
 
 use std::ffi::OsString;
@@ -91,6 +92,19 @@ struct Args {
     /// Remove the saved password and exit.
     #[arg(long)]
     remove_password: bool,
+
+    /// Trust the viewer with this fingerprint (`tidedesk view --my-fingerprint`
+    /// shows it): it comes back without the access code. Then exit.
+    #[arg(long, value_name = "FINGERPRINT")]
+    trust_viewer: Option<String>,
+
+    /// Stop trusting the viewer with this fingerprint, and exit.
+    #[arg(long, value_name = "FINGERPRINT")]
+    untrust_viewer: Option<String>,
+
+    /// List the trusted viewers and exit.
+    #[arg(long)]
+    trusted_viewers: bool,
 
     /// Print the available displays and exit.
     #[arg(long)]
@@ -235,6 +249,7 @@ pub fn start(options: &StartOptions) -> Result<Started> {
         host_name,
         codes: Mutex::new(codes::Codes::new(code.clone())),
         password: Mutex::new(saved_password::load()),
+        trusted: Mutex::new(trusted::TrustedViewers::load()),
         new_code_after_session: AtomicBool::new(config.new_code_after_session && !options.headless),
         registration: Mutex::new(None),
         register: Mutex::new(None),
@@ -360,6 +375,13 @@ fn run(args: Args) -> Result<()> {
 
     platform::enable_dpi_awareness();
 
+    if args.trust_viewer.is_some() || args.untrust_viewer.is_some() || args.trusted_viewers {
+        if let Err(e) = trusted_from_console(&args) {
+            eprintln!("error: {e:#}");
+            std::process::exit(1);
+        }
+        return Ok(());
+    }
     if args.set_password || args.remove_password {
         if let Err(e) = password_from_console(args.set_password) {
             eprintln!("error: {e:#}");
@@ -422,6 +444,39 @@ fn run(args: Args) -> Result<()> {
     println!("  Terms of use: {}", tidedesk_core::TERMS_URL);
     println!();
     runtime.block_on(std::future::pending::<()>());
+    Ok(())
+}
+
+/// `--trust-viewer`, `--untrust-viewer` and `--trusted-viewers`: for a host
+/// without a window.
+fn trusted_from_console(args: &Args) -> Result<()> {
+    let mut trusted = trusted::TrustedViewers::load();
+    if let Some(fingerprint) = &args.trust_viewer {
+        if tidedesk_core::identity::normalize_fingerprint(fingerprint).len() != 64 {
+            bail!("a viewer's fingerprint has 64 hexadecimal digits");
+        }
+        trusted.add(fingerprint, "added on the command line", &trusted::today());
+        trusted.save()?;
+        println!("Trusted. Restart a running host to apply it.");
+    }
+    if let Some(fingerprint) = &args.untrust_viewer {
+        if !trusted.remove(fingerprint) {
+            bail!("no trusted viewer has that fingerprint");
+        }
+        trusted.save()?;
+        println!("No longer trusted. Restart a running host to apply it.");
+    }
+    if args.trusted_viewers {
+        for viewer in trusted.list() {
+            println!(
+                "{}  {}  since {}",
+                viewer.fingerprint, viewer.name, viewer.since
+            );
+        }
+        if trusted.list().is_empty() {
+            println!("No trusted viewers.");
+        }
+    }
     Ok(())
 }
 
