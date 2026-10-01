@@ -412,7 +412,7 @@ fn run(program: &str, argv: Vec<OsString>) -> Result<()> {
     }
 
     let mut app = app::App::new(
-        format!("{host_name} — TideDesk"),
+        format!("{host_name} | TideDesk"),
         (width, height),
         picture,
         control_tx,

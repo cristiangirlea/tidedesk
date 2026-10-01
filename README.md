@@ -13,7 +13,7 @@ the new terms do not revoke those permissions. See [licensing](docs/licensing.md
 
 [![Download for Windows](https://img.shields.io/github/v/release/cristiangirlea/tidedesk?include_prereleases&label=Download%20for%20Windows&style=for-the-badge&logo=windows&color=0e8a8a)](https://github.com/cristiangirlea/tidedesk/releases)
 
-Unzip and run `tidedesk.exe` on both computers — no installation needed. (Earlier releases also
+Unzip and run `tidedesk.exe` on both computers; no installation is needed. (Earlier releases also
 shipped `tidedesk-host.exe` and `tidedesk-view.exe`: a start-up entry for the host moves to
 `tidedesk.exe` by itself, and shortcuts to either need to point to `tidedesk.exe`.)
 
@@ -27,19 +27,19 @@ Planned features are not included in the current release and have no promised da
 
 Classic VNC tools such as TightVNC were designed for a different era: they poll the screen,
 compress it on the CPU as zlib/JPEG tiles, send everything over one TCP connection, protect
-it with an 8-character DES password — and carry no sound at all.
+it with an 8-character DES password, and carry no sound at all.
 
 TideDesk takes a modern route:
 
 | | TideDesk | Classic VNC |
 |---|---|---|
-| Screen capture | DXGI Desktop Duplication — the GPU reports only real changes | Polling / hooks |
+| Screen capture | DXGI Desktop Duplication: the GPU reports only real changes | Polling / hooks |
 | Video | H.264, screen-content tuned | zlib/JPEG tiles |
 | Sound | ✅ System audio, Opus, 10 ms frames | ❌ |
 | Transport | QUIC over UDP: video, input and audio never block each other | Single TCP stream |
 | Encryption | TLS 1.3, always on | Optional / weak |
 | Auth | Access code proven via a session-bound HMAC (never sent), brute-force lock-out, host fingerprint pinning | DES password |
-| Idle cost | ~0% CPU — nothing is captured or encoded while the screen is still | Keeps polling |
+| Idle cost | ~0% CPU: nothing is captured or encoded while the screen is still | Keeps polling |
 
 ### Historical measurements (initial alpha, not re-measured for the current build)
 
@@ -56,8 +56,8 @@ an H.264 encoder (here an AMD Radeon RX 7900 XT): CPU time per frame at 30 fps i
 1080p, 4 ms at 1440p and 7 ms at 4K, against 13, 27 and 55 ms with Windows' own software
 encoder and 11, 18 and 45 ms with OpenH264. The captured screen stays on the card for that
 encoder, so a live 1440p session costs the whole host about 2 ms of CPU per frame. Each
-picture takes 9–33 ms from capture to encoded, varying with the card's clocks and the frame
-rate (16 ms at 60 fps, 33 ms at 26 fps in live sessions), against 5–9 ms with the software
+picture takes 9 to 33 ms from capture to encoded, varying with the card's clocks and the frame
+rate (16 ms at 60 fps, 33 ms at 26 fps in live sessions), against 5 to 9 ms with the software
 encoder on this 16-core CPU. These figures are not performance
 guarantees. Lower 4K memory use remains planned.
 
@@ -69,7 +69,7 @@ Settings, About shows both at any time.
 
 **On the computer you want to reach**, run `tidedesk`. The **Share this computer** tab shows
 the **access code**, this computer's addresses and its **device ID**; TideDesk also sits in the
-notification area (tray). Closing the window keeps it sharing there — quit from the tray menu.
+notification area (tray). Closing the window keeps it sharing there; quit from the tray menu.
 
 **On the computer you are sitting at**, run `tidedesk`, open **Connect to a computer**, type the
 device ID (or the address on a local network) and the access code, and press **Connect**. Save
@@ -80,7 +80,7 @@ choose to remember are encrypted for your Windows account.
 > install TideDesk or to read out the code, stop: they may be trying to take control of your
 > computer.
 
-The first time you connect, the viewer shows the host's fingerprint — check it matches the host
+The first time you connect, the viewer shows the host's fingerprint: check it matches the host
 window. The viewer remembers it and refuses to connect if it ever changes.
 
 Windows Firewall will ask to allow `tidedesk` the first time; allow it on private networks.
@@ -108,7 +108,7 @@ tidedesk view 192.168.1.50 --code K7QM-3XPA-WZ
 | `--tray` | Start hidden in the tray |
 | `--list-displays` / `--display N` | Choose which monitor to share |
 | `--fps 60` | Frame rate cap |
-| `--bitrate 8000` | Video bitrate in kbit/s (default: set by the screen's size, 4000–20000) |
+| `--bitrate 8000` | Video bitrate in kbit/s (default: set by the screen's size, 4000 to 20000) |
 | `--no-audio` | Don't share sound |
 | `--new-code` | Replace the access code |
 | `--stats` | Print fps, bitrate and encode time |
@@ -189,8 +189,8 @@ Requirements (Windows):
 - [Rust](https://rustup.rs) (stable, MSVC toolchain)
 - Visual Studio Build Tools with the C++ workload
 - [CMake](https://cmake.org)
-- [NASM](https://nasm.us) on `PATH` — optional but strongly recommended; without it OpenH264,
-  the fallback codec, builds without its SIMD assembly and runs 3–4× slower (the build warns
+- [NASM](https://nasm.us) on `PATH`: optional but strongly recommended; without it OpenH264,
+  the fallback codec, builds without its SIMD assembly and runs 3 to 4× slower (the build warns
   you).
 
 ```
@@ -211,7 +211,7 @@ The program lands in `target/release/tidedesk.exe` (both sides).
 | `third_party/egui_software_backend` | Vendored CPU renderer for the small app windows, with a repaint fix |
 
 The app windows are drawn on the CPU with [egui](https://github.com/emilk/egui): an OpenGL or
-Direct3D context alone can cost 150–500 MB on some graphics drivers, while each window here uses
+Direct3D context alone can cost 150 to 500 MB on some graphics drivers, while each window here uses
 about 10 MB. The remote screen itself is presented with `softbuffer`.
 
 Platform-specific code sits behind small traits (`Capturer`, input backends), so Linux,

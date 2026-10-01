@@ -233,7 +233,7 @@ impl HostApp {
             }
             None => {
                 status_dot(ui, Color32::GRAY);
-                ui.label("Paused — new viewers are refused");
+                ui.label("Paused: new viewers are refused");
             }
         });
         let mut accept = accepting;
@@ -637,7 +637,7 @@ impl egui_software_backend::App for HostApp {
         self.frame();
 
         egui::CentralPanel::default().show_inside(ui, |ui| {
-            ui.heading(format!("TideDesk — {}", self.info.state.host_name));
+            ui.heading(format!("TideDesk | {}", self.info.state.host_name));
             ui.horizontal(|ui| {
                 ui.selectable_value(&mut self.tab, Tab::Status, "Status");
                 ui.selectable_value(&mut self.tab, Tab::Settings, "Settings");
@@ -653,7 +653,7 @@ impl egui_software_backend::App for HostApp {
 
 fn display_label(d: &DisplayInfo) -> String {
     format!(
-        "Display {} — {}×{}{}",
+        "Display {}: {}×{}{}",
         d.index + 1,
         d.rect.width,
         d.rect.height,

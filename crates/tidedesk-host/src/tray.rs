@@ -107,9 +107,9 @@ impl Tray {
             self.accept.set_checked(accepting);
         }
         let tooltip = match state.viewer.lock().unwrap().as_ref() {
-            Some(v) => format!("{} — {} connected", self.title, v.name),
-            None if accepting => format!("{} — waiting for a viewer", self.title),
-            None => format!("{} — paused", self.title),
+            Some(v) => format!("{}: {} connected", self.title, v.name),
+            None if accepting => format!("{}: waiting for a viewer", self.title),
+            None => format!("{}: paused", self.title),
         };
         if tooltip != self.last_tooltip {
             let _ = self.icon.set_tooltip(Some(&tooltip));

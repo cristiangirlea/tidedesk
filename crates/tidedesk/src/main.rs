@@ -102,6 +102,42 @@ mod tests {
         words.iter().map(OsString::from).collect()
     }
 
+    /// TideDesk's text, in the app and around it, uses no long dashes:
+    /// a colon, a comma or a new sentence instead (#70).
+    #[test]
+    fn no_long_dashes_in_the_text() {
+        fn look(dir: &std::path::Path, found: &mut Vec<String>) {
+            for entry in std::fs::read_dir(dir).unwrap().flatten() {
+                let path = entry.path();
+                let name = entry.file_name().to_string_lossy().into_owned();
+                if path.is_dir() {
+                    if !name.starts_with('.') && name != "target" {
+                        look(&path, found);
+                    }
+                    continue;
+                }
+                let text = ["rs", "md", "txt", "toml", "ps1", "yml"]
+                    .iter()
+                    .any(|kind| name.ends_with(&format!(".{kind}")));
+                let Ok(content) = std::fs::read_to_string(&path) else {
+                    continue;
+                };
+                if !text {
+                    continue;
+                }
+                for (n, line) in content.lines().enumerate() {
+                    if line.contains(['\u{2014}', '\u{2013}']) {
+                        found.push(format!("{}:{}", path.display(), n + 1));
+                    }
+                }
+            }
+        }
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let mut found = Vec::new();
+        look(&root, &mut found);
+        assert!(found.is_empty(), "long dashes in: {found:#?}");
+    }
+
     #[test]
     fn a_mode_word_picks_the_side_and_is_taken_off_the_line() {
         assert_eq!(
