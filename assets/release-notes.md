@@ -10,7 +10,28 @@ Download @ZIP@ and extract it. Run tidedesk.exe on both computers.
 
 ## New in this release
 
+### Sessions that last
+
+- **A permission prompt on the host no longer ends the session.** When Windows asked "Do you want to allow this app to make changes?" on the host, or showed the lock screen, the viewer was disconnected. Now the picture stands still while the prompt is up, the viewer says that the host's pointer is outside the shared screen, and the session goes on once the prompt is answered at the host. The prompt itself still cannot be seen or answered from the viewer. Programs that ask for permission when they start (installers, Docker Desktop) ended sessions this way. (#58)
+- **A host that has gone is noticed within seconds.** After three seconds without an answer, the viewer's title says "No answer from the host" and counts up; it goes away when the host answers again. The session is still given up only after 20 seconds, so a network that fails for a moment does not end it. (#42)
+
+### Video
+
+- **Intel graphics reach the frame rate.** On Intel's encoder each picture took 31 ms, whatever its size: Windows' timers tick every 15.6 ms unless a program asks for finer ones, and the encoder waited on them. The host now asks while it encodes on a graphics card. On a laptop with Intel graphics at 2560x1600, a moving screen went from 32 to 60 frames a second, and from 45 to 14 ms between the screen and the encoded picture. (#43, #65)
+- **The graphics card's encoder gets the next picture while it works on the last** where that helps, and one picture at a time where the card takes them in turn anyway, which it finds out by itself in the first seconds. (#43)
+
+### Mouse and keyboard
+
+- **The first click after the pointer jumps reaches the host**, where it was made: tablets, pens and tools that put the pointer somewhere and click at once lost that click. (#41)
+- **Keys from tools and on-screen keyboards work**: keys that arrive without a hardware scan code, including arrows and the viewer's own shortcuts, were ignored. Text a tool types as characters is typed on the host with the keys that make it. (#40)
+
+### Connecting
+
 - **Two computers behind one router find each other without broadcasts.** The host gives its local addresses to the connection service, sealed with its access code so that the service cannot read them. A viewer at the same internet address opens them with the code and connects directly, before it tries a path through the router. Hosts and viewers from earlier releases keep working. (#44)
+
+### For scripts
+
+- **Output sent to a file arrives there.** `tidedesk host --headless --stats > host.log` from a terminal or a batch file wrote nothing to the file. (#62)
 
 ## Introduced in v0.1.0-alpha.8
 
@@ -40,10 +61,9 @@ Download @ZIP@ and extract it. Run tidedesk.exe on both computers.
 
 ## Known issues
 
-- On the graphics card, the encoder finishes each picture before it starts the next, which caps the frame rate at what the card manages per picture: about 34 fps on Intel integrated graphics at 2560x1600, below Game Boost's 60. `TIDEDESK_CODEC=software` encodes on the processor instead. (#43)
-- The viewer takes about 25 seconds to notice a host that has gone. (#42)
-- The first click after the pointer jumps is dropped. (#41)
-- Keys that arrive without a hardware scan code are ignored, including the viewer's own shortcuts. (#40)
+- Starting some programs on the host has been reported to end the session: Docker Desktop, Zoom, Iriun Webcam, an application download. Those that ask Windows for permission are fixed in this release (#58); the others are not yet confirmed. A host started with `tidedesk host --headless --stats > host.log` writes in its log why a session ended. (#59)
+- When a session ends, the viewer's window closes without saying why. (#60)
+- Automation tools that mark every key as an extended one (Python's `uiautomation`) send some letters with Ctrl or Alt as media keys: Ctrl+Alt+C turns the host's volume down. (#66)
 
 ## Good to know
 
