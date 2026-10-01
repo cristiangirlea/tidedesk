@@ -234,7 +234,7 @@ pub async fn run(conn: quinn::Connection, state: Arc<HostState>) -> Result<()> {
                         || (sharing.mouse && !state.mouse.load(Ordering::SeqCst)) {
                         continue;
                     }
-                    let (external, position) = injector.poll_pointer()?;
+                    let (external, position) = injector.poll_pointer();
                     if sharing.mouse && external {
                         protocol::write_message(&mut send, &ServerMessage::Pointer(position)).await?;
                     }
@@ -285,7 +285,7 @@ pub async fn run(conn: quinn::Connection, state: Arc<HostState>) -> Result<()> {
                 }
                 ClientMessage::PointerSync { request } => {
                     if sharing.mouse && state.mouse.load(Ordering::SeqCst) {
-                        let position = injector.anchor()?;
+                        let position = injector.anchor();
                         protocol::write_message(
                             &mut send,
                             &ServerMessage::PointerAnchor { request, position },
