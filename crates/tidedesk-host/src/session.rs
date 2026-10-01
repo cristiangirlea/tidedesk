@@ -25,11 +25,24 @@ pub struct ViewerInfo {
     pub connection: quinn::Connection,
 }
 
+/// Registers with `service` for `code`.
+pub type Register = Box<dyn Fn(&str, &str) + Send + Sync>;
+
 /// Everything a session needs, shared with the UI. Video/audio settings apply on
 /// connection; clipboard and mouse permissions are checked during the session.
 pub struct HostState {
     pub host_name: String,
-    pub code: Mutex<String>,
+    pub codes: Mutex<crate::codes::Codes>,
+    /// A new code once a session ends (the window's host; a headless one
+    /// keeps its code, as nobody sees a new one there).
+    pub new_code_after_session: AtomicBool,
+    /// The connection service this host registers with, if any.
+    pub registration: Mutex<Option<String>>,
+    /// Registers with a service again for a new code: the registration
+    /// seals the local addresses with it.
+    pub register: Mutex<Option<Register>>,
+    /// Why the code changed, for the window to say.
+    pub code_note: Mutex<Option<String>>,
     pub video: Mutex<VideoSettings>,
     pub audio: AtomicBool,
     pub clipboard: AtomicBool,
@@ -50,6 +63,34 @@ impl HostState {
             notify();
         }
     }
+
+    /// Makes and saves a new access code. After a session the old one
+    /// works for a few minutes more; asked for, it stops at once.
+    pub fn renew_code(&self, after_session: bool) -> Result<String> {
+        let new = crate::load_code(true)?;
+        {
+            let mut codes = self.codes.lock().unwrap();
+            if after_session {
+                codes.after_session(new.clone(), Instant::now());
+            } else {
+                codes.replace(new.clone());
+            }
+        }
+        let service = self.registration.lock().unwrap().clone();
+        if let (Some(service), Some(register)) = (service, self.register.lock().unwrap().as_ref()) {
+            register(&service, &new);
+        }
+        *self.code_note.lock().unwrap() = Some(if after_session {
+            format!(
+                "New code after the session. The old one works for {} more minutes.",
+                crate::codes::GRACE.as_secs() / 60
+            )
+        } else {
+            "New code saved. The old one no longer works.".into()
+        });
+        self.changed();
+        Ok(new)
+    }
 }
 
 /// Clears the busy flag and the viewer shown in the UI however the session ends.
@@ -58,6 +99,11 @@ impl Drop for SessionGuard<'_> {
     fn drop(&mut self) {
         *self.0.viewer.lock().unwrap() = None;
         self.0.busy.store(false, Ordering::SeqCst);
+        if self.0.new_code_after_session.load(Ordering::SeqCst)
+            && let Err(e) = self.0.renew_code(true)
+        {
+            tracing::warn!("could not make a new access code: {e:#}");
+        }
         self.0.changed();
     }
 }
@@ -111,8 +157,15 @@ pub async fn run(conn: quinn::Connection, state: Arc<HostState>) -> Result<()> {
     {
         return reject(&mut send, &conn, RejectReason::TooManyAttempts).await;
     }
-    let code = state.code.lock().unwrap().clone();
-    if !auth::verify_tag(&conn, &code, &auth_tag)? {
+    let codes = state.codes.lock().unwrap().valid(Instant::now());
+    let mut right = false;
+    for code in &codes {
+        if auth::verify_tag(&conn, code, &auth_tag)? {
+            right = true;
+            break;
+        }
+    }
+    if !right {
         state
             .throttle
             .lock()

@@ -50,9 +50,6 @@ pub struct HostInfo {
     pub agent: Arc<Agent>,
     /// For registering with a rendezvous service set in Settings.
     pub identity: Arc<Credentials>,
-    /// The rendezvous service this run registers with, chosen at start (the
-    /// command line may override Settings); none while turned off.
-    pub service: Option<String>,
     /// Runs the agent's work started from the window.
     pub runtime: tokio::runtime::Handle,
     pub config: HostConfig,
@@ -249,34 +246,38 @@ impl HostApp {
         ui.separator();
 
         ui.label("Access code");
-        let code = state.code.lock().unwrap().clone();
+        let code = state.codes.lock().unwrap().current().to_string();
         ui.horizontal(|ui| {
             ui.label(RichText::new(&code).monospace().size(26.0).strong());
             ui.vertical(|ui| {
                 copy_button(ui, &code);
-                if ui.small_button("New code").clicked() {
-                    match crate::load_code(true) {
-                        Ok(new) => {
-                            *state.code.lock().unwrap() = new.clone();
-                            // The local addresses sealed with the old code open
-                            // with it: register again with a new seal.
-                            if let Some(service) = self.info.service.clone() {
-                                let port = self.info.port;
-                                let credentials = crate::registration_credentials(
-                                    &self.info.identity,
-                                    &new,
-                                    port,
-                                );
-                                self.info.agent.start_rendezvous(service, credentials);
-                            }
-                            self.notice =
-                                Some("New code saved. The old one no longer works.".into());
-                        }
-                        Err(e) => self.notice = Some(format!("Could not save a new code: {e:#}")),
-                    }
+                if ui.small_button("New code").clicked()
+                    && let Err(e) = state.renew_code(false)
+                {
+                    self.notice = Some(format!("Could not save a new code: {e:#}"));
                 }
             });
         });
+        let mut after_session = state.new_code_after_session.load(Ordering::SeqCst);
+        if ui
+            .checkbox(&mut after_session, "New code after each session")
+            .on_hover_text(
+                "When a session ends, the code it used is replaced. It still works for five \
+                 minutes, so a dropped connection comes straight back.",
+            )
+            .changed()
+        {
+            state
+                .new_code_after_session
+                .store(after_session, Ordering::SeqCst);
+            self.info.config.new_code_after_session = after_session;
+            if let Err(e) = self.info.config.save() {
+                self.notice = Some(format!("Could not save: {e:#}"));
+            }
+        }
+        if let Some(note) = state.code_note.lock().unwrap().as_ref() {
+            ui.small(note);
+        }
         if let Some(n) = &self.notice {
             ui.small(n);
         }
@@ -575,7 +576,7 @@ impl HostApp {
             {
                 match cfg.rendezvous_service() {
                     Some(service) => {
-                        let code = state.code.lock().unwrap().clone();
+                        let code = state.codes.lock().unwrap().current().to_string();
                         let credentials = crate::registration_credentials(
                             &self.info.identity,
                             &code,
@@ -584,11 +585,11 @@ impl HostApp {
                         self.info
                             .agent
                             .start_rendezvous(service.to_string(), credentials);
-                        self.info.service = Some(service.to_string());
+                        *state.registration.lock().unwrap() = Some(service.to_string());
                     }
                     None => {
                         self.info.agent.stop_rendezvous();
-                        self.info.service = None;
+                        *state.registration.lock().unwrap() = None;
                     }
                 }
             }
