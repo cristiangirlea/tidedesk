@@ -23,7 +23,7 @@ use winit::window::{CursorIcon, Window, WindowId};
 use crate::control;
 use crate::layout::{self, Placement};
 use crate::pointer::{Motion, PointerFlow, Press};
-use crate::settings::{self, ViewerSettings};
+use crate::settings::ViewerSettings;
 use crate::stream::{Picture, UiEvent};
 use crate::window_placement::WindowMemory;
 
@@ -219,7 +219,10 @@ impl App {
                 .settings
                 .mouse_shortcut
                 .matches(self.modifiers, physical);
-            let settings = settings::settings_shortcut().matches(self.modifiers, physical);
+            let settings = self
+                .settings
+                .settings_shortcut
+                .matches(self.modifiers, physical);
             let boost = self
                 .settings
                 .game_boost_shortcut
@@ -536,7 +539,7 @@ impl App {
             }
         };
         format!(
-            "{}{} | Game Boost {} ({}) | Clipboard {} ({}) | Mouse {} ({}) | Settings Ctrl+Alt+S{}",
+            "{}{} | Game Boost {} ({}) | Clipboard {} ({}) | Mouse {} ({}) | Settings {}{}",
             self.title,
             // First, where it shows in a title cut short.
             self.silent
@@ -556,6 +559,7 @@ impl App {
             self.settings.clipboard_shortcut.label(),
             status(self.settings.mouse, self.mouse_enabled()),
             self.settings.mouse_shortcut.label(),
+            self.settings.settings_shortcut.label(),
             self.notice
                 .as_ref()
                 .map(|n| format!(" | {n}"))
@@ -1287,6 +1291,37 @@ mod tests {
         app.focused = false;
         app.key(typed("a", true));
         assert!(rx.try_recv().is_err());
+    }
+
+    /// With the Settings shortcut moved, Ctrl+Alt+S goes to the host like any
+    /// other keys, and the title names the shortcut as set.
+    #[test]
+    fn a_changed_settings_shortcut_frees_ctrl_alt_s_for_the_host() {
+        let (mut app, mut rx) = app();
+        app.settings.settings_shortcut.key = "KeyO".into();
+        assert!(
+            app.window_title().contains("Settings Ctrl+Alt+O"),
+            "{}",
+            app.window_title()
+        );
+        app.modifiers = ModifiersState::CONTROL | ModifiersState::ALT;
+        for pressed in [true, false] {
+            app.key(KeyPress {
+                physical: PhysicalKey::Code(KeyCode::KeyS),
+                logical: &Key::Character("s".into()),
+                text: None,
+                pressed,
+                repeat: false,
+            });
+        }
+        let s = |pressed| {
+            ClientMessage::Input(InputEvent::Key {
+                scancode: 0x1F,
+                pressed,
+            })
+        };
+        assert_eq!(sent(&mut rx), [s(true), s(false)]);
+        assert!(app.settings_window.is_none());
     }
 
     #[test]

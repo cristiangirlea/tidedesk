@@ -61,10 +61,6 @@ fn keys() -> Vec<String> {
         .collect()
 }
 
-pub fn settings_shortcut() -> Shortcut {
-    Shortcut::default_for("KeyS")
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ViewerSettings {
@@ -74,6 +70,7 @@ pub struct ViewerSettings {
     pub clipboard_shortcut: Shortcut,
     pub mouse_shortcut: Shortcut,
     pub game_boost_shortcut: Shortcut,
+    pub settings_shortcut: Shortcut,
     /// `host[:port]` of the rendezvous service used to connect by device ID;
     /// empty means TideDesk's own.
     pub rendezvous_server: String,
@@ -88,6 +85,7 @@ impl Default for ViewerSettings {
             clipboard_shortcut: Shortcut::default_for("KeyC"),
             mouse_shortcut: Shortcut::default_for("KeyM"),
             game_boost_shortcut: Shortcut::default_for("KeyG"),
+            settings_shortcut: Shortcut::default_for("KeyS"),
             rendezvous_server: String::new(),
         }
     }
@@ -118,7 +116,14 @@ impl ViewerSettings {
             config.game_boost_shortcut = ["KeyG", "KeyB", "F9"]
                 .into_iter()
                 .map(Shortcut::default_for)
-                .find(|s| *s != config.clipboard_shortcut && *s != config.mouse_shortcut)
+                .find(|s| {
+                    ![
+                        &config.clipboard_shortcut,
+                        &config.mouse_shortcut,
+                        &config.settings_shortcut,
+                    ]
+                    .contains(&s)
+                })
                 .unwrap();
         }
         config.validate()?;
@@ -130,6 +135,7 @@ impl ViewerSettings {
             &self.clipboard_shortcut,
             &self.mouse_shortcut,
             &self.game_boost_shortcut,
+            &self.settings_shortcut,
         ];
         if shortcuts.iter().any(|s| !s.valid()) {
             bail!("Shortcuts need Ctrl or Alt plus a letter or F1-F12.");
@@ -139,10 +145,7 @@ impl ViewerSettings {
             .enumerate()
             .any(|(i, s)| shortcuts[..i].contains(s))
         {
-            bail!("Clipboard, mouse and Game Boost shortcuts must be different.");
-        }
-        if shortcuts.contains(&&settings_shortcut()) {
-            bail!("Ctrl+Alt+S is reserved for Viewer Settings.");
+            bail!("Clipboard, mouse, Game Boost and Settings shortcuts must be different.");
         }
         Ok(())
     }
@@ -270,6 +273,7 @@ impl Editor {
             clipboard_shortcut,
             mouse_shortcut,
             game_boost_shortcut,
+            settings_shortcut,
             rendezvous_server
         );
         base
@@ -340,7 +344,8 @@ impl Editor {
         shortcut_ui(ui, "Clipboard", &mut self.config.clipboard_shortcut);
         shortcut_ui(ui, "Mouse", &mut self.config.mouse_shortcut);
         shortcut_ui(ui, "Game Boost", &mut self.config.game_boost_shortcut);
-        ui.small("Ctrl+Alt+S opens these settings during a session.");
+        shortcut_ui(ui, "Settings", &mut self.config.settings_shortcut);
+        ui.small("Settings opens these settings during a session.");
         ui.separator();
         egui::CollapsingHeader::new("Advanced")
             .id_salt("viewer-advanced")
@@ -447,7 +452,7 @@ mod tests {
         ));
         config.mouse_shortcut = config.clipboard_shortcut.clone();
         assert!(config.validate().is_err());
-        config.mouse_shortcut = settings_shortcut();
+        config.mouse_shortcut = config.settings_shortcut.clone();
         assert!(config.validate().is_err());
     }
 
@@ -585,6 +590,32 @@ mod tests {
         std::fs::remove_file(path).unwrap();
     }
 
+    /// The Settings shortcut is set like the others, Ctrl+Alt+S unless
+    /// changed, and differs from them as they differ from each other.
+    #[test]
+    fn the_settings_shortcut_can_be_changed() {
+        let config = ViewerSettings::parse("mouse = true\n").unwrap();
+        assert_eq!(config.settings_shortcut, Shortcut::default_for("KeyS"));
+        assert_eq!(config.settings_shortcut.label(), "Ctrl+Alt+S");
+
+        let mut config = ViewerSettings {
+            settings_shortcut: Shortcut::default_for("KeyO"),
+            ..ViewerSettings::default()
+        };
+        config.validate().unwrap();
+        let back = ViewerSettings::parse(&toml::to_string(&config).unwrap()).unwrap();
+        assert_eq!(back.settings_shortcut.key, "KeyO");
+        // Ctrl+Alt+S is free for the others then.
+        config.mouse_shortcut = Shortcut::default_for("KeyS");
+        config.validate().unwrap();
+        config.mouse_shortcut = Shortcut::default_for("KeyO");
+        let why = config.validate().unwrap_err().to_string();
+        assert!(why.contains("must be different"), "{why}");
+        config.settings_shortcut.ctrl = false;
+        config.settings_shortcut.alt = false;
+        assert!(config.validate().is_err(), "Ctrl or Alt is needed");
+    }
+
     #[test]
     fn old_custom_bindings_survive_boost_shortcut_migration() {
         let config = ViewerSettings::parse(
@@ -597,7 +628,7 @@ mod tests {
         let mut duplicate = config;
         duplicate.game_boost_shortcut = duplicate.mouse_shortcut.clone();
         assert!(duplicate.validate().is_err());
-        duplicate.game_boost_shortcut = settings_shortcut();
+        duplicate.game_boost_shortcut = duplicate.settings_shortcut.clone();
         assert!(duplicate.validate().is_err());
     }
 }

@@ -133,7 +133,7 @@ makes the host and the viewer use OpenH264 only.
 Viewer **Settings** includes text clipboard sharing (off by default) and host mouse
 control (on by default), with customizable shortcuts. The defaults are **Ctrl+Alt+C**
 for clipboard, **Ctrl+Alt+M** for mouse control, and **Ctrl+Alt+S** to open settings
-while the remote window is focused. Host Settings has independent permissions for both.
+while the remote window is focused; all of them can be changed. Host Settings has independent permissions for both.
 
 After local host mouse movement, the next viewer movement aligns only the viewer's
 pointer to the host's current position; later movements control the host from there.

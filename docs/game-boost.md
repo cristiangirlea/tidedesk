@@ -7,7 +7,7 @@ rejects connections from the earlier v1/v2 builds.
 
 ## Use
 
-Open Viewer Settings from the launcher or with **Ctrl+Alt+S** while connected.
+Open Viewer Settings from the launcher or with its shortcut (**Ctrl+Alt+S** unless changed) while connected.
 The **Game Boost** button saves and applies the mode immediately to open sessions.
 **Ctrl+Alt+G** toggles it while the remote window is focused; its shortcut can be
 changed in Settings. An older custom binding using that shortcut is preserved,
