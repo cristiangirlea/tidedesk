@@ -28,8 +28,8 @@ This keeps different hosts separate and retains their positions after an IP chan
 
 ### Sharing controls
 
-Open Settings in the viewer launcher, or press Ctrl+Alt+S while the remote window is
-focused. Changes are saved as you make them, picked up by open sessions at once, and
+Open Settings in the viewer launcher, or press its shortcut (Ctrl+Alt+S unless changed)
+while the remote window is focused. Changes are saved as you make them, picked up by open sessions at once, and
 stored in %APPDATA%\TideDesk\viewer.toml. A shortcut that clashes with another is
 shown with the reason and saved once it is valid.
 
@@ -37,9 +37,10 @@ shown with the reason and saved once it is valid.
 | --- | --- | --- |
 | Bidirectional text clipboard | Off | Ctrl+Alt+C |
 | Host mouse control | On | Ctrl+Alt+M |
+| Open Viewer Settings | | Ctrl+Alt+S |
 
-Each toggle shortcut can use Ctrl and/or Alt, optional Shift, and a letter or F1-F12.
-The shortcuts must differ; Ctrl+Alt+S is reserved for settings. Shortcuts only act
+Each shortcut can use Ctrl and/or Alt, optional Shift, and a letter or F1-F12.
+The shortcuts must differ; with Settings on another one, Ctrl+Alt+S reaches the host. Shortcuts only act
 while the remote window is focused. Holding a shortcut does not repeatedly toggle it.
 The remote window title shows the current state and configured shortcuts.
 When nothing has come from the host for three seconds, the title says

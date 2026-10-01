@@ -20,7 +20,7 @@ Viewer Settings: text clipboard off by default; mouse control on by default.
 Changes save as you make them and apply to open sessions at once.
 In the focused remote window, Ctrl+Alt+C toggles clipboard, Ctrl+Alt+M toggles mouse
 control, Ctrl+Alt+G toggles Game Boost, and Ctrl+Alt+S opens settings.
-Toggle shortcuts are customizable.
+All four shortcuts are customizable.
 Game Boost is EXPERIMENTAL and off by default. Its Settings button applies live,
 targeting 60 FPS with smaller audio/video buffers; actual performance varies.
 Switch it off to restore desktop settings. Host resolution and bitrate are unchanged.
