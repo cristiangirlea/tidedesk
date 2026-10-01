@@ -1,16 +1,17 @@
 //! QUIC endpoint configuration for both sides.
 
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use anyhow::{Context, Result};
 use quinn::crypto::rustls::{QuicClientConfig, QuicServerConfig};
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
-use rustls::{DigitallySignedStruct, SignatureScheme};
+use rustls::server::danger::{ClientCertVerified, ClientCertVerifier};
+use rustls::{DigitallySignedStruct, DistinguishedName, SignatureScheme};
 
-use crate::identity::{self, HostIdentity};
+use crate::identity::{self, HostIdentity, ViewerIdentity};
 use crate::nat::SharedSocket;
 
 pub const ALPN: &[u8] = b"tidedesk/1";
@@ -51,7 +52,9 @@ pub(crate) fn endpoint_config() -> quinn::EndpointConfig {
 pub fn server_config(id: &HostIdentity) -> Result<quinn::ServerConfig> {
     let mut tls = rustls::ServerConfig::builder_with_provider(provider())
         .with_protocol_versions(&[&rustls::version::TLS13])?
-        .with_no_client_auth()
+        // Viewers show their own certificate, which a host may trust;
+        // viewers from before do not, and connect as they always did.
+        .with_client_cert_verifier(Arc::new(AnyCertificate(provider())))
         .with_single_cert(vec![id.cert.clone()], id.key.clone_key())
         .context("loading host certificate")?;
     tls.alpn_protocols = vec![ALPN.to_vec()];
@@ -60,12 +63,30 @@ pub fn server_config(id: &HostIdentity) -> Result<quinn::ServerConfig> {
     Ok(cfg)
 }
 
+/// This viewer's identity, shown to every host it connects to; set once at
+/// start ([`set_viewer_identity`]). Without it, a viewer shows none.
+static VIEWER_IDENTITY: OnceLock<ViewerIdentity> = OnceLock::new();
+
+/// Gives the viewer endpoints made from now on this identity.
+pub fn set_viewer_identity(identity: ViewerIdentity) {
+    let _ = VIEWER_IDENTITY.set(identity);
+}
+
 pub fn client_config() -> Result<quinn::ClientConfig> {
-    let mut tls = rustls::ClientConfig::builder_with_provider(provider())
+    client_config_with(VIEWER_IDENTITY.get())
+}
+
+fn client_config_with(identity: Option<&ViewerIdentity>) -> Result<quinn::ClientConfig> {
+    let builder = rustls::ClientConfig::builder_with_provider(provider())
         .with_protocol_versions(&[&rustls::version::TLS13])?
         .dangerous()
-        .with_custom_certificate_verifier(Arc::new(FingerprintVerifier(provider())))
-        .with_no_client_auth();
+        .with_custom_certificate_verifier(Arc::new(FingerprintVerifier(provider())));
+    let mut tls = match identity {
+        Some(id) => builder
+            .with_client_auth_cert(vec![id.cert.clone()], id.key.clone_key())
+            .context("loading the viewer's certificate")?,
+        None => builder.with_no_client_auth(),
+    };
     tls.alpn_protocols = vec![ALPN.to_vec()];
     let mut cfg = quinn::ClientConfig::new(Arc::new(QuicClientConfig::try_from(tls)?));
     cfg.transport_config(transport());
@@ -196,10 +217,113 @@ impl ServerCertVerifier for FingerprintVerifier {
     }
 }
 
+/// Takes any certificate a viewer shows, or none, and checks that the
+/// viewer holds its key. Whether the host trusts it is decided by its
+/// fingerprint afterwards.
+#[derive(Debug)]
+struct AnyCertificate(Arc<rustls::crypto::CryptoProvider>);
+
+impl ClientCertVerifier for AnyCertificate {
+    fn client_auth_mandatory(&self) -> bool {
+        false
+    }
+
+    fn root_hint_subjects(&self) -> &[DistinguishedName] {
+        &[]
+    }
+
+    fn verify_client_cert(
+        &self,
+        _end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _now: UnixTime,
+    ) -> Result<ClientCertVerified, rustls::Error> {
+        Ok(ClientCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &CertificateDer<'_>,
+        _dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        Err(rustls::Error::PeerIncompatible(
+            rustls::PeerIncompatible::Tls12NotOffered,
+        ))
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(
+            message,
+            cert,
+            dss,
+            &self.0.signature_verification_algorithms,
+        )
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        self.0.signature_verification_algorithms.supported_schemes()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::identity::test_identity;
+
+    /// A host learns which viewer it talks to when the viewer shows its
+    /// certificate, and still takes a viewer that shows none.
+    #[tokio::test]
+    async fn the_host_sees_the_viewers_certificate_when_there_is_one() {
+        let identity = test_identity("net-viewer-id");
+        let dir = std::env::temp_dir().join(format!("tidedesk-viewer-id-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let viewer_id = ViewerIdentity::load_or_create(&dir).unwrap();
+        let again = ViewerIdentity::load_or_create(&dir).unwrap();
+        assert_eq!(viewer_id.fingerprint(), again.fingerprint(), "kept");
+        let key_file = std::fs::read(dir.join("viewer-key.sealed")).unwrap();
+        let rustls::pki_types::PrivateKeyDer::Pkcs8(key) = &viewer_id.key else {
+            panic!("a PKCS#8 key")
+        };
+        assert!(
+            !key_file
+                .windows(32)
+                .any(|w| key.secret_pkcs8_der().windows(32).any(|k| k == w)),
+            "the key is sealed on disk"
+        );
+
+        let loopback: SocketAddr = "127.0.0.1:0".parse().unwrap();
+        let (host_socket, _) = SharedSocket::bind(loopback).unwrap();
+        let host_addr = host_socket.local_addr().unwrap();
+        let host = server_endpoint_on(host_socket, &identity).unwrap();
+        let seen = tokio::spawn(async move {
+            let mut seen = Vec::new();
+            for _ in 0..2 {
+                let conn = accept_validated(&host).await.unwrap().await.unwrap();
+                seen.push(peer_fingerprint(&conn));
+            }
+            seen
+        });
+        for shown in [Some(&viewer_id), None] {
+            let (socket, _) = SharedSocket::bind(loopback).unwrap();
+            let mut viewer = endpoint_on(socket, None).unwrap();
+            viewer.set_default_client_config(client_config_with(shown).unwrap());
+            let conn = viewer
+                .connect(host_addr, "tidedesk-host")
+                .unwrap()
+                .await
+                .unwrap();
+            assert_eq!(peer_fingerprint(&conn), Some(identity.fingerprint()));
+            conn.close(0u32.into(), b"done");
+        }
+        let seen = seen.await.unwrap();
+        assert_eq!(seen, [Some(viewer_id.fingerprint()), None]);
+    }
 
     #[test]
     fn default_port_is_added_only_when_missing() {

@@ -46,13 +46,19 @@ struct Args {
     /// connect window.
     host: Option<String>,
 
-    /// Access code shown by the host, or its saved password (prompted for if omitted).
+    /// Access code shown by the host, or its saved password (prompted for if
+    /// omitted; empty for a host that trusts this viewer).
     #[arg(long, env = "TIDEDESK_CODE", hide_env_values = true)]
     code: Option<String>,
 
     /// Do not play the host's audio.
     #[arg(long)]
     no_audio: bool,
+
+    /// Print this viewer's fingerprint, which a host trusts it by
+    /// (`tidedesk host --trust-viewer`), and exit.
+    #[arg(long)]
+    my_fingerprint: bool,
 
     /// Log frame rate, bitrate and decode time every two seconds.
     #[arg(long)]
@@ -192,7 +198,7 @@ async fn confirm_with_launcher(
 }
 
 fn prompt_code() -> Result<String> {
-    print!("Access code or password: ");
+    print!("Access code or password (none if the host trusts this viewer): ");
     std::io::stdout().flush()?;
     let mut line = String::new();
     std::io::stdin().read_line(&mut line)?;
@@ -241,6 +247,20 @@ fn run(program: &str, argv: Vec<OsString>) -> Result<()> {
     let args = Args::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
     if args.settings {
         return settings::run(args.settings_near.as_deref().and_then(settings::parse_near));
+    }
+    // Shown to every host, which may trust it.
+    let identity = paths::config_dir()
+        .and_then(|dir| tidedesk_core::identity::ViewerIdentity::load_or_create(&dir));
+    match identity {
+        Ok(identity) => {
+            if args.my_fingerprint {
+                println!("{}", identity.fingerprint());
+                return Ok(());
+            }
+            tidedesk_core::net::set_viewer_identity(identity);
+        }
+        Err(e) if args.my_fingerprint => return Err(e),
+        Err(e) => tracing::warn!("no identity for this viewer, hosts cannot trust it: {e:#}"),
     }
     if args.relay.is_some() {
         eprintln!(
