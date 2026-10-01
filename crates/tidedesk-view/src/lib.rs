@@ -196,16 +196,6 @@ fn prompt_code() -> Result<String> {
     Ok(line.trim().to_string())
 }
 
-#[cfg(windows)]
-fn attach_console() {
-    use windows::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
-    // Borrow the terminal's console when started from one, so CLI use still prints.
-    let _ = unsafe { AttachConsole(ATTACH_PARENT_PROCESS) };
-}
-
-#[cfg(not(windows))]
-fn attach_console() {}
-
 static SELF_PREFIX: OnceLock<&'static [&'static str]> = OnceLock::new();
 
 /// The words that start this program's own command line when it launches
@@ -226,10 +216,10 @@ pub fn window_icon() -> std::sync::Arc<egui::IconData> {
 }
 
 /// Runs the viewer with a command line (`program` names it in usage text).
-/// Exits the process on failure.
+/// Exits the process on failure. The program that calls it has borrowed the
+/// terminal's console to print to.
 pub fn main(program: &str, argv: Vec<OsString>, self_prefix: &'static [&'static str]) {
     set_self_prefix(self_prefix);
-    attach_console();
     let log = tracing_subscriber::fmt().with_target(false);
     // With test control, standard output is for its answers alone.
     if argv.iter().any(|word| word == "--control") {

@@ -19,10 +19,26 @@ mod windows_impl {
     use windows::core::BOOL;
 
     pub fn attach_console() {
-        use windows::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
+        use windows::Win32::Storage::FileSystem::{FILE_TYPE_DISK, FILE_TYPE_PIPE, GetFileType};
+        use windows::Win32::System::Console::{
+            ATTACH_PARENT_PROCESS, AttachConsole, GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE,
+            STD_OUTPUT_HANDLE, SetStdHandle,
+        };
+        // What the command line sent to a file or a pipe (`> log`, `| more`).
+        let sent = [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE].map(|which| {
+            let handle = unsafe { GetStdHandle(which) }.ok()?;
+            let kind = unsafe { GetFileType(handle) };
+            (kind == FILE_TYPE_DISK || kind == FILE_TYPE_PIPE).then_some((which, handle))
+        });
         // A GUI-subsystem program has no console; when started from a terminal,
         // borrow the terminal's so `--headless` and `--help` output is visible.
-        let _ = unsafe { AttachConsole(ATTACH_PARENT_PROCESS) };
+        if unsafe { AttachConsole(ATTACH_PARENT_PROCESS) }.is_ok() {
+            // That points input and output at the console, all three: back to
+            // where they were sent.
+            for (which, handle) in sent.into_iter().flatten() {
+                let _ = unsafe { SetStdHandle(which, handle) };
+            }
+        }
     }
 
     pub fn enable_dpi_awareness() {
