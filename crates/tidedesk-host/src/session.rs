@@ -149,7 +149,12 @@ pub async fn run(conn: quinn::Connection, state: Arc<HostState>) -> Result<()> {
     if !state.accepting.load(Ordering::SeqCst) {
         return reject(&mut send, &conn, RejectReason::NotAccepting).await;
     }
-    if state.throttle.lock().unwrap().is_locked(Instant::now()) {
+    if state
+        .throttle
+        .lock()
+        .unwrap()
+        .is_locked(remote.ip(), Instant::now())
+    {
         return reject(&mut send, &conn, RejectReason::TooManyAttempts).await;
     }
     let codes = state.codes.lock().unwrap().valid(Instant::now());
@@ -165,12 +170,13 @@ pub async fn run(conn: quinn::Connection, state: Arc<HostState>) -> Result<()> {
             .throttle
             .lock()
             .unwrap()
-            .record_failure(Instant::now());
+            .record_failure(remote.ip(), Instant::now());
+        state.changed();
         tracing::warn!("wrong access code from {remote}");
         tokio::time::sleep(Duration::from_secs(1)).await;
         return reject(&mut send, &conn, RejectReason::BadCode).await;
     }
-    state.throttle.lock().unwrap().record_success();
+    state.throttle.lock().unwrap().record_success(remote.ip());
     if state.busy.swap(true, Ordering::SeqCst) {
         return reject(&mut send, &conn, RejectReason::Busy).await;
     }
