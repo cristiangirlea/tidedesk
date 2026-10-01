@@ -45,6 +45,7 @@ use windows::Win32::Media::MediaFoundation::{
     eAVEncCommonRateControlMode_PeakConstrainedVBR, eAVEncH264VProfile_ConstrainedBase,
     eAVScenarioInfo_DisplayRemoting,
 };
+use windows::Win32::Media::{timeBeginPeriod, timeEndPeriod};
 use windows::Win32::System::Com::{
     APTTYPE, APTTYPE_MTA, APTTYPEQUALIFIER, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
     CoCreateInstance, CoGetApartmentType, CoInitializeEx, CoTaskMemFree,
@@ -91,6 +92,9 @@ struct Pairing {
     /// Pictures took longer with another in the encoder: how long they take
     /// alone is being measured again.
     doubted: bool,
+    /// Pictures in a row that the encoder asked for only once the one
+    /// before was out.
+    asked_late: usize,
     verdict: Option<Verdict>,
 }
 
@@ -109,6 +113,8 @@ impl Pairing {
     const PAIRED: usize = 16;
     /// What the time a picture takes varies by, whatever is in the encoder.
     const SLACK: Duration = Duration::from_millis(2);
+    /// Late requests in a row that are no coincidence.
+    const LATE: usize = 3;
 
     /// Pictures the encoder gets at once.
     fn depth(&self) -> usize {
@@ -149,6 +155,9 @@ impl Pairing {
         if self.verdict == Some(Verdict::InTurn) {
             return None;
         }
+        if self.asks_late() {
+            return Some(*self.verdict.insert(Verdict::InTurn));
+        }
         let (times, most) = match paired {
             true => (&mut self.paired, Self::PAIRED),
             false => (&mut self.alone, Self::ALONE),
@@ -179,6 +188,39 @@ impl Pairing {
             (true, true) | (false, false) => return None,
         };
         (self.verdict.replace(verdict) != Some(verdict)).then_some(verdict)
+    }
+
+    /// Takes note of a picture handed over with another in the encoder,
+    /// `late` if it had to wait for the encoder to ask for it until that one
+    /// was out. An encoder that does so every time takes its pictures in
+    /// turn, however long they take: the next picture out brings the
+    /// verdict.
+    fn handed_over(&mut self, late: bool) {
+        self.asked_late = if late { self.asked_late + 1 } else { 0 };
+    }
+
+    /// Whether the encoder asks for a picture only once the last one is out.
+    fn asks_late(&self) -> bool {
+        self.asked_late >= Self::LATE
+    }
+}
+
+/// Windows' timers tick 64 times a second unless a program asks for more,
+/// and Intel's encoder waits on them: a picture then takes it two ticks,
+/// 31 ms, whatever its size, where it needs 10. Held for as long as a
+/// graphics card's encoder is in use.
+struct FineTimer;
+
+impl FineTimer {
+    fn new() -> Self {
+        unsafe { timeBeginPeriod(1) };
+        Self
+    }
+}
+
+impl Drop for FineTimer {
+    fn drop(&mut self) {
+        unsafe { timeEndPeriod(1) };
     }
 }
 
@@ -227,6 +269,7 @@ struct Hardware {
     device: ID3D11Device,
     /// Hands the device to the encoder; kept alive with it.
     _manager: IMFDXGIDeviceManager,
+    _timer: FineTimer,
     /// Pictures the encoder asked for, not yet served.
     wanted: u32,
     /// When the encoder announced each output that is not taken yet.
@@ -793,9 +836,15 @@ impl Encoder {
             let held = self.in_flight();
             bail!("the hardware H.264 encoder holds {held} pictures already");
         }
-        let at = Instant::now();
         self.stamp(&sample, timestamp_ms, keyframe)?;
-        self.wait_for_request()?;
+        let with_another = self.in_flight() > 0;
+        let late = self.wait_for_request()?;
+        if with_another {
+            self.hardware_mut().pairing.handed_over(late);
+        }
+        // From here the encoder has the picture: waiting to be asked is not
+        // its time.
+        let at = Instant::now();
         self.hardware_mut().wanted -= 1;
         unsafe { self.transform.ProcessInput(0, &sample, 0) }
             .context("the hardware H.264 encoder refused the picture")?;
@@ -814,19 +863,24 @@ impl Encoder {
         Ok(())
     }
 
-    /// Waits until the encoder asks for a picture. An encoder that only asks
-    /// once the last picture's output is taken has it taken here, for
+    /// Waits until the encoder asks for a picture: whether that was a wait
+    /// for the last picture to come out. An encoder that only asks once the
+    /// last picture's output is taken has it taken here, for
     /// [`Encoder::receive`] to hand out: it encodes one picture at a time, as
     /// all did before.
-    fn wait_for_request(&mut self) -> Result<()> {
-        let deadline = Instant::now() + HARDWARE_TIMEOUT;
+    fn wait_for_request(&mut self) -> Result<bool> {
+        let began = Instant::now();
+        let deadline = began + HARDWARE_TIMEOUT;
+        let mut late = false;
         loop {
             let hardware = self.hardware_mut();
             if hardware.wanted > 0 {
-                return Ok(());
+                // Output and request a moment apart are no wait.
+                return Ok(late && began.elapsed() > Pairing::SLACK);
             }
             if !hardware.announced.is_empty() {
                 self.take_announced()?;
+                late = true;
                 continue;
             }
             let left = deadline.saturating_duration_since(Instant::now());
@@ -887,6 +941,9 @@ impl Encoder {
             match verdict {
                 Verdict::AtOnce => tracing::info!(
                     "the hardware H.264 encoder works on two pictures at once: {paired:.1} ms each, {alone:.1} ms alone"
+                ),
+                Verdict::InTurn if hardware.pairing.asks_late() => tracing::info!(
+                    "the hardware H.264 encoder asks for a picture only when the last one is out, so it gets one at a time: {alone:.1} ms each"
                 ),
                 Verdict::InTurn => tracing::info!(
                     "the hardware H.264 encoder takes its pictures in turn, so it gets one at a time: {paired:.1} ms each with the next one waiting, {alone:.1} ms alone"
@@ -965,6 +1022,7 @@ impl Encoder {
             reader,
             device,
             _manager: manager,
+            _timer: FineTimer::new(),
             wanted: 0,
             announced: VecDeque::new(),
             sent: VecDeque::new(),
@@ -1348,6 +1406,61 @@ mod tests {
         }
         assert_eq!(pairing.depth(), HARDWARE_DEPTH);
         pairing
+    }
+
+    /// Intel's encoder asks for the next picture only when the last one is
+    /// out: handing it over earlier only keeps it waiting.
+    #[test]
+    fn an_encoder_that_asks_for_a_picture_when_the_last_is_out_gets_one_at_a_time() {
+        let mut pairing = measured(31);
+        for _ in 0..2 {
+            pairing.handed_over(true);
+            assert_eq!(pairing.record(ms(31), false), None);
+            assert_eq!(pairing.depth(), HARDWARE_DEPTH);
+        }
+        // The third in a row; the verdict comes with the next picture out,
+        // so that the encoder never holds more than it is said to take.
+        pairing.handed_over(true);
+        assert_eq!(pairing.depth(), HARDWARE_DEPTH);
+        assert_eq!(pairing.record(ms(31), false), Some(Verdict::InTurn));
+        assert_eq!(pairing.depth(), 1);
+        // For good, and said once.
+        pairing.handed_over(false);
+        assert_eq!(pairing.record(ms(31), false), None);
+        assert_eq!(pairing.depth(), 1);
+    }
+
+    #[test]
+    fn a_late_request_now_and_then_decides_nothing() {
+        let mut pairing = measured(15);
+        for late in [true, true, false, true, true, false] {
+            pairing.handed_over(late);
+            assert_eq!(pairing.record(ms(15), false), None);
+        }
+        assert_eq!(pairing.depth(), HARDWARE_DEPTH);
+        assert_eq!(pairing.verdict(), None);
+    }
+
+    /// A wait of a millisecond takes a tick of Windows' timers, 15.6 ms,
+    /// unless the program has asked for finer ones.
+    #[test]
+    fn timers_are_fine_while_a_graphics_cards_encoder_is_in_use() {
+        unsafe extern "system" {
+            fn Sleep(milliseconds: u32);
+        }
+        let _timer = FineTimer::new();
+        // The first wait ends at the next tick, whenever that is; the ones
+        // after it take a whole tick each.
+        unsafe { Sleep(1) };
+        let shortest = (0..8)
+            .map(|_| {
+                let began = Instant::now();
+                unsafe { Sleep(1) };
+                began.elapsed()
+            })
+            .min()
+            .unwrap();
+        assert!(shortest < ms(8), "a wait of 1 ms took {shortest:?}");
     }
 
     #[test]
