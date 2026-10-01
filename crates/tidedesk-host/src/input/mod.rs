@@ -84,10 +84,16 @@ impl Injector {
     /// pointer then counts as off the shared screen, where it was last seen;
     /// going there and coming back both count as external movement.
     pub fn poll_pointer(&mut self) -> (bool, PointerPosition) {
-        let raw = self.backend.position().ok();
-        let mut external = raw.is_some_and(|raw| self.pointer.observe(raw));
-        if self.away != raw.is_none() {
-            self.away = raw.is_none();
+        let raw = self.backend.position();
+        let mut external = raw.as_ref().is_ok_and(|raw| self.pointer.observe(*raw));
+        if self.away != raw.is_err() {
+            self.away = raw.is_err();
+            match &raw {
+                Err(e) => {
+                    tracing::info!("the pointer cannot be seen until the desktop is back: {e:#}")
+                }
+                Ok(_) => tracing::info!("the desktop is back"),
+            }
             self.pointer.invalidate();
             external = true;
         }
