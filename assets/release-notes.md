@@ -10,6 +10,22 @@ Download @ZIP@ and extract it. Run tidedesk.exe on both computers.
 
 ## New in this release
 
+### Access
+
+- **Your own computers without the code.** Set a password under the access code on the host (or `tidedesk host --set-password`). A viewer that has connected to that computer before, or reaches it by device ID, types the password where the code goes. Neither computer sends the password: both prove to each other that they know it, and the host keeps only a key derived from it. Both computers need this release.
+- **Invite a viewer.** During a session, press **Trust this viewer** on the host: that viewer then connects with the code left empty, until you remove it from **Trusted viewers**. Each viewer has its own certificate, whose key never leaves that computer. Without a window: `tidedesk view --my-fingerprint` on the viewer, `tidedesk host --trust-viewer FINGERPRINT` on the host.
+- **A new access code after each session.** When a session ends the host makes a new code; the old one still works for five minutes, so a dropped connection comes straight back. A switch under the code turns this off; a host started with `--headless` keeps its code. A code remembered under My computers works until the host makes a new one.
+- **Wrong codes lock out only the address that sent them.** Someone guessing no longer locks you out too: each address gets five tries (a wrong password counts double), then waits that grow up to an hour. The host window names the addresses it refuses.
+
+### The app
+
+- **The Settings shortcut can be changed**, like the clipboard, mouse and Game Boost ones; with it moved, Ctrl+Alt+S reaches the host. (#69)
+- **Settings opened during a session opens over it**, on the same monitor, instead of wherever Windows puts a new window. (#73)
+- **Simpler settings.** The fields for naming STUN servers and a connection service are gone from Host and Viewer Settings; servers named in the settings files or on the command line still apply.
+- **Cleaner text.** Window titles and labels use a bar or a colon instead of long dashes (`OBLIVION5080U9 | TideDesk`). (#70)
+
+## Introduced in v0.1.0-alpha.9
+
 ### Sessions that last
 
 - **A permission prompt on the host no longer ends the session.** When Windows asked "Do you want to allow this app to make changes?" on the host, or showed the lock screen, the viewer was disconnected. Now the picture stands still while the prompt is up, the viewer says that the host's pointer is outside the shared screen, and the session goes on once the prompt is answered at the host. The prompt itself still cannot be seen or answered from the viewer. Programs that ask for permission when they start (installers, Docker Desktop) ended sessions this way. (#58)
@@ -33,39 +49,15 @@ Download @ZIP@ and extract it. Run tidedesk.exe on both computers.
 
 - **Output sent to a file arrives there.** `tidedesk host --headless --stats > host.log` from a terminal or a batch file wrote nothing to the file. (#62)
 
-## Introduced in v0.1.0-alpha.8
-
-### A sharper picture
-
-- **Text stays readable at any window size.** When the remote screen does not fit the window pixel for pixel, the viewer blends neighbouring pixels instead of skipping or repeating them. Thin strokes no longer vanish when the picture shrinks, and they keep even widths when it is enlarged by a fraction. Whole-number enlargements (2x, 3x) still repeat pixels, which is the crispest. (#38, #39)
-- **The bitrate follows the screen's size.** The host's bitrate is Automatic by default: about 6 Mbit/s at 1920x1080, 11 at 2560x1440 and 12 at 2560x1600, within 4 to 20 Mbit/s. Before, every screen streamed at 4 Mbit/s, which broke moving pictures into blocks on large screens. A bitrate chosen in Settings is kept, and Settings shows what Automatic picked.
-
-### Video on the graphics card, through Windows' own codecs
-
-- **The host encodes on the graphics card** where the card has an H.264 encoder (AMD, Intel and NVIDIA, through Windows' Media Foundation). The captured screen stays on the card from capture to encoder. On the test PC at 2560x1440, the host's processor work per frame went from 17-22 ms with the software encoder to 1.5-1.7 ms.
-- **It falls back by itself.** Without a usable encoder on the card, or for a size the card refuses (hardware encoders stop at 4096 columns), Windows' software encoder takes over, and OpenH264 after that. An encoder that fails during a session is replaced from the next frame, starting with a keyframe, instead of the video stopping.
-- **The viewer decodes with Windows' own H.264 decoder**, with OpenH264 as the fallback where Windows has none (Windows N without the Media Feature Pack). Turning the decoded picture into pixels is 30 to 40 percent faster.
-- **Nothing changes on the wire.** The stream format is the same (protocol v3), so this release still talks to earlier ones.
-- To choose by hand, set the environment variable `TIDEDESK_CODEC` to `software` (leave the graphics card out) or `openh264` before starting TideDesk.
-
-### Connecting
-
-- **A device ID works on the same local network, even without the internet.** While it asks the connection service, the viewer also asks its own network, and the host answers directly; the session then takes the local path. Host Settings, Network can turn this off.
-- **tidedesk.exe is the only program.** tidedesk-host.exe and tidedesk-view.exe, kept in v0.1.0-alpha.7 for existing shortcuts, are no longer included. A start-up entry that ran tidedesk-host.exe starts tidedesk.exe from its first run; shortcuts to the old programs need to point to tidedesk.exe. `tidedesk host` and `tidedesk view` still run either side alone (`tidedesk host --headless` for servers).
-
-### The app
-
-- **Viewer settings save as you change them.** There is no Save button. An edit that cannot be saved yet, such as a shortcut that clashes with another, says why in red until it is fixed.
-- **Terms of use.** A new installation asks to accept the [terms of use](https://github.com/cristiangirlea/tidedesk/blob/v@VERSION@/docs/terms-of-use.md) before it shares anything; installations from earlier releases keep working and show a notice. Settings, About has the version, the license, the terms, the privacy notes and the third-party notices.
-- **A warning where scams happen.** Under the access code, the Share tab says to give the code only to someone you know and trust.
-
 ## Known issues
 
-- Starting some programs on the host has been reported to end the session: Docker Desktop, Zoom, Iriun Webcam, an application download. Those that ask Windows for permission are fixed in this release (#58); the others are not yet confirmed. A host started with `tidedesk host --headless --stats > host.log` writes in its log why a session ended. (#59)
 - When a session ends, the viewer's window closes without saying why. (#60)
 - Automation tools that mark every key as an extended one (Python's `uiautomation`) send some letters with Ctrl or Alt as media keys: Ctrl+Alt+C turns the host's volume down. (#66)
+- A password or a trust needs the host on this release; a code works with every host from v0.1.0-alpha.3 on.
 
 ## Good to know
+
+A device ID also works on the same local network, even without the internet: the viewer asks its own network too, and the host answers directly. The host encodes video on the graphics card where it has an H.264 encoder (AMD, Intel or NVIDIA) and falls back to Windows' software encoder by itself.
 
 **Keep host and viewer on the same release.** This build uses protocol v3: it connects to v0.1.0-alpha.3 and later on a local network, but not to the earlier v1/v2 alpha releases. Internet connections need both computers on this release.
 

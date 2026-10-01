@@ -11,6 +11,9 @@ tidedesk.exe       One program, one window. Run it on both computers.
 Give the access code only to someone you know and trust. If a stranger asked
 you to install TideDesk or to read out the code, stop: they may be trying to
 take control of your computer.
+The access code changes after each session. For your own computers, set a password
+under the code, or press "Trust this viewer" during a session: that viewer then
+connects with the code left empty.
 tidedesk-host.exe and tidedesk-view.exe from earlier releases are no longer included.
 A start-up entry that ran tidedesk-host.exe starts tidedesk.exe instead from its first
 run; point any shortcuts to the old programs to tidedesk.exe. If you allowed only the
