@@ -399,6 +399,10 @@ impl Launcher {
                 Update::Child(line) => self.on_child_line(ctx, line),
                 Update::SessionEnded { host, outcome } => {
                     self.phase = Phase::Idle;
+                    match &outcome {
+                        Ok(()) => tracing::info!("session with {host} ended"),
+                        Err(e) => tracing::info!("session with {host} ended: {e}"),
+                    }
                     let without_code = self.without_code.take();
                     if let (Err(e), Some(target)) = (&outcome, without_code)
                         && e.contains("wrong access code")
