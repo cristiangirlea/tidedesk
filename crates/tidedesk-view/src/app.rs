@@ -591,9 +591,20 @@ impl App {
         }
         let result = std::env::current_exe().and_then(|exe| {
             let mut command = Command::new(exe);
+            command.args(crate::self_prefix()).arg("--settings");
+            // On the session's monitor, in front of it, not where Windows
+            // puts new windows.
+            if let Some(surface) = &self.surface {
+                let window = &surface.window;
+                if let Ok(corner) = window.outer_position() {
+                    let size = window.outer_size();
+                    let scale = window.scale_factor();
+                    let x = (f64::from(corner.x) + f64::from(size.width) / 2.0) / scale;
+                    let y = (f64::from(corner.y) + f64::from(size.height) / 2.0) / scale;
+                    command.arg("--settings-near").arg(format!("{x:.0},{y:.0}"));
+                }
+            }
             command
-                .args(crate::self_prefix())
-                .arg("--settings")
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::null());
