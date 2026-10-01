@@ -73,9 +73,9 @@ network the ID works even without the service or the internet (see below).
 From a terminal: `tidedesk view TD-1A2B-3C4D-5E6F-7A8B --code …`. The same limits
 apply: no symmetric NAT, IPv4 only.
 
-To use another service, name it under Settings, Internet on the host (or
-`--rendezvous host:port`) and in Viewer Settings (or `--rendezvous`); to register with
-none, untick the option on the host (`--no-rendezvous` when headless). A viewer only
+To use another service, name it as `rendezvous_server` in the host's `host.toml` (or
+`--rendezvous host:port`) and in the viewer's `viewer.toml` (or `--rendezvous`); to
+register with none, untick the option in Host Settings (`--no-rendezvous` when headless). A viewer only
 contacts the service when it connects by ID.
 
 What a service sees while a host is registered: the host's device ID and the public
