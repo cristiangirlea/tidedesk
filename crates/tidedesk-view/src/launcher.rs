@@ -132,10 +132,13 @@ pub fn run() -> Result<()> {
     config.viewport_builder = egui::ViewportBuilder::default()
         .with_title("TideDesk Viewer")
         .with_icon(icon::egui_icon())
-        .with_inner_size([460.0, 580.0])
-        .with_min_inner_size([380.0, 420.0]);
-    egui_software_backend::run_app_with_software_backend(config, |_ctx| Launcher::new())
-        .map_err(|e| anyhow!("cannot open the viewer window: {e}"))
+        .with_inner_size([720.0, 640.0])
+        .with_min_inner_size([560.0, 480.0]);
+    egui_software_backend::run_app_with_software_backend(config, |ctx| {
+        tidedesk_ui::apply(&ctx);
+        Launcher::new()
+    })
+    .map_err(|e| anyhow!("cannot open the viewer window: {e}"))
 }
 
 fn load_recent() -> Vec<String> {
@@ -557,74 +560,95 @@ impl Launcher {
     }
 
     fn main_view(&mut self, ui: &mut egui::Ui) {
+        use tidedesk_ui as look;
         let ctx = ui.ctx().clone();
         let busy = !matches!(self.phase, Phase::Idle);
 
         // Quick connect.
         ui.horizontal(|ui| {
-            ui.heading("Connect");
-            if ui.button("Settings").clicked() {
-                self.settings_editor = crate::settings::Editor::default();
-                self.show_settings = true;
-            }
+            ui.label(look::title("Connect to a computer"));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .button("Session settings")
+                    .on_hover_text("Sound, clipboard, mouse, shortcuts and Game Boost.")
+                    .clicked()
+                {
+                    self.settings_editor = crate::settings::Editor::default();
+                    self.show_settings = true;
+                }
+            });
         });
         ui.add_space(4.0);
-        ui.add_enabled_ui(!busy, |ui| {
-            egui::Grid::new("quick")
-                .num_columns(2)
-                .spacing([8.0, 8.0])
-                .show(ui, |ui| {
-                    ui.label("Address");
-                    ui.add(
-                        egui::TextEdit::singleline(&mut self.address)
-                            .hint_text(address_hint(self.internet))
-                            .desired_width(240.0),
+        look::card().show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.add_enabled_ui(!busy, |ui| {
+                let half = (ui.available_width() - 8.0) / 2.0;
+                ui.horizontal(|ui| {
+                    ui.vertical(|ui| {
+                        ui.set_width(half);
+                        ui.label(RichText::new("Device ID or address").color(look::MUTED));
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.address)
+                                .hint_text(address_hint(self.internet))
+                                .font(egui::TextStyle::Monospace)
+                                .min_size(egui::vec2(0.0, 34.0))
+                                .desired_width(f32::INFINITY),
+                        );
+                    });
+                    ui.vertical(|ui| {
+                        ui.set_width(half);
+                        ui.label(RichText::new("Access code or password").color(look::MUTED));
+                        let code = ui.add(
+                            egui::TextEdit::singleline(&mut self.code)
+                                .hint_text("XXXX-XXXX-XX")
+                                .font(egui::TextStyle::Monospace)
+                                .min_size(egui::vec2(0.0, 34.0))
+                                .desired_width(f32::INFINITY),
+                        );
+                        if std::mem::take(&mut self.focus_code) {
+                            code.request_focus();
+                        }
+                        let ready = !self.address.trim().is_empty();
+                        if ready
+                            && code.lost_focus()
+                            && ui.input(|i| i.key_pressed(egui::Key::Enter))
+                        {
+                            let target = self.quick_target();
+                            self.connect(&ctx, target);
+                        }
+                    });
+                });
+                if connect::parse_device_id(&self.address).is_some() {
+                    ui.small(
+                        RichText::new("Device ID: found through TideDesk's connection service.")
+                            .color(look::MUTED),
                     );
-                    ui.end_row();
-                    ui.label("Access code or password");
-                    let code = ui.add(
-                        egui::TextEdit::singleline(&mut self.code)
-                            .hint_text("XXXX-XXXX-XX")
-                            .desired_width(240.0),
-                    );
-                    if std::mem::take(&mut self.focus_code) {
-                        code.request_focus();
-                    }
-                    ui.end_row();
+                }
+                ui.horizontal_wrapped(|ui| {
+                    ui.checkbox(&mut self.sound, "Play sound from the remote computer");
+                    ui.checkbox(&mut self.internet, INTERNET_OPTION);
+                });
+                ui.horizontal(|ui| {
                     let ready = !self.address.trim().is_empty();
-                    if ready && code.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    if ui.add_enabled(ready, look::primary("Connect")).clicked() {
                         let target = self.quick_target();
                         self.connect(&ctx, target);
                     }
-                });
-            if connect::parse_device_id(&self.address).is_some() {
-                ui.small("Device ID: found through TideDesk's connection service.");
-            }
-            ui.checkbox(&mut self.sound, "Play sound from the remote computer");
-            ui.checkbox(&mut self.internet, INTERNET_OPTION);
-            ui.horizontal(|ui| {
-                let ready = !self.address.trim().is_empty();
-                if ui
-                    .add_enabled(ready, egui::Button::new("Connect"))
-                    .clicked()
-                {
-                    let target = self.quick_target();
-                    self.connect(&ctx, target);
-                }
-                let known = self.book.find_by_address(&self.address).is_some();
-                if !self.address.trim().is_empty()
-                    && !known
-                    && ui.button("Save to my computers").clicked()
-                {
-                    let address = self.address.trim().to_string();
-                    self.open_editor(None, &address);
-                    if let Some(ed) = &mut self.editor {
-                        ed.code = self.code.clone();
-                        ed.remember_code = !self.code.trim().is_empty();
-                        ed.sound = self.sound;
-                        ed.internet = self.internet;
+                    let known = self.book.find_by_address(&self.address).is_some();
+                    if !self.address.trim().is_empty()
+                        && !known
+                        && ui.button("Save to my computers").clicked()
+                    {
+                        let address = self.address.trim().to_string();
+                        self.open_editor(None, &address);
+                        if let Some(ed) = &mut self.editor {
+                            ed.code = self.code.clone();
+                            ed.remember_code = !self.code.trim().is_empty();
+                            ed.sound = self.sound;
+                            ed.internet = self.internet;
+                        }
                     }
-                }
+                });
             });
         });
 
@@ -650,9 +674,7 @@ impl Launcher {
                     ui.label("Give this address to the person at the host:");
                     ui.horizontal(|ui| {
                         ui.label(RichText::new(&me).monospace().size(20.0).strong());
-                        if ui.small_button("Copy").clicked() {
-                            ui.ctx().copy_text(me.clone());
-                        }
+                        look::copy(ui, "Copy", &me, false);
                     });
                     ui.small("They type it under \"Viewer on another network\" and press Open.");
                 }
@@ -661,26 +683,25 @@ impl Launcher {
                 }
             }
             Phase::InSession(host) => {
-                ui.label(format!(
-                    "Connected to {host}. Close the remote window to disconnect."
-                ));
+                look::pill(
+                    ui,
+                    look::OK,
+                    egui::Color32::from_rgb(0x12, 0x3A, 0x2A),
+                    &format!("Connected to {host}. Close the remote window to disconnect."),
+                    egui::Color32::from_rgb(0x9B, 0xE8, 0xC1),
+                );
             }
             _ => {}
         }
         if let Some((is_error, text)) = &self.message {
-            let color = if *is_error {
-                ERROR
-            } else {
-                ui.visuals().text_color()
-            };
+            let color = if *is_error { ERROR } else { look::TEXT };
             ui.label(RichText::new(text).color(color));
         }
-        ui.add_space(8.0);
-        ui.separator();
+        ui.add_space(10.0);
 
         // Saved computers.
         ui.horizontal(|ui| {
-            ui.heading("My computers");
+            ui.label(look::label("My computers").size(18.0));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui.button("Add…").clicked() {
                     self.open_editor(None, "");
@@ -695,70 +716,45 @@ impl Launcher {
             );
         }
         if self.book.computers.is_empty() {
-            ui.small("Computers you save appear here for one-click connections.");
+            ui.label(
+                RichText::new("Computers you save appear here for one-click connections.")
+                    .color(look::MUTED),
+            );
         }
 
         let filter = self.filter.trim().to_lowercase();
+        let shown: Vec<usize> = self
+            .book
+            .computers
+            .iter()
+            .enumerate()
+            .filter(|(_, pc)| {
+                filter.is_empty()
+                    || pc.name.to_lowercase().contains(&filter)
+                    || pc.address.to_lowercase().contains(&filter)
+            })
+            .map(|(i, _)| i)
+            .collect();
         let mut action: Option<(usize, &'static str)> = None;
         egui::ScrollArea::vertical()
-            .max_height(260.0)
+            .id_salt("my-computers")
+            .max_height(ui.available_height() - 60.0)
             .show(ui, |ui| {
-                for (i, pc) in self.book.computers.iter().enumerate() {
-                    if !filter.is_empty()
-                        && !pc.name.to_lowercase().contains(&filter)
-                        && !pc.address.to_lowercase().contains(&filter)
-                    {
-                        continue;
-                    }
-                    egui::Frame::group(ui.style()).show(ui, |ui| {
-                        ui.set_width(ui.available_width());
-                        ui.horizontal(|ui| {
-                            let label = ui
-                                .add(
-                                    egui::Label::new(RichText::new(&pc.name).strong())
-                                        .sense(egui::Sense::click()),
-                                )
-                                .on_hover_text("Double-click to connect");
-                            let address = if pc.internet {
-                                format!("{} · internet", pc.address)
-                            } else {
-                                pc.address.clone()
-                            };
-                            ui.small(RichText::new(address).weak());
-                            if label.double_clicked() && !busy {
-                                action = Some((i, "connect"));
-                            }
-                            ui.with_layout(
-                                egui::Layout::right_to_left(egui::Align::Center),
-                                |ui| {
-                                    if self.pending_delete == Some(i) {
-                                        if ui.small_button("Cancel").clicked() {
-                                            action = Some((i, "keep"));
-                                        }
-                                        if ui
-                                            .small_button(RichText::new("Delete").color(ERROR))
-                                            .clicked()
-                                        {
-                                            action = Some((i, "delete"));
-                                        }
-                                        return;
-                                    }
-                                    if ui.small_button("Delete").clicked() {
-                                        action = Some((i, "ask-delete"));
-                                    }
-                                    if ui.small_button("Edit").clicked() {
-                                        action = Some((i, "edit"));
-                                    }
-                                    if ui
-                                        .add_enabled(!busy, egui::Button::new("Connect").small())
-                                        .clicked()
-                                    {
-                                        action = Some((i, "connect"));
-                                    }
-                                },
+                for pair in shown.chunks(2) {
+                    ui.columns(2, |columns| {
+                        for (column, &i) in columns.iter_mut().zip(pair) {
+                            let pc = &self.book.computers[i];
+                            computer_card(
+                                column,
+                                i,
+                                pc,
+                                busy,
+                                self.pending_delete == Some(i),
+                                &mut action,
                             );
-                        });
+                        }
                     });
+                    ui.add_space(4.0);
                 }
             });
 
@@ -795,10 +791,13 @@ impl Launcher {
             .collect();
         if !unsaved.is_empty() {
             ui.add_space(6.0);
-            ui.label(RichText::new("Recently connected").weak());
+            ui.label(RichText::new("Recently connected").color(look::MUTED));
             for host in unsaved {
                 ui.horizontal(|ui| {
-                    if ui.add_enabled(!busy, egui::Link::new(&host)).clicked() {
+                    if ui
+                        .add_enabled(!busy, egui::Link::new(RichText::new(&host).monospace()))
+                        .clicked()
+                    {
                         // An internet address can only have been reached over the internet.
                         self.internet = connect::parse_internet_host(&host).is_ok();
                         self.address = host.clone();
@@ -947,6 +946,56 @@ fn session_args(host: &str, sound: bool, route: &SessionRoute) -> Vec<OsString> 
         }
     }
     args
+}
+
+/// One saved computer: its name, address and how it is reached, and what
+/// can be done with it. What was clicked goes into `action`.
+fn computer_card(
+    ui: &mut egui::Ui,
+    i: usize,
+    pc: &crate::computers::Computer,
+    busy: bool,
+    deleting: bool,
+    action: &mut Option<(usize, &'static str)>,
+) {
+    use tidedesk_ui as look;
+    look::card().show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        let name = ui
+            .add(egui::Label::new(look::label(&pc.name).size(16.0)).sense(egui::Sense::click()))
+            .on_hover_text("Double-click to connect");
+        if name.double_clicked() && !busy {
+            *action = Some((i, "connect"));
+        }
+        ui.label(RichText::new(&pc.address).monospace().color(look::MUTED));
+        let how = match (pc.has_code(), pc.internet) {
+            (true, true) => "Code or password saved · over the internet",
+            (true, false) => "Code or password saved",
+            (false, true) => "Needs the code · over the internet",
+            (false, false) => "Needs the code",
+        };
+        ui.small(RichText::new(how).color(look::MUTED));
+        ui.horizontal(|ui| {
+            if deleting {
+                if ui.button(RichText::new("Delete").color(ERROR)).clicked() {
+                    *action = Some((i, "delete"));
+                }
+                if ui.button("Cancel").clicked() {
+                    *action = Some((i, "keep"));
+                }
+                return;
+            }
+            if ui.add_enabled(!busy, look::primary("Connect")).clicked() {
+                *action = Some((i, "connect"));
+            }
+            if ui.button("Edit").clicked() {
+                *action = Some((i, "edit"));
+            }
+            if ui.button("Delete").clicked() {
+                *action = Some((i, "ask-delete"));
+            }
+        });
+    });
 }
 
 #[cfg(test)]
