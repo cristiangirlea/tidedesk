@@ -17,6 +17,7 @@ use tidedesk_core::nat::signal::Credentials;
 use tidedesk_core::nat::signal::RendezvousStatus;
 use tidedesk_core::nat::stun::STUN_REFRESH;
 use tidedesk_core::nat::{Agent, NatKind, PublicStatus};
+use tidedesk_core::policy::{Policy, Services};
 
 use crate::capture::{self, DisplayInfo};
 use crate::config::HostConfig;
@@ -1083,8 +1084,11 @@ impl HostApp {
             if cfg.port != self.info.port {
                 ui.small("The new port is used after TideDesk Host restarts.");
             }
-            ui.checkbox(
+            let managed = tidedesk_core::policy::current();
+            locked_checkbox(
+                ui,
                 &mut cfg.lan_discovery,
+                managed.lan_discovery,
                 "Reachable by device ID on this network",
             )
             .on_hover_text(
@@ -1099,8 +1103,16 @@ impl HostApp {
                 ui.add_space(4.0);
                 ui.label(tidedesk_ui::label("Over the internet"));
             }
-            ui.checkbox(
+            let services = &managed.services;
+            let service_set = match services {
+                Services::Any => None,
+                Services::Off => Some(false),
+                Services::Only(_) | Services::OneOf(_) => Some(true),
+            };
+            locked_checkbox(
+                ui,
                 &mut cfg.rendezvous,
+                service_set,
                 "Reachable by device ID from other networks",
             )
             .on_hover_text(
@@ -1151,7 +1163,7 @@ impl HostApp {
             if cfg.rendezvous != before.rendezvous
                 || cfg.rendezvous_server != before.rendezvous_server
             {
-                match cfg.rendezvous_service() {
+                match crate::rendezvous_now(None, false, cfg.rendezvous_service()).as_deref() {
                     Some(service) => {
                         let code = state.codes.lock().unwrap().current().to_string();
                         let credentials = crate::registration_credentials(
@@ -1178,7 +1190,8 @@ impl HostApp {
                 }
             }
             if cfg.lan_discovery != before.lan_discovery {
-                if cfg.lan_discovery {
+                let managed = tidedesk_core::policy::current().lan_discovery;
+                if Policy::bool_or(managed, cfg.lan_discovery) {
                     let device_id = self.info.identity.device_id;
                     self.info.agent.start_lan_discovery(device_id);
                 } else {
@@ -1232,6 +1245,24 @@ fn display_label(d: &DisplayInfo) -> String {
         d.rect.height,
         if d.primary { " (main)" } else { "" }
     )
+}
+
+/// A checkbox the administrator may have set (`set`): then it shows their
+/// value, cannot be changed, and says so.
+fn locked_checkbox(
+    ui: &mut egui::Ui,
+    value: &mut bool,
+    set: Option<bool>,
+    text: &str,
+) -> egui::Response {
+    match set {
+        None => ui.checkbox(value, text),
+        Some(mut forced) => {
+            let response = ui.add_enabled(false, egui::Checkbox::new(&mut forced, text));
+            ui.small(RichText::new(tidedesk_core::policy::LOCKED_NOTE).color(tidedesk_ui::MUTED));
+            response
+        }
+    }
 }
 
 #[cfg(test)]

@@ -29,6 +29,7 @@ use tidedesk_core::identity::HostIdentity;
 use tidedesk_core::nat::signal::{Credentials, RendezvousStatus};
 use tidedesk_core::nat::stun::STUN_REFRESH;
 use tidedesk_core::nat::{Agent, PublicStatus, SharedSocket, candidates};
+use tidedesk_core::policy::{self, Choice, Policy, Services};
 use tidedesk_core::{auth, net, paths, stats};
 
 #[derive(Parser, Debug)]
@@ -122,20 +123,40 @@ To reach this host from another network, open a path to the viewer under \"Viewe
 network\" in the host window, or use a VPN such as Tailscale. See docs/internet-access.md.";
 
 /// The rendezvous service to register with: none with `--no-rendezvous`,
-/// else the `--rendezvous` argument (empty meaning none), else the setting.
+/// else the `--rendezvous` argument (empty meaning none), else the setting;
+/// and then what an administrator allows (see [`tidedesk_core::policy`]),
+/// which wins over all three.
 fn rendezvous_choice(
     argument: Option<&str>,
     off: bool,
     configured: Option<&str>,
+    allowed: &Services,
 ) -> Option<String> {
-    if off {
-        return None;
+    let chosen = if off {
+        None
+    } else {
+        match argument.map(str::trim) {
+            Some(service) => Some(service).filter(|s| !s.is_empty()),
+            None => configured,
+        }
+    };
+    let choice = allowed.choose(chosen);
+    if let Choice::Overruled(service) = &choice {
+        tracing::info!(
+            "connection service {chosen:?} not allowed by this computer's administrator: using              {service:?}"
+        );
     }
-    match argument.map(str::trim) {
-        Some(service) => Some(service).filter(|s| !s.is_empty()),
-        None => configured,
-    }
-    .map(str::to_string)
+    choice.service().map(str::to_string)
+}
+
+/// The service to register with now, as [`rendezvous_choice`] with the
+/// administrator's settings in force.
+pub(crate) fn rendezvous_now(
+    argument: Option<&str>,
+    off: bool,
+    configured: Option<&str>,
+) -> Option<String> {
+    rendezvous_choice(argument, off, configured, &policy::current().services)
 }
 
 /// Reads the saved access code, creating one if missing or `regenerate` is set.
@@ -302,7 +323,7 @@ pub fn start(options: &StartOptions) -> Result<Started> {
         agent.start_refresh(config.effective_stun_servers(), STUN_REFRESH);
     }
     let credentials = identity.rendezvous_credentials();
-    let rendezvous = rendezvous_choice(
+    let rendezvous = rendezvous_now(
         options.rendezvous.as_deref(),
         options.no_rendezvous,
         config.rendezvous_service(),
@@ -324,7 +345,7 @@ pub fn start(options: &StartOptions) -> Result<Started> {
         agent.start_port_mapping(listen.port());
     }
     // Needs no service: viewers on this network ask the network itself.
-    if config.lan_discovery {
+    if Policy::bool_or(policy::current().lan_discovery, config.lan_discovery) {
         agent.start_lan_discovery(identity.device_id());
     }
     let mut agent_status = agent.status();
@@ -547,7 +568,7 @@ async fn accept_loop(endpoint: quinn::Endpoint, state: Arc<session::HostState>) 
 
 #[cfg(test)]
 mod tests {
-    use super::{HostIdentity, candidates, registration_credentials, rendezvous_choice};
+    use super::{HostIdentity, Services, candidates, registration_credentials, rendezvous_choice};
 
     #[test]
     fn registration_seals_this_computers_local_addresses_for_the_code() {
@@ -576,14 +597,45 @@ mod tests {
 
     #[test]
     fn the_command_line_decides_the_service_before_the_setting() {
+        let any = &Services::Any;
         let saved = Some("rv.saved:47900");
-        assert_eq!(rendezvous_choice(None, false, saved).as_deref(), saved);
-        assert_eq!(rendezvous_choice(None, false, None), None);
+        assert_eq!(rendezvous_choice(None, false, saved, any).as_deref(), saved);
+        assert_eq!(rendezvous_choice(None, false, None, any), None);
         assert_eq!(
-            rendezvous_choice(Some(" rv.arg "), false, saved).as_deref(),
+            rendezvous_choice(Some(" rv.arg "), false, saved, any).as_deref(),
             Some("rv.arg")
         );
-        assert_eq!(rendezvous_choice(Some(""), false, saved), None);
-        assert_eq!(rendezvous_choice(None, true, saved), None);
+        assert_eq!(rendezvous_choice(Some(""), false, saved, any), None);
+        assert_eq!(rendezvous_choice(None, true, saved, any), None);
+    }
+
+    #[test]
+    fn the_administrators_service_wins_over_the_command_line_and_the_setting() {
+        let only = &Services::Only("rv.company:47900".into());
+        let saved = Some("rv.saved:47900");
+        for (argument, off) in [
+            (None, false),
+            (Some("rv.arg"), false),
+            (Some(""), false),
+            (None, true),
+        ] {
+            assert_eq!(
+                rendezvous_choice(argument, off, saved, only).as_deref(),
+                Some("rv.company:47900"),
+                "{argument:?} {off}"
+            );
+        }
+        let none = &Services::Off;
+        assert_eq!(rendezvous_choice(Some("rv.arg"), false, saved, none), None);
+        let list = &Services::OneOf(vec!["rv.a:47900".into(), "rv.b:47900".into()]);
+        assert_eq!(
+            rendezvous_choice(Some("rv.b"), false, saved, list).as_deref(),
+            Some("rv.b"),
+            "an allowed choice stands"
+        );
+        assert_eq!(
+            rendezvous_choice(None, false, saved, list).as_deref(),
+            Some("rv.a:47900")
+        );
     }
 }

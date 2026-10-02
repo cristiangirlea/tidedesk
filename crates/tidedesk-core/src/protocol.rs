@@ -155,6 +155,9 @@ pub enum RejectReason {
     BadPassword,
     /// A company computer without a licence has used this month's hours.
     CompanyHoursUsed,
+    /// The host's administrator does not allow coming in this way (the
+    /// access code or the saved password).
+    WayNotAllowed,
 }
 
 impl std::fmt::Display for RejectReason {
@@ -170,6 +173,10 @@ impl std::fmt::Display for RejectReason {
                 f,
                 "the host is a company computer without a TideDesk licence, and this month's \
                  hours are used"
+            ),
+            Self::WayNotAllowed => write!(
+                f,
+                "the host's administrator does not allow coming in this way; ask for another                  (a trusted viewer, the saved password or the access code)"
             ),
             Self::IncompatibleVersion { host_version } => write!(
                 f,
