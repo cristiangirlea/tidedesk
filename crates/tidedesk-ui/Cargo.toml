@@ -1,0 +1,13 @@
+[package]
+name = "tidedesk-ui"
+description = "TideDesk's look: colours, fonts and the small widgets every window shares."
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+egui = { version = "0.34", default-features = false, features = ["default_fonts"] }

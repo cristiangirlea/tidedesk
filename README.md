@@ -71,8 +71,9 @@ When a session ends, the viewer's window stays open with the last picture and it
 why; nothing appears on the host's screen. TideDesk also writes it, with anything else that went
 wrong, to `tidedesk.log` in `%APPDATA%\TideDesk`.
 
-**On the computer you want to reach**, run `tidedesk`. The **Share this computer** tab shows
-the **access code**, this computer's addresses and its **device ID**; TideDesk also sits in the
+**On the computer you want to reach**, run `tidedesk`. **This computer** shows the
+**device ID** and the **access code** (**Copy invite** copies both), and the addresses under
+**More ways to connect**; TideDesk also sits in the
 notification area (tray). Closing the window keeps it sharing there; quit from the tray menu.
 When a session ends the host makes a new access code; the old one works for five more minutes,
 so a dropped connection comes straight back (turn this off under the code; a host started with
@@ -91,7 +92,7 @@ computer; the host recognises it by the certificate's fingerprint. Without a win
 `tidedesk view --my-fingerprint` on the viewer, `tidedesk host --trust-viewer FINGERPRINT` on the
 host.
 
-**On the computer you are sitting at**, run `tidedesk`, open **Connect to a computer**, type the
+**On the computer you are sitting at**, run `tidedesk`, open **Connect**, type the
 device ID (or the address on a local network) and the access code, and press **Connect**. Save
 computers you use often under **My computers** for one-click connections; access codes you
 choose to remember are encrypted for your Windows account, and work until the host makes a new one.

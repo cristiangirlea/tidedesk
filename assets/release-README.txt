@@ -3,10 +3,10 @@ Remote access to your own computers. Free for personal, non-commercial use.
 https://github.com/cristiangirlea/tidedesk
 
 tidedesk.exe       One program, one window. Run it on both computers.
-                   "Share this computer" shows the access code, this computer's
-                   addresses and its device ID; TideDesk keeps sharing from the
+                   "This computer" shows the device ID and the access code
+                   ("Copy invite" copies both); TideDesk keeps sharing from the
                    notification area (tray) when the window is closed.
-                   "Connect to a computer" takes a device ID or an address plus
+                   "Connect" takes a device ID or an address plus
                    the access code, and keeps your saved computers.
 Give the access code only to someone you know and trust. If a stranger asked
 you to install TideDesk or to read out the code, stop: they may be trying to

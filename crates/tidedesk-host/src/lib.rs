@@ -172,7 +172,7 @@ pub(crate) fn registration_credentials(
     })
 }
 
-pub use gui::{HostApp, HostInfo};
+pub use gui::{HostApp, HostInfo, session_history};
 pub use platform::{attach_console, error_box, open_link};
 
 /// The window icon, for the one program's window.

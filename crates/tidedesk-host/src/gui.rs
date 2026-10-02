@@ -43,7 +43,6 @@ fn blocked_line(blocked: &tidedesk_core::auth::Blocked) -> String {
         blocked.failures, blocked.address
     )
 }
-const WARNING_AMBER: Color32 = Color32::from_rgb(180, 110, 0);
 
 pub struct HostInfo {
     pub state: Arc<HostState>,
@@ -61,6 +60,7 @@ pub struct HostInfo {
 #[derive(PartialEq, Eq, Clone, Copy)]
 enum Tab {
     Status,
+    History,
     Settings,
 }
 
@@ -181,7 +181,7 @@ fn cached_history() -> Arc<tidedesk_core::history::History> {
 
 /// Who connected to this computer: the last 30 days for everyone, the full
 /// history with search and export with a licence that includes it.
-fn session_history(ui: &mut egui::Ui, search: &mut String, note: &mut Option<String>) {
+pub fn session_history(ui: &mut egui::Ui, search: &mut String, note: &mut Option<String>) {
     use tidedesk_core::history;
     ui.label(RichText::new("Session history").strong());
     let full = crate::session_log::full();
@@ -278,9 +278,9 @@ fn export_history(records: &[tidedesk_core::history::Record]) -> String {
     }
 }
 
-fn status_dot(ui: &mut egui::Ui, color: Color32) {
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(12.0, 12.0), egui::Sense::hover());
-    ui.painter().circle_filled(rect.center(), 5.0, color);
+/// What "Copy invite" puts on the clipboard: everything a viewer types.
+fn invite(device_id: &str, code: &str) -> String {
+    format!("Connect to my computer with TideDesk: device ID {device_id}, access code {code}")
 }
 
 fn copy_button(ui: &mut egui::Ui, text: &str) {
@@ -464,63 +464,61 @@ impl HostApp {
 
     /// Access code, addresses, device ID and who is connected.
     pub fn status_tab(&mut self, ui: &mut egui::Ui) {
+        use tidedesk_ui as look;
         let state = self.info.state.clone();
-
         let viewer = state.viewer.lock().unwrap().clone();
         let accepting = state.accepting.load(Ordering::SeqCst);
-        ui.horizontal(|ui| match &viewer {
-            Some(v) => {
-                status_dot(ui, Color32::from_rgb(40, 180, 90));
-                ui.label(format!("Connected: {} ({})", v.name, v.address.ip()));
-                if ui.button("Disconnect").clicked() {
-                    v.connection.close(2u32.into(), b"disconnected by host");
-                }
-                // An invitation: this viewer comes back without the code.
-                if let Some(fingerprint) = &v.fingerprint {
-                    let mut trusted = state.trusted.lock().unwrap();
-                    if trusted.trusts(fingerprint) {
-                        ui.label("Trusted");
-                    } else if ui
-                        .button("Trust this viewer")
-                        .on_hover_text(
-                            "It can connect again without the access code, until you remove \
-                             it below.",
-                        )
-                        .clicked()
-                    {
-                        trusted.add(fingerprint, &v.name, &crate::trusted::today());
-                        if let Err(e) = trusted.save() {
-                            self.notice = Some(format!("{e:#}"));
-                        }
+
+        // The title, and where this computer stands.
+        ui.horizontal(|ui| {
+            ui.label(look::title("This computer"));
+            ui.with_layout(
+                egui::Layout::right_to_left(egui::Align::Center),
+                |ui| match (&viewer, accepting) {
+                    (Some(_), _) => look::pill(
+                        ui,
+                        look::OK,
+                        Color32::from_rgb(0x12, 0x3A, 0x2A),
+                        "In a session",
+                        Color32::from_rgb(0x9B, 0xE8, 0xC1),
+                    ),
+                    (None, true) => look::pill(
+                        ui,
+                        look::ACCENT,
+                        Color32::from_rgb(0x12, 0x28, 0x3A),
+                        "Ready for a viewer",
+                        look::READY,
+                    ),
+                    (None, false) => {
+                        look::pill(ui, look::MUTED, look::SURFACE, "Paused", look::MUTED)
                     }
-                }
-            }
-            None if accepting => {
-                status_dot(ui, Color32::from_rgb(60, 140, 230));
-                ui.label("Waiting for a viewer");
-            }
-            None => {
-                status_dot(ui, Color32::GRAY);
-                ui.label("Paused: new viewers are refused");
-            }
+                },
+            );
         });
-        let mut accept = accepting;
-        if ui.checkbox(&mut accept, "Accept new connections").changed() {
-            state.accepting.store(accept, Ordering::SeqCst);
+        if viewer.is_none() {
+            ui.label(
+                RichText::new("Give these to someone you trust, and they can connect.")
+                    .color(look::MUTED),
+            );
         }
+        ui.add_space(4.0);
+
+        // A company computer: its notice, and the home-lab declaration.
         if let Some(line) = company_line() {
             let management = tidedesk_core::company::management();
-            ui.colored_label(ui.visuals().warn_fg_color, line)
-                .on_hover_text(
+            look::banner(look::WARN_BG).show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.label(RichText::new(line).color(look::WARN)).on_hover_text(
                     "Computers managed by an organisation need a TideDesk licence. Without one: \
-                 14 days of trial, then 8 hours a month. Add a licence under About.",
+                     14 days of trial, then 8 hours a month. Add a licence under About.",
                 );
-            if management.may_declare() && !self.declaring {
-                self.declaring = ui
-                    .small_button("This computer is mine…")
-                    .on_hover_text("For a home lab that runs its own domain.")
-                    .clicked();
-            }
+                if management.may_declare() && !self.declaring {
+                    self.declaring = ui
+                        .small_button("This computer is mine…")
+                        .on_hover_text("For a home lab that runs its own domain.")
+                        .clicked();
+                }
+            });
         }
         if self.declaring {
             ui.label(tidedesk_core::company::DECLARATION);
@@ -549,61 +547,120 @@ impl HostApp {
                 }
             });
         }
-        if viewer.as_ref().is_some_and(|v| v.files)
-            && ui
-                .button("Send files to the viewer...")
-                .on_hover_text("They are saved in Downloads\\TideDesk on the viewer's computer.")
-                .clicked()
-        {
-            // To this session only: if it ends while the picker is open,
-            // nothing goes to whoever connects next.
-            let outgoing = state.outgoing.lock().unwrap().clone();
-            platform::pick_files("Send files to the viewer", move |paths| {
-                if let Some(outgoing) = outgoing {
-                    for path in paths {
-                        let _ = outgoing.send(path);
-                    }
-                }
-            });
-        }
-        if let Some(note) = state.files_note.lock().unwrap().as_ref() {
-            ui.small(note);
-        }
-        if viewer.as_ref().is_some_and(|v| v.files) {
-            self.chat(ui, &state);
-        }
-        ui.separator();
 
-        ui.label("Access code");
-        let code = state.codes.lock().unwrap().current().to_string();
-        ui.horizontal(|ui| {
-            ui.label(RichText::new(&code).monospace().size(26.0).strong());
-            ui.vertical(|ui| {
-                copy_button(ui, &code);
-                if ui.small_button("New code").clicked()
-                    && let Err(e) = state.renew_code(false)
-                {
-                    self.notice = Some(format!("Could not save a new code: {e:#}"));
+        // The viewer, while a session runs: who, and what can be done.
+        if let Some(v) = &viewer {
+            look::card().show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    ui.vertical(|ui| {
+                        ui.label(look::label(&v.name).size(17.0));
+                        ui.label(
+                            RichText::new(format!("from {}", v.address.ip())).color(look::MUTED),
+                        );
+                    });
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let disconnect = egui::Button::new(
+                            RichText::new("Disconnect")
+                                .color(look::DANGER)
+                                .family(look::strong()),
+                        )
+                        .fill(look::DANGER_BG);
+                        if ui.add(disconnect).clicked() {
+                            v.connection.close(2u32.into(), b"disconnected by host");
+                        }
+                    });
+                });
+                ui.horizontal_wrapped(|ui| {
+                    if v.files
+                        && ui
+                            .button("Send files")
+                            .on_hover_text(
+                                "They are saved in Downloads\\TideDesk on the viewer's computer.",
+                            )
+                            .clicked()
+                    {
+                        // To this session only: if it ends while the picker is
+                        // open, nothing goes to whoever connects next.
+                        let outgoing = state.outgoing.lock().unwrap().clone();
+                        platform::pick_files("Send files to the viewer", move |paths| {
+                            if let Some(outgoing) = outgoing {
+                                for path in paths {
+                                    let _ = outgoing.send(path);
+                                }
+                            }
+                        });
+                    }
+                    // An invitation: this viewer comes back without the code.
+                    if let Some(fingerprint) = &v.fingerprint {
+                        let mut trusted = state.trusted.lock().unwrap();
+                        if trusted.trusts(fingerprint) {
+                            ui.label(RichText::new("Trusted").color(look::READY));
+                        } else if ui
+                            .button("Trust this viewer")
+                            .on_hover_text(
+                                "It can connect again without the access code, until you \
+                                 remove it below.",
+                            )
+                            .clicked()
+                        {
+                            trusted.add(fingerprint, &v.name, &crate::trusted::today());
+                            if let Err(e) = trusted.save() {
+                                self.notice = Some(format!("{e:#}"));
+                            }
+                        }
+                    }
+                });
+                if let Some(note) = state.files_note.lock().unwrap().as_ref() {
+                    ui.small(note);
                 }
             });
-        });
-        let mut after_session = state.new_code_after_session.load(Ordering::SeqCst);
-        if ui
-            .checkbox(&mut after_session, "New code after each session")
-            .on_hover_text(
-                "When a session ends, the code it used is replaced. It still works for five \
-                 minutes, so a dropped connection comes straight back.",
-            )
-            .changed()
-        {
-            state
-                .new_code_after_session
-                .store(after_session, Ordering::SeqCst);
-            self.info.config.new_code_after_session = after_session;
-            if let Err(e) = self.info.config.save() {
-                self.notice = Some(format!("Could not save: {e:#}"));
+            if v.files {
+                self.chat(ui, &state);
             }
         }
+
+        // The two things someone needs to connect.
+        let code = state.codes.lock().unwrap().current().to_string();
+        let device_id = self.info.identity.device_id.to_string();
+        ui.columns(2, |columns| {
+            look::card().show(&mut columns[0], |ui| {
+                ui.set_width(ui.available_width());
+                ui.label(RichText::new("Device ID").color(look::MUTED));
+                ui.label(
+                    RichText::new(&device_id)
+                        .monospace()
+                        .size(20.0)
+                        .color(look::TEXT),
+                );
+                ui.horizontal(|ui| copy_button(ui, &device_id));
+            });
+            look::card().show(&mut columns[1], |ui| {
+                ui.set_width(ui.available_width());
+                ui.label(RichText::new("Access code").color(look::MUTED));
+                ui.label(
+                    RichText::new(&code)
+                        .monospace()
+                        .size(20.0)
+                        .color(look::TEXT),
+                );
+                ui.horizontal(|ui| {
+                    if ui
+                        .add(look::primary("Copy invite"))
+                        .on_hover_text("Copies the device ID and the access code together.")
+                        .clicked()
+                    {
+                        ui.ctx().copy_text(invite(&device_id, &code));
+                    }
+                    copy_button(ui, &code);
+                    if ui.button("New code").clicked()
+                        && let Err(e) = state.renew_code(false)
+                    {
+                        self.notice = Some(format!("Could not save a new code: {e:#}"));
+                    }
+                });
+            });
+        });
         if let Some(note) = state.code_note.lock().unwrap().as_ref() {
             ui.small(note);
         }
@@ -611,14 +668,41 @@ impl HostApp {
             ui.small(n);
         }
         // Where the "install this and read me the code" scam happens: say it here.
-        ui.small(
-            RichText::new(
-                "Give this code only to someone you know and trust. If a stranger asked you to \
-                 install TideDesk or to read out this code, stop: they may be trying to take \
-                 control of your computer.",
-            )
-            .color(WARNING_AMBER),
-        );
+        look::banner(look::WARN_BG).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(
+                RichText::new(
+                    "Give the code only to someone you know and trust. If a stranger asked you \
+                     to install TideDesk or to read out this code, stop: they may be trying to \
+                     take control of your computer.",
+                )
+                .color(look::WARN),
+            );
+        });
+
+        ui.horizontal_wrapped(|ui| {
+            let mut accept = accepting;
+            if ui.checkbox(&mut accept, "Accept new connections").changed() {
+                state.accepting.store(accept, Ordering::SeqCst);
+            }
+            let mut after_session = state.new_code_after_session.load(Ordering::SeqCst);
+            if ui
+                .checkbox(&mut after_session, "New code after each session")
+                .on_hover_text(
+                    "When a session ends, the code it used is replaced. It still works for five \
+                     minutes, so a dropped connection comes straight back.",
+                )
+                .changed()
+            {
+                state
+                    .new_code_after_session
+                    .store(after_session, Ordering::SeqCst);
+                self.info.config.new_code_after_session = after_session;
+                if let Err(e) = self.info.config.save() {
+                    self.notice = Some(format!("Could not save: {e:#}"));
+                }
+            }
+        });
         self.password_ui(ui, &state);
         self.trusted_ui(ui, &state);
         // Who guessed wrong, for the person at the host to see.
@@ -629,64 +713,61 @@ impl HostApp {
         if !blocked.is_empty() {
             ui.ctx().request_repaint_after(Duration::from_secs(1));
         }
-        ui.add_space(6.0);
 
-        ui.label("This computer's addresses");
-        if self.addresses.is_empty() {
-            ui.small("No network connection found.");
-        }
-        let real = self.addresses.iter().filter(|a| !a.virtual_adapter).count();
-        let hidden = self.addresses.len() - real;
-        // With no real adapter, virtual ones are all there is to offer.
-        let show_all = self.show_all_addresses || real == 0;
-        for a in self
-            .addresses
-            .iter()
-            .filter(|a| show_all || !a.virtual_adapter)
-        {
-            ui.horizontal(|ui| {
-                ui.label(RichText::new(&a.text).monospace());
-                ui.small(RichText::new(&a.adapter).weak());
-                copy_button(ui, &a.text);
+        // Everything else, out of the way until asked for.
+        egui::CollapsingHeader::new(
+            RichText::new("More ways to connect: addresses, internet, fingerprint")
+                .color(look::MUTED),
+        )
+        .id_salt("more-ways")
+        .show(ui, |ui| {
+            ui.small(internet::describe_rendezvous(&self.info.agent.rendezvous()));
+            let registers = self.info.agent.rendezvous() != RendezvousStatus::Off;
+            if let Some(line) = internet::describe_lan_discovery(
+                self.info.config.lan_discovery,
+                self.info.port,
+                registers,
+            ) {
+                ui.small(line);
+            }
+            ui.add_space(6.0);
+            ui.label(look::label("This computer's addresses"));
+            if self.addresses.is_empty() {
+                ui.small("No network connection found.");
+            }
+            let real = self.addresses.iter().filter(|a| !a.virtual_adapter).count();
+            let hidden = self.addresses.len() - real;
+            // With no real adapter, virtual ones are all there is to offer.
+            let show_all = self.show_all_addresses || real == 0;
+            for a in self
+                .addresses
+                .iter()
+                .filter(|a| show_all || !a.virtual_adapter)
+            {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(&a.text).monospace());
+                    ui.small(RichText::new(&a.adapter).weak());
+                    copy_button(ui, &a.text);
+                });
+            }
+            if hidden > 0 && real > 0 {
+                let label = format!("Show virtual adapters ({hidden})");
+                ui.checkbox(&mut self.show_all_addresses, RichText::new(label).small());
+            }
+            ui.add_space(6.0);
+            ui.label(look::label("Internet address"));
+            self.internet_address(ui);
+            ui.add_space(6.0);
+            ui.label(look::label("Viewer on another network"));
+            self.expected_viewer(ui);
+            ui.add_space(6.0);
+            ui.label(look::label("Fingerprint"));
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new(&self.info.fingerprint).monospace().small());
+                copy_button(ui, &self.info.fingerprint);
             });
-        }
-        if hidden > 0 && real > 0 {
-            let label = format!("Show virtual adapters ({hidden})");
-            ui.checkbox(&mut self.show_all_addresses, RichText::new(label).small());
-        }
-        ui.add_space(6.0);
-
-        ui.label("Internet address");
-        self.internet_address(ui);
-        ui.add_space(6.0);
-
-        ui.label("Viewer on another network");
-        self.expected_viewer(ui);
-        ui.add_space(6.0);
-
-        ui.label("Device ID");
-        let device_id = self.info.identity.device_id.to_string();
-        ui.horizontal(|ui| {
-            ui.label(RichText::new(&device_id).monospace());
-            copy_button(ui, &device_id);
+            ui.small("Viewers see this on first connect; it should match.");
         });
-        ui.small(internet::describe_rendezvous(&self.info.agent.rendezvous()));
-        let registers = self.info.agent.rendezvous() != RendezvousStatus::Off;
-        if let Some(line) = internet::describe_lan_discovery(
-            self.info.config.lan_discovery,
-            self.info.port,
-            registers,
-        ) {
-            ui.small(line);
-        }
-        ui.add_space(6.0);
-
-        ui.label("Fingerprint");
-        ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new(&self.info.fingerprint).monospace().small());
-            copy_button(ui, &self.info.fingerprint);
-        });
-        ui.small("Viewers see this on first connect; it should match.");
     }
 
     fn internet_address(&self, ui: &mut egui::Ui) {
@@ -872,8 +953,6 @@ impl HostApp {
             );
         ui.small("Applies immediately. Clipboard also needs to be enabled in Viewer Settings.");
         ui.add_space(8.0);
-        session_history(ui, &mut self.history_search, &mut self.history_note);
-        ui.add_space(8.0);
 
         ui.label(RichText::new("Window").strong());
         ui.checkbox(&mut cfg.show_in_taskbar, "Show in the taskbar")
@@ -1000,11 +1079,15 @@ impl egui_software_backend::App for HostApp {
             ui.heading(format!("TideDesk | {}", self.info.state.host_name));
             ui.horizontal(|ui| {
                 ui.selectable_value(&mut self.tab, Tab::Status, "Status");
+                ui.selectable_value(&mut self.tab, Tab::History, "History");
                 ui.selectable_value(&mut self.tab, Tab::Settings, "Settings");
             });
             ui.separator();
             egui::ScrollArea::vertical().show(ui, |ui| match self.tab {
                 Tab::Status => self.status_tab(ui),
+                Tab::History => {
+                    session_history(ui, &mut self.history_search, &mut self.history_note)
+                }
                 Tab::Settings => self.settings_tab(ui),
             });
         });

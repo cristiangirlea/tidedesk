@@ -1,5 +1,5 @@
-//! The one window: **Share this computer**, **Connect to a computer** and
-//! **Settings** as tabs. Sharing runs in this process, as in the host window
+//! The one window, with its sections in a sidebar: **This computer**,
+//! **Connect**, **History**, **Settings** and **About**. Sharing runs in this process, as in the host window
 //! it replaces; connecting starts a session process, as the connect window
 //! it replaces did. A new installation first shows the terms, and shares
 //! nothing until they are accepted.
@@ -28,17 +28,25 @@ pub enum Tab {
     #[default]
     Share,
     Connect,
+    History,
     Settings,
     About,
 }
 
 impl Tab {
-    pub const ALL: [Tab; 4] = [Tab::Share, Tab::Connect, Tab::Settings, Tab::About];
+    pub const ALL: [Tab; 5] = [
+        Tab::Share,
+        Tab::Connect,
+        Tab::History,
+        Tab::Settings,
+        Tab::About,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
-            Tab::Share => "Share this computer",
-            Tab::Connect => "Connect to a computer",
+            Tab::Share => "This computer",
+            Tab::Connect => "Connect",
+            Tab::History => "History",
             Tab::Settings => "Settings",
             Tab::About => "About",
         }
@@ -89,6 +97,11 @@ struct Shell {
     launcher: Launcher,
     viewer_settings: Editor,
     licence: LicenceBox,
+    /// What the session history is filtered by, and what its export did.
+    history_search: String,
+    history_note: Option<String>,
+    /// TideDesk's icon, at the top of the sidebar.
+    logo: Option<egui::TextureHandle>,
 }
 
 /// The licence part of About: the licence this computer holds, and a box to
@@ -179,8 +192,8 @@ pub fn run(hidden: bool) -> Result<()> {
     config.viewport_builder = egui::ViewportBuilder::default()
         .with_title(WINDOW_TITLE)
         .with_icon(tidedesk_host::window_icon())
-        .with_inner_size([520.0, 620.0])
-        .with_min_inner_size([420.0, 480.0])
+        .with_inner_size([880.0, 660.0])
+        .with_min_inner_size([720.0, 520.0])
         .with_taskbar(show_in_taskbar)
         .with_visible(!start_hidden);
     let mut shell = Some(Shell {
@@ -196,9 +209,19 @@ pub fn run(hidden: bool) -> Result<()> {
             held: licence::load(),
             ..LicenceBox::default()
         },
+        history_search: String::new(),
+        history_note: None,
+        logo: None,
     });
     egui_software_backend::run_app_with_software_backend(config, move |ctx| {
         let mut shell = shell.take().expect("the window is created once");
+        tidedesk_ui::apply(&ctx);
+        let icon = tidedesk_host::window_icon();
+        let image = egui::ColorImage::from_rgba_unmultiplied(
+            [icon.width as usize, icon.height as usize],
+            &icon.rgba,
+        );
+        shell.logo = Some(ctx.load_texture("tidedesk-logo", image, Default::default()));
         if let Some(host) = shell.host() {
             host.attach(ctx);
         }
@@ -400,6 +423,60 @@ impl Shell {
             });
     }
 
+    /// The sections on the left, TideDesk's name on top and the edition
+    /// at the bottom.
+    fn sidebar(&mut self, ui: &mut egui::Ui) {
+        use tidedesk_ui as look;
+        let frame = egui::Frame::new()
+            .fill(look::SIDEBAR)
+            .inner_margin(egui::Margin::symmetric(12, 18));
+        egui::Panel::left("sections")
+            .exact_size(200.0)
+            .resizable(false)
+            .frame(frame)
+            .show_inside(ui, |ui| {
+                ui.horizontal(|ui| {
+                    if let Some(logo) = &self.logo {
+                        ui.add(egui::Image::new(logo).fit_to_exact_size(egui::vec2(28.0, 28.0)));
+                    }
+                    ui.label(look::label("TideDesk").size(17.0));
+                });
+                ui.add_space(14.0);
+                for tab in Tab::ALL {
+                    let selected = self.tab == tab;
+                    let text = egui::RichText::new(tab.label())
+                        .size(15.0)
+                        .color(if selected { look::TEXT } else { look::MUTED });
+                    let item = egui::Button::new(text)
+                        .fill(if selected {
+                            look::SELECTED
+                        } else {
+                            look::SIDEBAR
+                        })
+                        .stroke(egui::Stroke::NONE)
+                        .min_size(egui::vec2(ui.available_width(), 38.0));
+                    if ui.add(item).clicked() {
+                        self.tab = tab;
+                    }
+                }
+                ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
+                    egui::Frame::new()
+                        .fill(look::SURFACE)
+                        .corner_radius(egui::CornerRadius::same(10))
+                        .inner_margin(egui::Margin::same(12))
+                        .show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            let edition = match &self.licence.held {
+                                Some(held) => held.edition.clone(),
+                                None => "Personal, free".into(),
+                            };
+                            ui.label(look::label(&edition));
+                            ui.label(egui::RichText::new("Edition").small().color(look::MUTED));
+                        });
+                });
+            });
+    }
+
     fn reading_window(&mut self, ctx: &egui::Context) {
         let Some(reading) = &self.reading else {
             return;
@@ -441,33 +518,43 @@ impl egui_software_backend::App for Shell {
         if self.consent == Consent::Changed {
             self.terms_notice(ui);
         }
-        egui::Panel::top("tabs").show_inside(ui, |ui| {
-            ui.add_space(6.0);
-            ui.horizontal(|ui| {
-                for tab in Tab::ALL {
-                    ui.selectable_value(&mut self.tab, tab, tab.label());
+        self.sidebar(ui);
+        let page = egui::Frame::new()
+            .fill(tidedesk_ui::BG)
+            .inner_margin(egui::Margin::symmetric(28, 22));
+        egui::CentralPanel::default()
+            .frame(page)
+            .show_inside(ui, |ui| match self.tab {
+                Tab::Share => {
+                    egui::ScrollArea::vertical().show(ui, |ui| self.share_tab(ui));
+                }
+                Tab::Connect => {
+                    self.launcher.ui_in(ui);
+                    if self.launcher.settings_requested() {
+                        self.viewer_settings = Editor::default();
+                        self.tab = Tab::Settings;
+                    }
+                }
+                Tab::History => {
+                    ui.label(tidedesk_ui::title("History"));
+                    ui.label(
+                        egui::RichText::new("Who connected to this computer.")
+                            .color(tidedesk_ui::MUTED),
+                    );
+                    ui.add_space(6.0);
+                    tidedesk_host::session_history(
+                        ui,
+                        &mut self.history_search,
+                        &mut self.history_note,
+                    );
+                }
+                Tab::Settings => {
+                    egui::ScrollArea::vertical().show(ui, |ui| self.settings_tab(ui));
+                }
+                Tab::About => {
+                    egui::ScrollArea::vertical().show(ui, |ui| self.about(ui));
                 }
             });
-            ui.add_space(4.0);
-        });
-        egui::CentralPanel::default().show_inside(ui, |ui| match self.tab {
-            Tab::Share => {
-                egui::ScrollArea::vertical().show(ui, |ui| self.share_tab(ui));
-            }
-            Tab::Connect => {
-                self.launcher.ui_in(ui);
-                if self.launcher.settings_requested() {
-                    self.viewer_settings = Editor::default();
-                    self.tab = Tab::Settings;
-                }
-            }
-            Tab::Settings => {
-                egui::ScrollArea::vertical().show(ui, |ui| self.settings_tab(ui));
-            }
-            Tab::About => {
-                egui::ScrollArea::vertical().show(ui, |ui| self.about(ui));
-            }
-        });
         let ctx = ui.ctx().clone();
         self.reading_window(&ctx);
     }
@@ -483,12 +570,7 @@ mod tests {
         let labels: Vec<_> = Tab::ALL.iter().map(|t| t.label()).collect();
         assert_eq!(
             labels,
-            [
-                "Share this computer",
-                "Connect to a computer",
-                "Settings",
-                "About"
-            ]
+            ["This computer", "Connect", "History", "Settings", "About"]
         );
     }
 
