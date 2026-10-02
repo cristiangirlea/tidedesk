@@ -798,7 +798,11 @@ impl HostApp {
         )
         .id_salt("more-ways")
         .show(ui, |ui| {
-            ui.small(internet::describe_rendezvous(&self.info.agent.rendezvous()));
+            let service = self.info.state.registration.lock().unwrap().clone();
+            ui.small(internet::describe_rendezvous(
+                &self.info.agent.rendezvous(),
+                service.as_deref(),
+            ));
             let registers = self.info.agent.rendezvous() != RendezvousStatus::Off;
             if let Some(line) = internet::describe_lan_discovery(
                 self.info.config.lan_discovery,
@@ -1104,8 +1108,9 @@ impl HostApp {
                 "Reachable by device ID from other networks",
             )
             .on_hover_text(
-                "Registers this computer's device ID and public address with TideDesk's \
-             connection service, which introduces viewers and never carries a session.",
+                "Registers this computer's device ID and public address with the \
+                 connection service (TideDesk's own unless another is set), which \
+                 introduces viewers and never carries a session.",
             );
             ui.add_enabled_ui(cfg.rendezvous, |ui| {
                 ui.checkbox(
