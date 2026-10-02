@@ -135,6 +135,56 @@ struct Shell {
     history: tidedesk_host::HistoryView,
     /// TideDesk's icon, at the top of the sidebar.
     logo: Option<egui::TextureHandle>,
+    /// The group of settings shown.
+    settings_group: SettingsPage,
+}
+
+/// The groups on the Settings page, each from the host or the viewer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum SettingsPage {
+    #[default]
+    Sharing,
+    Permissions,
+    Viewing,
+    Shortcuts,
+    Network,
+    StartUp,
+}
+
+impl SettingsPage {
+    const ALL: [SettingsPage; 6] = [
+        SettingsPage::Sharing,
+        SettingsPage::Permissions,
+        SettingsPage::Viewing,
+        SettingsPage::Shortcuts,
+        SettingsPage::Network,
+        SettingsPage::StartUp,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            SettingsPage::Sharing => "Sharing",
+            SettingsPage::Permissions => "Permissions",
+            SettingsPage::Viewing => "Viewing",
+            SettingsPage::Shortcuts => "Shortcuts",
+            SettingsPage::Network => "Network",
+            SettingsPage::StartUp => "Start-up",
+        }
+    }
+
+    /// What the group is about, under its name.
+    fn about(self) -> &'static str {
+        match self {
+            SettingsPage::Sharing => {
+                "What this computer sends: screen, frame rate, quality, sound."
+            }
+            SettingsPage::Permissions => "What a viewer may do here during a session.",
+            SettingsPage::Viewing => "How sessions you open from this computer behave.",
+            SettingsPage::Shortcuts => "Keys that work while a session's window is focused.",
+            SettingsPage::Network => "How viewers find and reach this computer.",
+            SettingsPage::StartUp => "The window, the tray, and starting with Windows.",
+        }
+    }
 }
 
 /// The licence part of About: the licence this computer holds, and a box to
@@ -252,6 +302,7 @@ pub fn run(hidden: bool) -> Result<()> {
         },
         history: Default::default(),
         logo: None,
+        settings_group: SettingsPage::default(),
     });
     egui_software_backend::run_app_with_software_backend(config, move |ctx| {
         let mut shell = shell.take().expect("the window is created once");
@@ -363,13 +414,65 @@ impl Shell {
         }
     }
 
+    /// Settings: its own small menu on the left, one group at a time.
     fn settings_tab(&mut self, ui: &mut egui::Ui) {
-        if let Some(host) = self.host() {
-            host.settings_tab(ui);
-            ui.add_space(8.0);
-            ui.separator();
-        }
-        self.viewer_settings.ui(ui);
+        use tidedesk_host::SettingsGroup;
+        use tidedesk_ui as look;
+        use tidedesk_view::settings::ViewerGroup;
+        ui.label(look::title("Settings"));
+        ui.add_space(6.0);
+        ui.horizontal_top(|ui| {
+            ui.vertical(|ui| {
+                ui.set_width(160.0);
+                for page in SettingsPage::ALL {
+                    let selected = self.settings_group == page;
+                    let text = RichText::new(page.label()).color(if selected {
+                        look::TEXT
+                    } else {
+                        look::MUTED
+                    });
+                    let item = egui::Button::new(text)
+                        .fill(if selected { look::SELECTED } else { look::BG })
+                        .stroke(egui::Stroke::NONE)
+                        .min_size(egui::vec2(160.0, 34.0));
+                    if ui.add(item).clicked() {
+                        self.settings_group = page;
+                    }
+                }
+            });
+            look::card().show(ui, |ui| {
+                ui.vertical(|ui| {
+                    ui.set_width(ui.available_width());
+                    let page = self.settings_group;
+                    ui.label(look::label(page.label()).size(17.0));
+                    ui.label(RichText::new(page.about()).color(look::MUTED));
+                    ui.add_space(6.0);
+                    let host_group = match page {
+                        SettingsPage::Sharing => Some(SettingsGroup::Sharing),
+                        SettingsPage::Permissions => Some(SettingsGroup::Permissions),
+                        SettingsPage::Network => Some(SettingsGroup::Network),
+                        SettingsPage::StartUp => Some(SettingsGroup::StartUp),
+                        SettingsPage::Viewing | SettingsPage::Shortcuts => None,
+                    };
+                    match host_group {
+                        Some(group) => match self.host() {
+                            Some(host) => host.settings_group(ui, Some(group)),
+                            None => {
+                                ui.label("Sharing has not started on this computer.");
+                            }
+                        },
+                        None => {
+                            let group = if page == SettingsPage::Viewing {
+                                ViewerGroup::Viewing
+                            } else {
+                                ViewerGroup::Shortcuts
+                            };
+                            self.viewer_settings.ui_group(ui, Some(group));
+                        }
+                    }
+                });
+            });
+        });
     }
 
     fn about(&mut self, ui: &mut egui::Ui) {

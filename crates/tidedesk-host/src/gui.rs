@@ -64,6 +64,15 @@ enum Tab {
     Settings,
 }
 
+/// The groups the sharing settings come in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SettingsGroup {
+    Sharing,
+    Permissions,
+    Network,
+    StartUp,
+}
+
 pub struct HostApp {
     info: HostInfo,
     /// The window title, by which tray and taskbar handling find the window.
@@ -951,127 +960,160 @@ impl HostApp {
 
     /// The sharing settings; changes apply at once and are saved.
     pub fn settings_tab(&mut self, ui: &mut egui::Ui) {
+        self.settings_group(ui, None);
+    }
+
+    /// One group of the sharing settings, or all of them; changes apply at
+    /// once and are saved either way.
+    pub fn settings_group(&mut self, ui: &mut egui::Ui, group: Option<SettingsGroup>) {
+        let shows = |g: SettingsGroup| group.is_none_or(|wanted| wanted == g);
+        let heading = |ui: &mut egui::Ui, text: &str| {
+            if group.is_none() {
+                ui.label(tidedesk_ui::label(text));
+            }
+        };
         let title = self.title;
         let state = self.info.state.clone();
         let before = self.info.config.clone();
         let cfg = &mut self.info.config;
 
-        ui.label(RichText::new("Sharing").strong());
-        ui.small("Applies to the next connection.");
-        egui::Grid::new("sharing")
-            .num_columns(2)
-            .spacing([12.0, 8.0])
-            .show(ui, |ui| {
-                ui.label("Screen");
-                let current = self
-                    .displays
-                    .iter()
-                    .find(|d| d.index == cfg.display)
-                    .map(display_label)
-                    .unwrap_or_else(|| format!("Display {}", cfg.display + 1));
-                egui::ComboBox::from_id_salt("display")
-                    .selected_text(current)
-                    .show_ui(ui, |ui| {
-                        for d in &self.displays {
-                            ui.selectable_value(&mut cfg.display, d.index, display_label(d));
+        if shows(SettingsGroup::Sharing) {
+            heading(ui, "Sharing");
+            ui.small("Applies to the next connection.");
+            egui::Grid::new("sharing")
+                .num_columns(2)
+                .spacing([12.0, 8.0])
+                .show(ui, |ui| {
+                    ui.label("Screen");
+                    let current = self
+                        .displays
+                        .iter()
+                        .find(|d| d.index == cfg.display)
+                        .map(display_label)
+                        .unwrap_or_else(|| format!("Display {}", cfg.display + 1));
+                    egui::ComboBox::from_id_salt("display")
+                        .selected_text(current)
+                        .show_ui(ui, |ui| {
+                            for d in &self.displays {
+                                ui.selectable_value(&mut cfg.display, d.index, display_label(d));
+                            }
+                        });
+                    ui.end_row();
+
+                    ui.label("Frame rate");
+                    ui.add(egui::Slider::new(&mut cfg.fps, HostConfig::FPS_RANGE).suffix(" fps"));
+                    ui.end_row();
+
+                    ui.label("Quality");
+                    ui.horizontal(|ui| {
+                        ui.checkbox(&mut cfg.automatic_bitrate, "Automatic")
+                            .on_hover_text(
+                                "Sets the bitrate by the screen's size: about 6 Mbit/s at \
+                             1920x1080, 12 Mbit/s at 2560x1600, up to 20 Mbit/s.",
+                            );
+                        if !cfg.automatic_bitrate {
+                            ui.add(
+                                egui::Slider::new(&mut cfg.bitrate_kbps, HostConfig::BITRATE_RANGE)
+                                    .suffix(" kbit/s")
+                                    .logarithmic(true),
+                            );
+                        } else if let Some(d) =
+                            self.displays.iter().find(|d| d.index == cfg.display)
+                        {
+                            let size =
+                                ((d.rect.width as usize) & !1, (d.rect.height as usize) & !1);
+                            let bps = crate::video::automatic_bitrate(size);
+                            ui.label(format!(
+                                "{:.1} Mbit/s for this display",
+                                f64::from(bps) / 1e6
+                            ));
                         }
                     });
-                ui.end_row();
-
-                ui.label("Frame rate");
-                ui.add(egui::Slider::new(&mut cfg.fps, HostConfig::FPS_RANGE).suffix(" fps"));
-                ui.end_row();
-
-                ui.label("Quality");
-                ui.horizontal(|ui| {
-                    ui.checkbox(&mut cfg.automatic_bitrate, "Automatic")
-                        .on_hover_text(
-                            "Sets the bitrate by the screen's size: about 6 Mbit/s at \
-                             1920x1080, 12 Mbit/s at 2560x1600, up to 20 Mbit/s.",
-                        );
-                    if !cfg.automatic_bitrate {
-                        ui.add(
-                            egui::Slider::new(&mut cfg.bitrate_kbps, HostConfig::BITRATE_RANGE)
-                                .suffix(" kbit/s")
-                                .logarithmic(true),
-                        );
-                    } else if let Some(d) = self.displays.iter().find(|d| d.index == cfg.display) {
-                        let size = ((d.rect.width as usize) & !1, (d.rect.height as usize) & !1);
-                        let bps = crate::video::automatic_bitrate(size);
-                        ui.label(format!(
-                            "{:.1} Mbit/s for this display",
-                            f64::from(bps) / 1e6
-                        ));
-                    }
+                    ui.end_row();
                 });
-                ui.end_row();
-            });
-        ui.checkbox(&mut cfg.share_audio, "Share sound");
-        ui.add_space(8.0);
-        ui.label(RichText::new("Live session permissions").strong());
-        ui.checkbox(&mut cfg.allow_clipboard, "Allow text clipboard sharing");
-        ui.checkbox(&mut cfg.allow_mouse, "Allow viewer mouse control");
-        ui.checkbox(&mut cfg.allow_files, "Allow files from the viewer")
-            .on_hover_text(
-                "Files dropped on the viewer's window are saved in Downloads\\TideDesk.",
-            );
-        ui.small("Applies immediately. Clipboard also needs to be enabled in Viewer Settings.");
-        ui.add_space(8.0);
+            ui.checkbox(&mut cfg.share_audio, "Share sound");
+            ui.add_space(8.0);
+        }
+        if shows(SettingsGroup::Permissions) {
+            heading(ui, "Live session permissions");
+            ui.checkbox(&mut cfg.allow_clipboard, "Allow text clipboard sharing");
+            ui.checkbox(&mut cfg.allow_mouse, "Allow viewer mouse control");
+            ui.checkbox(&mut cfg.allow_files, "Allow files from the viewer")
+                .on_hover_text(
+                    "Files dropped on the viewer's window are saved in Downloads\\TideDesk.",
+                );
+            ui.small("Applies immediately. Clipboard also needs to be enabled in Viewer Settings.");
+            ui.add_space(8.0);
+        }
 
-        ui.label(RichText::new("Window").strong());
-        ui.checkbox(&mut cfg.show_in_taskbar, "Show in the taskbar")
-            .on_hover_text("When off, TideDesk Host lives in the notification area (tray) only.");
-        ui.checkbox(&mut cfg.start_in_tray, "Start hidden in the tray");
-        let mut autostart = self.autostart;
-        if ui
-            .checkbox(&mut autostart, "Start when I sign in to Windows")
-            .changed()
-        {
-            match platform::set_autostart(autostart) {
-                Ok(()) => self.autostart = autostart,
-                Err(e) => self.settings_error = Some(format!("Could not change start-up: {e:#}")),
+        if shows(SettingsGroup::StartUp) {
+            heading(ui, "Window");
+            ui.checkbox(&mut cfg.show_in_taskbar, "Show in the taskbar")
+                .on_hover_text(
+                    "When off, TideDesk Host lives in the notification area (tray) only.",
+                );
+            ui.checkbox(&mut cfg.start_in_tray, "Start hidden in the tray");
+            let mut autostart = self.autostart;
+            if ui
+                .checkbox(&mut autostart, "Start when I sign in to Windows")
+                .changed()
+            {
+                match platform::set_autostart(autostart) {
+                    Ok(()) => self.autostart = autostart,
+                    Err(e) => {
+                        self.settings_error = Some(format!("Could not change start-up: {e:#}"))
+                    }
+                }
             }
+            ui.small(
+                "Closing the window keeps TideDesk running in the tray; quit from the tray menu.",
+            );
+            ui.add_space(8.0);
         }
-        ui.small("Closing the window keeps TideDesk running in the tray; quit from the tray menu.");
-        ui.add_space(8.0);
 
-        ui.label(RichText::new("Network").strong());
-        ui.horizontal(|ui| {
-            ui.label("UDP port");
-            ui.add(egui::DragValue::new(&mut cfg.port).range(1024..=65535));
-        });
-        if cfg.port != self.info.port {
-            ui.small("The new port is used after TideDesk Host restarts.");
-        }
-        ui.checkbox(
-            &mut cfg.lan_discovery,
-            "Reachable by device ID on this network",
-        )
-        .on_hover_text(
-            "Answers viewers on this local network that look for this computer's device \
+        if shows(SettingsGroup::Network) {
+            heading(ui, "Network");
+            ui.horizontal(|ui| {
+                ui.label("UDP port");
+                ui.add(egui::DragValue::new(&mut cfg.port).range(1024..=65535));
+            });
+            if cfg.port != self.info.port {
+                ui.small("The new port is used after TideDesk Host restarts.");
+            }
+            ui.checkbox(
+                &mut cfg.lan_discovery,
+                "Reachable by device ID on this network",
+            )
+            .on_hover_text(
+                "Answers viewers on this local network that look for this computer's device \
                  ID, so they connect directly even without the internet. Only computers on \
                  this network get an answer.",
-        );
-        ui.add_space(8.0);
+            );
+            ui.add_space(8.0);
 
-        ui.label(RichText::new("Internet").strong());
-        ui.checkbox(
-            &mut cfg.rendezvous,
-            "Reachable by device ID from other networks",
-        )
-        .on_hover_text(
-            "Registers this computer's device ID and public address with TideDesk's \
+            heading(ui, "Internet");
+            if group.is_some() {
+                ui.add_space(4.0);
+                ui.label(tidedesk_ui::label("Over the internet"));
+            }
+            ui.checkbox(
+                &mut cfg.rendezvous,
+                "Reachable by device ID from other networks",
+            )
+            .on_hover_text(
+                "Registers this computer's device ID and public address with TideDesk's \
              connection service, which introduces viewers and never carries a session.",
-        );
-        ui.checkbox(
-            &mut cfg.discover_public_address,
-            "Look up this computer's internet address (STUN)",
-        )
-        .on_hover_text(
-            "Asks public STUN servers which address and port your router gives \
+            );
+            ui.checkbox(
+                &mut cfg.discover_public_address,
+                "Look up this computer's internet address (STUN)",
+            )
+            .on_hover_text(
+                "Asks public STUN servers which address and port your router gives \
              TideDesk. They see this computer's public IP address and a 20-byte \
              request, nothing else.",
-        );
+            );
+        }
 
         if *cfg != before {
             {

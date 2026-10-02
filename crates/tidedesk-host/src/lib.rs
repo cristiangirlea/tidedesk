@@ -172,7 +172,7 @@ pub(crate) fn registration_credentials(
     })
 }
 
-pub use gui::{HistoryView, HostApp, HostInfo};
+pub use gui::{HistoryView, HostApp, HostInfo, SettingsGroup};
 pub use platform::{attach_console, error_box, open_link};
 
 /// The screen's usable area in pixels, when Windows says it.

@@ -314,57 +314,79 @@ impl Editor {
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui) {
+        self.ui_group(ui, None);
+    }
+
+    /// One group of the viewer settings, or all of them.
+    pub fn ui_group(&mut self, ui: &mut egui::Ui, group: Option<ViewerGroup>) {
         if self.reloaded.elapsed() >= RELOAD_EVERY {
             self.reloaded = Instant::now();
             self.reload();
         }
-        ui.heading("Viewer Settings");
+        if group.is_none() {
+            ui.heading("Viewer Settings");
+        }
         ui.small("Changes are saved at once and apply to open sessions.");
         for problem in [&self.load_error, &self.save_error].into_iter().flatten() {
             ui.colored_label(ERROR_RED, problem);
         }
         ui.add_space(8.0);
-        let boost_label = if self.config.game_boost {
-            "Game Boost: ON (click to return to Desktop)"
-        } else {
-            "Game Boost: OFF (click to enable)"
-        };
-        if ui.button(boost_label).clicked() {
-            self.config.game_boost = !self.config.game_boost;
-        }
-        ui.small("Experimental: 60 FPS target, motion preset and smaller audio/video buffers.");
-        ui.small(
+        if group.is_none_or(|g| g == ViewerGroup::Viewing) {
+            let boost_label = if self.config.game_boost {
+                "Game Boost: ON (click to return to Desktop)"
+            } else {
+                "Game Boost: OFF (click to enable)"
+            };
+            if ui.button(boost_label).clicked() {
+                self.config.game_boost = !self.config.game_boost;
+            }
+            ui.small("Experimental: 60 FPS target, motion preset and smaller audio/video buffers.");
+            ui.small(
             "Keeps host resolution and bitrate. Software encoding; actual FPS depends on both PCs.",
         );
-        ui.small("Keyboard and desktop mouse supported. Relative game-camera input is not implemented yet.");
-        ui.add_space(8.0);
-        ui.checkbox(
-            &mut self.config.clipboard,
-            "Share text clipboard in both directions",
-        );
-        ui.small("Off by default. The host must also allow clipboard sharing.");
-        ui.small("Only new copies are shared after enabling. Text only, up to 48 KiB.");
-        ui.add_space(8.0);
-        ui.checkbox(&mut self.config.mouse, "Control the host mouse");
-        ui.small("Includes movement, buttons and scrolling.");
-        ui.add_space(8.0);
-        ui.checkbox(&mut self.config.allow_files, "Allow files from the host");
-        ui.small("Saved in Downloads\\TideDesk on this computer.");
-        ui.small("After local host movement, your next movement picks up its position without moving the host pointer.");
-        ui.separator();
-        ui.label("Shortcuts (while the remote window is focused)");
-        shortcut_ui(ui, "Clipboard", &mut self.config.clipboard_shortcut);
-        shortcut_ui(ui, "Mouse", &mut self.config.mouse_shortcut);
-        shortcut_ui(ui, "Game Boost", &mut self.config.game_boost_shortcut);
-        shortcut_ui(ui, "Settings", &mut self.config.settings_shortcut);
-        shortcut_ui(ui, "Chat", &mut self.config.chat_shortcut);
-        ui.small("Settings opens these settings during a session.");
-        ui.separator();
+            ui.small("Keyboard and desktop mouse supported. Relative game-camera input is not implemented yet.");
+            ui.add_space(8.0);
+            ui.checkbox(
+                &mut self.config.clipboard,
+                "Share text clipboard in both directions",
+            );
+            ui.small("Off by default. The host must also allow clipboard sharing.");
+            ui.small("Only new copies are shared after enabling. Text only, up to 48 KiB.");
+            ui.add_space(8.0);
+            ui.checkbox(&mut self.config.mouse, "Control the host mouse");
+            ui.small("Includes movement, buttons and scrolling.");
+            ui.add_space(8.0);
+            ui.checkbox(&mut self.config.allow_files, "Allow files from the host");
+            ui.small("Saved in Downloads\\TideDesk on this computer.");
+            ui.small("After local host movement, your next movement picks up its position without moving the host pointer.");
+        }
+        if group.is_none_or(|g| g == ViewerGroup::Shortcuts) {
+            if group.is_none() {
+                ui.separator();
+            }
+            ui.label("Shortcuts (while the remote window is focused)");
+            shortcut_ui(ui, "Clipboard", &mut self.config.clipboard_shortcut);
+            shortcut_ui(ui, "Mouse", &mut self.config.mouse_shortcut);
+            shortcut_ui(ui, "Game Boost", &mut self.config.game_boost_shortcut);
+            shortcut_ui(ui, "Settings", &mut self.config.settings_shortcut);
+            shortcut_ui(ui, "Chat", &mut self.config.chat_shortcut);
+            ui.small("Settings opens these settings during a session.");
+        }
+        if group.is_none() {
+            ui.separator();
+        }
         // The problems are drawn above: show a change on the next frame.
         if self.commit() {
             ui.ctx().request_repaint();
         }
     }
+}
+
+/// The groups the viewer settings come in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ViewerGroup {
+    Viewing,
+    Shortcuts,
 }
 
 fn shortcut_ui(ui: &mut egui::Ui, label: &str, shortcut: &mut Shortcut) {
@@ -424,8 +446,11 @@ pub fn run(near: Option<[f32; 2]>) -> Result<()> {
     if let Some(centre) = near {
         config.viewport_builder = config.viewport_builder.with_position(centred_on(centre));
     }
-    egui_software_backend::run_app_with_software_backend(config, |_| Window(Editor::default()))
-        .map_err(|e| anyhow::anyhow!("cannot open settings: {e}"))
+    egui_software_backend::run_app_with_software_backend(config, |ctx| {
+        tidedesk_ui::apply(&ctx);
+        Window(Editor::default())
+    })
+    .map_err(|e| anyhow::anyhow!("cannot open settings: {e}"))
 }
 
 #[cfg(test)]
