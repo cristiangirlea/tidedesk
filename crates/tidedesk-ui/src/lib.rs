@@ -94,6 +94,13 @@ pub fn apply(ctx: &egui::Context) {
         spacing.item_spacing = vec2(8.0, 8.0);
         spacing.button_padding = vec2(14.0, 7.0);
         spacing.interact_size.y = BUTTON_HEIGHT;
+        // Solid bars: shown whenever a list scrolls, not only under the mouse.
+        spacing.scroll = egui::style::ScrollStyle {
+            bar_width: 8.0,
+            // The handle in the text's colour, to stand out from its track.
+            foreground_color: true,
+            ..egui::style::ScrollStyle::solid()
+        };
 
         let v = &mut style.visuals;
         v.panel_fill = BG;
@@ -371,6 +378,18 @@ mod tests {
         assert!(contrast(MUTED, SURFACE) >= 4.5);
         assert!(contrast(TEXT, BG) >= 7.0);
         assert!(contrast(WARN, WARN_BG) >= 4.5);
+    }
+
+    #[test]
+    fn scrollbars_show_whenever_a_list_scrolls() {
+        let ctx = egui::Context::default();
+        apply(&ctx);
+        let scroll = ctx.style_of(Theme::Dark).spacing.scroll;
+        assert!(
+            !scroll.floating,
+            "a floating bar is hidden until the mouse is near it"
+        );
+        assert!(scroll.bar_width >= 8.0, "wide enough to grab");
     }
 
     #[test]
