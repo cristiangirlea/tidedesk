@@ -252,6 +252,11 @@ A written permission comes as a short signed text, the licence. Paste it under A
 checked on the computer itself: no account, nothing sent anywhere. An expired licence
 keeps working for 14 days.
 
+A licence that includes the session log keeps one line per session in `sessions.csv`, next to
+`tidedesk.log`: when it started and ended, the viewer, its address, how it was let in (access
+code, saved password or trusted viewer) and why it ended. It opens in a spreadsheet and stays on
+the computer.
+
 The new terms apply only to versions supplied under them, not retroactively to earlier
 AGPL releases. Third-party components retain their own licenses and notices.
 See [licensing and earlier releases](docs/licensing.md).

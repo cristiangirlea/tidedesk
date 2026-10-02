@@ -12,6 +12,7 @@ mod internet;
 mod platform;
 pub mod saved_password;
 pub mod session;
+pub mod session_log;
 mod tray;
 pub mod trusted;
 mod video;
