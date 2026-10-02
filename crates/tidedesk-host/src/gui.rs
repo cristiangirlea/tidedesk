@@ -1119,9 +1119,12 @@ impl HostApp {
                 "Registers this computer's device ID and public address with TideDesk's \
              connection service, which introduces viewers and never carries a session.",
             );
-            ui.add_enabled_ui(cfg.rendezvous, |ui| {
-                ui.checkbox(
+            let reachable = Policy::bool_or(service_set, cfg.rendezvous);
+            ui.add_enabled_ui(reachable, |ui| {
+                locked_checkbox(
+                    ui,
                     &mut cfg.port_mapping,
+                    managed.port_mapping,
                     "Ask the router to open TideDesk's port",
                 )
                 .on_hover_text(format!(
@@ -1132,7 +1135,7 @@ impl HostApp {
                     self.info.port
                 ));
             });
-            if cfg.maps_port() {
+            if crate::maps_port(cfg, &managed) {
                 ui.small(self.info.agent.mapping().to_string());
             }
             ui.checkbox(
@@ -1182,8 +1185,10 @@ impl HostApp {
                     }
                 }
             }
-            if cfg.maps_port() != before.maps_port() {
-                if cfg.maps_port() {
+            let managed = tidedesk_core::policy::current();
+            let maps = crate::maps_port(cfg, &managed);
+            if maps != crate::maps_port(&before, &managed) {
+                if maps {
                     self.info.agent.start_port_mapping(self.info.port);
                 } else {
                     self.info.agent.stop_port_mapping();

@@ -149,6 +149,17 @@ fn rendezvous_choice(
     choice.service().map(str::to_string)
 }
 
+/// Whether the host asks the router to open its port: the setting (or the
+/// administrator's), and only while it registers with a service.
+pub(crate) fn maps_port(config: &config::HostConfig, managed: &Policy) -> bool {
+    Policy::bool_or(managed.port_mapping, config.port_mapping)
+        && managed
+            .services
+            .choose(config.rendezvous_service())
+            .service()
+            .is_some()
+}
+
 /// The service to register with now, as [`rendezvous_choice`] with the
 /// administrator's settings in force.
 pub(crate) fn rendezvous_now(
@@ -341,7 +352,7 @@ pub fn start(options: &StartOptions) -> Result<Started> {
             agent.start_rendezvous(service.to_string(), sealed);
         }));
     }
-    if config.port_mapping && rendezvous.is_some() {
+    if maps_port(&config, &policy::current()) {
         agent.start_port_mapping(listen.port());
     }
     // Needs no service: viewers on this network ask the network itself.
@@ -568,7 +579,10 @@ async fn accept_loop(endpoint: quinn::Endpoint, state: Arc<session::HostState>) 
 
 #[cfg(test)]
 mod tests {
-    use super::{HostIdentity, Services, candidates, registration_credentials, rendezvous_choice};
+    use super::{
+        HostIdentity, Policy, Services, candidates, maps_port, registration_credentials,
+        rendezvous_choice,
+    };
 
     #[test]
     fn registration_seals_this_computers_local_addresses_for_the_code() {
@@ -636,6 +650,38 @@ mod tests {
         assert_eq!(
             rendezvous_choice(None, false, saved, list).as_deref(),
             Some("rv.a:47900")
+        );
+    }
+
+    #[test]
+    fn the_administrator_decides_router_port_mapping() {
+        let config = crate::config::HostConfig::default();
+        assert!(maps_port(&config, &Policy::default()));
+        let off = Policy {
+            port_mapping: Some(false),
+            ..Policy::default()
+        };
+        assert!(!maps_port(&config, &off));
+        let no_service = Policy {
+            services: Services::Off,
+            ..Policy::default()
+        };
+        assert!(
+            !maps_port(&config, &no_service),
+            "nothing to be reachable for"
+        );
+        let unregistered = crate::config::HostConfig {
+            rendezvous: false,
+            ..config
+        };
+        let forced = Policy {
+            services: Services::Only("rv.company:47900".into()),
+            port_mapping: Some(true),
+            ..Policy::default()
+        };
+        assert!(
+            maps_port(&unregistered, &forced),
+            "the administrator's service registers"
         );
     }
 }
