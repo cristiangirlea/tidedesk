@@ -214,13 +214,22 @@ impl Launcher {
         self.without_code = target.code.trim().is_empty().then(|| target.clone());
         self.message = None;
         let host = target.address.trim().to_string();
+        let managed = tidedesk_core::policy::current();
+        let device_id = connect::parse_device_id(&host);
+        if let Err(why) = crate::typed_allowed(&managed, device_id.is_some()) {
+            return self.fail(why.into());
+        }
         // Internet and device-ID sessions open their path and probe the host
         // themselves, in the session process that owns the path.
-        if let Some(id) = connect::parse_device_id(&host) {
+        if let Some(id) = device_id {
             let saved = crate::settings::ViewerSettings::load()
                 .map(|s| s.rendezvous_server)
                 .unwrap_or_default();
-            let route = SessionRoute::Rendezvous(crate::rendezvous_service(None, Some(&saved)));
+            let service = match crate::lookup_service(None, Some(&saved), &managed.services) {
+                Ok(service) => service,
+                Err(why) => return self.fail(why.into()),
+            };
+            let route = SessionRoute::Rendezvous(service);
             return self.start_session(ctx, id.to_string(), &target, route);
         }
         if target.internet {

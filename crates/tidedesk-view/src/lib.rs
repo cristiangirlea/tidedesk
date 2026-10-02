@@ -30,6 +30,7 @@ use clap::{CommandFactory, FromArgMatches, Parser};
 use tidedesk_core::identity::{KnownHosts, PinStatus};
 use tidedesk_core::nat::signal::DEFAULT_RENDEZVOUS;
 use tidedesk_core::paths;
+use tidedesk_core::policy::{self, Choice, Policy, Services};
 use winit::event_loop::{EventLoop, EventLoopProxy};
 
 use child::ChildLine;
@@ -175,6 +176,41 @@ pub(crate) fn rendezvous_service(argument: Option<&str>, saved: Option<&str>) ->
         .find(|s| !s.is_empty())
         .unwrap_or(DEFAULT_RENDEZVOUS)
         .to_string()
+}
+
+/// What a viewer says when the administrator turned connection services off.
+pub(crate) const NO_SERVICE: &str = "This computer's administrator turned connection services     off: connect to a computer on this network by its address.";
+
+/// What a viewer says when the administrator allows device IDs only.
+pub(crate) const DEVICE_IDS_ONLY: &str = "This computer's administrator allows connecting by     device ID only: type the computer's device ID (it looks like TD-1A2B-3C4D-5E6F-7A8B).";
+
+/// The service to look a device ID up with: [`rendezvous_service`], then
+/// what the administrator allows (see [`tidedesk_core::policy`]).
+pub(crate) fn lookup_service(
+    argument: Option<&str>,
+    saved: Option<&str>,
+    allowed: &Services,
+) -> Result<String, &'static str> {
+    let chosen = rendezvous_service(argument, saved);
+    match allowed.choose(Some(&chosen)) {
+        Choice::Chosen(Some(service)) => Ok(service),
+        Choice::Overruled(Some(service)) => {
+            tracing::info!(
+                "connection service {chosen} not allowed by this computer's administrator:                  using {service}"
+            );
+            Ok(service)
+        }
+        Choice::Chosen(None) | Choice::Overruled(None) => Err(NO_SERVICE),
+    }
+}
+
+/// Whether a connection to a typed address (not a device ID) is allowed.
+pub(crate) fn typed_allowed(policy: &Policy, device_id: bool) -> Result<(), &'static str> {
+    if device_id || policy.typed_addresses != Some(false) {
+        Ok(())
+    } else {
+        Err(DEVICE_IDS_ONLY)
+    }
 }
 
 /// Shows how opening an internet path goes, on the console.
@@ -342,14 +378,22 @@ fn run(program: &str, argv: Vec<OsString>) -> Result<()> {
              look like TD-1A2B-3C4D-5E6F-7A8B)"
         );
     }
-    let route = if connect::parse_device_id(&host).is_some() {
+    let managed = policy::current();
+    let device_id = connect::parse_device_id(&host).is_some();
+    typed_allowed(&managed, device_id).map_err(|why| anyhow!(why))?;
+    let route = if device_id {
         if args.internet {
             bail!("a device ID is found through a rendezvous service; leave out --internet");
         }
         let saved = settings::ViewerSettings::load()
             .ok()
             .map(|s| s.rendezvous_server);
-        let service = rendezvous_service(args.rendezvous.as_deref(), saved.as_deref());
+        let service = lookup_service(
+            args.rendezvous.as_deref(),
+            saved.as_deref(),
+            &managed.services,
+        )
+        .map_err(|why| anyhow!(why))?;
         connect::Route::Rendezvous { service }
     } else if args.internet {
         connect::parse_internet_host(&host)?;
@@ -602,7 +646,9 @@ fn run(program: &str, argv: Vec<OsString>) -> Result<()> {
 mod tests {
     use tidedesk_core::nat::signal::DEFAULT_RENDEZVOUS;
 
-    use super::rendezvous_service;
+    use tidedesk_core::policy::{Policy, Services};
+
+    use super::{DEVICE_IDS_ONLY, NO_SERVICE, lookup_service, rendezvous_service, typed_allowed};
 
     #[test]
     fn device_id_connections_use_tidedesks_service_unless_told_otherwise() {
@@ -620,5 +666,43 @@ mod tests {
             rendezvous_service(Some(" "), Some("rv.example")),
             "rv.example"
         );
+    }
+
+    #[test]
+    fn the_administrator_decides_which_service_finds_device_ids() {
+        let saved = Some("rv.saved:47900");
+        assert_eq!(
+            lookup_service(None, saved, &Services::Any).as_deref(),
+            Ok("rv.saved:47900")
+        );
+        let only = Services::Only("rv.company:47900".into());
+        assert_eq!(
+            lookup_service(Some("rv.arg"), saved, &only).as_deref(),
+            Ok("rv.company:47900"),
+            "over the command line too"
+        );
+        let list = Services::OneOf(vec!["rv.a:47900".into(), "rv.saved".into()]);
+        assert_eq!(
+            lookup_service(None, saved, &list).as_deref(),
+            Ok("rv.saved:47900"),
+            "an allowed choice stands"
+        );
+        assert_eq!(
+            lookup_service(None, None, &list).as_deref(),
+            Ok("rv.a:47900")
+        );
+        assert_eq!(lookup_service(None, saved, &Services::Off), Err(NO_SERVICE));
+    }
+
+    #[test]
+    fn the_administrator_may_allow_device_ids_only() {
+        let open = Policy::default();
+        assert_eq!(typed_allowed(&open, false), Ok(()));
+        let ids_only = Policy {
+            typed_addresses: Some(false),
+            ..Policy::default()
+        };
+        assert_eq!(typed_allowed(&ids_only, true), Ok(()));
+        assert_eq!(typed_allowed(&ids_only, false), Err(DEVICE_IDS_ONLY));
     }
 }
