@@ -182,6 +182,16 @@ async fn password_admits(
     )))
 }
 
+/// Whether the administrator allows coming in with `proof`; a trusted
+/// viewer is not asked.
+fn way_allowed(policy: &tidedesk_core::policy::Policy, proof: &Knows) -> bool {
+    let allowed = match proof {
+        Knows::Code(_) => policy.access_code,
+        Knows::Password(_) => policy.saved_password,
+    };
+    allowed != Some(false)
+}
+
 pub async fn run(conn: quinn::Connection, state: Arc<HostState>) -> Result<()> {
     let remote = conn.remote_address();
     let (mut send, mut recv) = timeout(Duration::from_secs(10), conn.accept_bi())
@@ -232,6 +242,10 @@ pub async fn run(conn: quinn::Connection, state: Arc<HostState>) -> Result<()> {
     let trusted = fingerprint
         .as_deref()
         .is_some_and(|fp| crate::trusted::trusted_anywhere(&state.trusted.lock().unwrap(), fp));
+    if !trusted && !way_allowed(&tidedesk_core::policy::current(), &proof) {
+        tracing::info!("refused {remote}: the administrator does not allow this way in");
+        return reject(&mut send, &conn, RejectReason::WayNotAllowed).await;
+    }
     if !trusted
         && state
             .throttle
@@ -743,5 +757,27 @@ mod tests {
         ] {
             assert_eq!(super::plain_reason(reason), plain, "{reason}");
         }
+    }
+
+    #[test]
+    fn the_administrator_decides_which_ways_in_are_allowed() {
+        use super::{Knows, way_allowed};
+        use tidedesk_core::policy::Policy;
+        let (code, password) = (Knows::Code([0; 32]), Knows::Password(vec![1]));
+        let open = Policy::default();
+        assert!(way_allowed(&open, &code) && way_allowed(&open, &password));
+        let password_only = Policy {
+            access_code: Some(false),
+            saved_password: Some(true),
+            ..Policy::default()
+        };
+        assert!(!way_allowed(&password_only, &code));
+        assert!(way_allowed(&password_only, &password));
+        let code_only = Policy {
+            saved_password: Some(false),
+            ..Policy::default()
+        };
+        assert!(way_allowed(&code_only, &code));
+        assert!(!way_allowed(&code_only, &password));
     }
 }
