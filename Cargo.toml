@@ -8,6 +8,7 @@ members = [
     "crates/tidedesk-view",
     "crates/tidedesk-ui",
     "crates/tidedesk-rendezvous-proto",
+    "crates/tidedesk-signed",
 ]
 exclude = ["third_party"]
 
@@ -28,6 +29,7 @@ tidedesk-host = { path = "crates/tidedesk-host" }
 tidedesk-view = { path = "crates/tidedesk-view" }
 tidedesk-ui = { path = "crates/tidedesk-ui" }
 tidedesk-rendezvous-proto = { path = "crates/tidedesk-rendezvous-proto" }
+tidedesk-signed = { path = "crates/tidedesk-signed" }
 anyhow = "1"
 arboard = { version = "3.6.1", default-features = false }
 argon2 = "0.5"
