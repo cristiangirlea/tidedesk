@@ -9,7 +9,7 @@ pub mod auth;
 pub mod chat;
 pub mod clipboard;
 pub mod company;
-pub mod dates;
+pub use tidedesk_signed::dates;
 pub mod files;
 pub mod history;
 pub mod identity;

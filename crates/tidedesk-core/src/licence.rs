@@ -21,25 +21,22 @@
 
 use std::path::PathBuf;
 
-use anyhow::{Context, Result, anyhow, bail};
-use ring::rand::SystemRandom;
-use ring::signature::{
-    ECDSA_P256_SHA256_FIXED, ECDSA_P256_SHA256_FIXED_SIGNING, EcdsaKeyPair, UnparsedPublicKey,
-};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
+use tidedesk_signed::Kind;
 
 const BEGIN: &str = "-----BEGIN TIDEDESK LICENCE-----";
 const END: &str = "-----END TIDEDESK LICENCE-----";
 
+/// A licence block, as [`tidedesk_signed`] reads and signs it.
+const KIND: Kind = Kind {
+    begin: BEGIN,
+    end: END,
+    what: "licence",
+};
+
 /// Days a licence keeps working after it expired.
 pub const GRACE_DAYS: i64 = 14;
-
-/// The public keys licences are signed with (uncompressed P-256 points, hex).
-/// More than one so that a key can be replaced without voiding licences.
-const KEYS: &[&str] = &[
-    // 2026-10-02
-    "04eb81c10a9279b55b575cf2c95b48e9231bb0b6201e1ea960df4100c657c03de2f88ba7b17533a1b2574fcf9f4c6584290ccb2f8a6ce5d824c2d7cef7bdfcfb16",
-];
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -104,50 +101,13 @@ pub fn allows(feature: &str) -> bool {
     load().is_some_and(|l| l.allows(feature, &crate::dates::today()))
 }
 
-/// The signed lines and the signature of a licence block.
-fn split(text: &str) -> Result<(String, Vec<u8>)> {
-    let start = text
-        .find(BEGIN)
-        .context("no licence found: it starts with ".to_string() + BEGIN)?;
-    let body = &text[start + BEGIN.len()..];
-    let end = body
-        .find(END)
-        .context("the licence is cut short: its last line is missing")?;
-    let mut signed = Vec::new();
-    let mut signature = None;
-    for line in body[..end].lines().map(str::trim).filter(|l| !l.is_empty()) {
-        match line.strip_prefix("signature") {
-            Some(rest) if rest.trim_start().starts_with('=') => {
-                let value = rest.trim_start()[1..].trim().trim_matches('"');
-                signature = Some(from_hex(value).context("the signature is not readable")?);
-            }
-            _ => signed.push(line),
-        }
-    }
-    Ok((
-        signed.join("\n"),
-        signature.context("the licence has no signature")?,
-    ))
-}
-
 /// Reads and checks a licence block.
 pub fn read(text: &str) -> Result<Licence> {
-    let keys: Vec<Vec<u8>> = KEYS.iter().filter_map(|k| from_hex(k).ok()).collect();
-    read_with(text, &keys)
+    read_with(text, &tidedesk_signed::keys())
 }
 
 fn read_with(text: &str, keys: &[Vec<u8>]) -> Result<Licence> {
-    let (signed, signature) = split(text)?;
-    let genuine = keys.iter().any(|key| {
-        UnparsedPublicKey::new(&ECDSA_P256_SHA256_FIXED, key)
-            .verify(signed.as_bytes(), &signature)
-            .is_ok()
-    });
-    if !genuine {
-        bail!("this licence was not issued for TideDesk, or it was changed");
-    }
-    let licence: Licence = toml::from_str(&signed)
-        .map_err(|e| anyhow!("the licence's fields are not readable: {e}"))?;
+    let licence: Licence = tidedesk_signed::read(text, KIND, keys)?;
     if crate::dates::parse(&licence.issued).is_none()
         || licence
             .expires
@@ -161,34 +121,13 @@ fn read_with(text: &str, keys: &[Vec<u8>]) -> Result<Licence> {
 
 /// Signs `licence` with a PKCS#8 P-256 key: the block to send to its owner.
 pub fn sign(licence: &Licence, pkcs8: &[u8]) -> Result<String> {
-    let fields = toml::to_string(licence).context("writing the licence")?;
-    let signed: Vec<&str> = fields
-        .lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty())
-        .collect();
-    let signed = signed.join("\n");
-    let rng = SystemRandom::new();
-    let key = EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, pkcs8, &rng)
-        .map_err(|_| anyhow!("not a P-256 signing key"))?;
-    let signature = key
-        .sign(&rng, signed.as_bytes())
-        .map_err(|_| anyhow!("signing failed"))?;
-    Ok(format!(
-        "{BEGIN}\n{signed}\nsignature = \"{}\"\n{END}\n",
-        to_hex(signature.as_ref())
-    ))
+    tidedesk_signed::sign(licence, KIND, pkcs8)
 }
 
-/// A new signing key: (PKCS#8 private key, public key as hex for [`KEYS`]).
+/// A new signing key: (PKCS#8 private key, public key as hex for
+/// [`tidedesk_signed::KEYS`]).
 pub fn new_key() -> Result<(Vec<u8>, String)> {
-    use ring::signature::KeyPair;
-    let rng = SystemRandom::new();
-    let pkcs8 = EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &rng)
-        .map_err(|_| anyhow!("making a key failed"))?;
-    let key = EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, pkcs8.as_ref(), &rng)
-        .map_err(|_| anyhow!("reading the new key failed"))?;
-    Ok((pkcs8.as_ref().to_vec(), to_hex(key.public_key().as_ref())))
+    tidedesk_signed::new_key()
 }
 
 /// `licence.txt` in the settings folder.
@@ -212,14 +151,7 @@ pub fn load() -> Option<Licence> {
 
 /// Just the licence block of a pasted text, without the email around it.
 fn block(text: &str) -> Option<String> {
-    let start = text.find(BEGIN)?;
-    let end = start + text[start..].find(END)? + END.len();
-    let lines: Vec<&str> = text[start..end]
-        .lines()
-        .map(str::trim)
-        .filter(|l| !l.is_empty())
-        .collect();
-    Some(lines.join("\n") + "\n")
+    tidedesk_signed::block(text, KIND)
 }
 
 /// Checks a pasted licence and keeps it: what it says.
@@ -237,23 +169,10 @@ pub fn add(text: &str) -> Result<Licence> {
     Ok(licence)
 }
 
-fn to_hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
-}
-
-fn from_hex(text: &str) -> Result<Vec<u8>> {
-    if !text.len().is_multiple_of(2) {
-        bail!("odd length");
-    }
-    (0..text.len())
-        .step_by(2)
-        .map(|i| u8::from_str_radix(&text[i..i + 2], 16).map_err(|e| anyhow!("{e}")))
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tidedesk_signed::from_hex;
 
     fn licence() -> Licence {
         Licence {
