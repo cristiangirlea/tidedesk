@@ -84,6 +84,19 @@ pub fn downloads() -> Result<PathBuf> {
     Ok(dir)
 }
 
+/// Whether sending failed because the other side stopped the stream: it
+/// refused the file and says why itself.
+pub fn stopped(e: &anyhow::Error) -> bool {
+    e.chain().any(|cause| {
+        let write = cause
+            .downcast_ref::<std::io::Error>()
+            .and_then(|io| io.get_ref())
+            .and_then(|inner| inner.downcast_ref::<quinn::WriteError>())
+            .or_else(|| cause.downcast_ref::<quinn::WriteError>());
+        matches!(write, Some(quinn::WriteError::Stopped(_)))
+    })
+}
+
 /// Writes the file at `path` to a stream: what the other side receives.
 pub async fn send<W: AsyncWrite + Unpin>(stream: &mut W, path: &Path) -> Result<u64> {
     let mut file = tokio::fs::File::open(path)
@@ -209,6 +222,16 @@ mod tests {
         assert_eq!(safe_name(".."), None);
         assert_eq!(safe_name("dir/"), None);
         assert_eq!(safe_name(&"x".repeat(300)).map(|n| n.len()), Some(200));
+    }
+
+    #[test]
+    fn a_stopped_send_is_told_apart() {
+        let stopped_send = anyhow::Error::new(std::io::Error::other(quinn::WriteError::Stopped(
+            1u32.into(),
+        )));
+        assert!(stopped(&stopped_send));
+        assert!(stopped(&stopped_send.context("sending a.txt")));
+        assert!(!stopped(&anyhow::anyhow!("the disk is full")));
     }
 
     #[test]

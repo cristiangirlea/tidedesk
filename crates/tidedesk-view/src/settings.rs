@@ -66,6 +66,8 @@ fn keys() -> Vec<String> {
 pub struct ViewerSettings {
     pub clipboard: bool,
     pub mouse: bool,
+    /// Save files the host sends, in Downloads\TideDesk.
+    pub allow_files: bool,
     pub game_boost: bool,
     pub clipboard_shortcut: Shortcut,
     pub mouse_shortcut: Shortcut,
@@ -81,6 +83,7 @@ impl Default for ViewerSettings {
         Self {
             clipboard: false,
             mouse: true,
+            allow_files: true,
             game_boost: false,
             clipboard_shortcut: Shortcut::default_for("KeyC"),
             mouse_shortcut: Shortcut::default_for("KeyM"),
@@ -263,6 +266,7 @@ impl Editor {
         edited!(
             clipboard,
             mouse,
+            allow_files,
             game_boost,
             clipboard_shortcut,
             mouse_shortcut,
@@ -323,6 +327,9 @@ impl Editor {
         ui.add_space(8.0);
         ui.checkbox(&mut self.config.mouse, "Control the host mouse");
         ui.small("Includes movement, buttons and scrolling.");
+        ui.add_space(8.0);
+        ui.checkbox(&mut self.config.allow_files, "Allow files from the host");
+        ui.small("Saved in Downloads\\TideDesk on this computer.");
         ui.small("After local host movement, your next movement picks up its position without moving the host pointer.");
         ui.separator();
         ui.label("Shortcuts (while the remote window is focused)");

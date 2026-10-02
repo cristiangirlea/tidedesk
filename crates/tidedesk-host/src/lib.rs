@@ -269,6 +269,7 @@ pub fn start(options: &StartOptions) -> Result<Started> {
         mouse: AtomicBool::new(config.allow_mouse),
         files: AtomicBool::new(config.allow_files),
         files_note: Mutex::new(None),
+        outgoing: Mutex::new(None),
         accepting: AtomicBool::new(true),
         throttle: Mutex::new(auth::Throttle::default()),
         busy: AtomicBool::new(false),

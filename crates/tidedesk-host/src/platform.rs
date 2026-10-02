@@ -108,6 +108,64 @@ mod windows_impl {
         }
     }
 
+    /// Windows' file picker, several files allowed, on its own thread so
+    /// that the window keeps drawing; `picked` gets the files chosen (none
+    /// when cancelled).
+    pub fn pick_files(title: &str, picked: impl FnOnce(Vec<std::path::PathBuf>) + Send + 'static) {
+        use windows::Win32::System::Com::{
+            COINIT_APARTMENTTHREADED, CoInitializeEx, CoTaskMemFree, CoUninitialize,
+        };
+        use windows::Win32::UI::Shell::{
+            FOS_ALLOWMULTISELECT, FOS_FILEMUSTEXIST, FOS_FORCEFILESYSTEM, FileOpenDialog,
+            IFileOpenDialog, SIGDN_FILESYSPATH,
+        };
+        let title = windows::core::HSTRING::from(title);
+        let run = move || {
+            // SAFETY: COM is set up on this thread for the dialog's lifetime;
+            // each path Windows returns is copied before it is freed.
+            let chosen = unsafe {
+                let init = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+                let chosen = (|| -> windows::core::Result<Vec<std::path::PathBuf>> {
+                    let dialog: IFileOpenDialog =
+                        CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER)?;
+                    dialog.SetOptions(
+                        dialog.GetOptions()?
+                            | FOS_ALLOWMULTISELECT
+                            | FOS_FILEMUSTEXIST
+                            | FOS_FORCEFILESYSTEM,
+                    )?;
+                    dialog.SetTitle(&title)?;
+                    if dialog.Show(None).is_err() {
+                        return Ok(Vec::new()); // cancelled
+                    }
+                    let items = dialog.GetResults()?;
+                    let mut paths = Vec::new();
+                    for i in 0..items.GetCount()? {
+                        let name = items.GetItemAt(i)?.GetDisplayName(SIGDN_FILESYSPATH)?;
+                        let path = name.to_string();
+                        CoTaskMemFree(Some(name.0 as _));
+                        paths.push(std::path::PathBuf::from(path?));
+                    }
+                    Ok(paths)
+                })();
+                if init.is_ok() {
+                    CoUninitialize();
+                }
+                chosen
+            };
+            picked(chosen.unwrap_or_else(|e| {
+                tracing::warn!("the file picker failed: {e}");
+                Vec::new()
+            }));
+        };
+        if let Err(e) = std::thread::Builder::new()
+            .name("file picker".into())
+            .spawn(run)
+        {
+            tracing::warn!("the file picker cannot start: {e}");
+        }
+    }
+
     /// Adds or removes the window's taskbar button without recreating it.
     pub fn set_taskbar_button(title: &str, show: bool) {
         let Some(hwnd) = own_window(title) else {
@@ -336,6 +394,9 @@ mod fallback {
         Ok(false)
     }
     pub fn open_link(_target: &str) {}
+    pub fn pick_files(_title: &str, picked: impl FnOnce(Vec<std::path::PathBuf>) + Send + 'static) {
+        picked(Vec::new());
+    }
 }
 
 /// The Run-key command that starts the host hidden in the tray.

@@ -79,6 +79,12 @@ pub enum ClientMessage {
     PasswordProof {
         proof: [u8; 32],
     },
+    /// A file from the host was saved under `name`, or why not. Sent only
+    /// to a host that copies files ([`crate::net::extras`]).
+    FileSaved {
+        name: String,
+        error: Option<String>,
+    },
 }
 
 /// Host → viewer control messages.
@@ -362,6 +368,11 @@ mod tests {
         );
         let proof = ClientMessage::PasswordProof { proof: [5; 32] };
         assert_eq!(first(postcard::to_stdvec(&proof).unwrap()), 10);
+        let saved = ClientMessage::FileSaved {
+            name: "a.txt".into(),
+            error: None,
+        };
+        assert_eq!(first(postcard::to_stdvec(&saved).unwrap()), 11);
 
         let streaming = ServerMessage::Streaming(crate::streaming::StreamingStatus::requested(
             1, false, 30, 8_000_000,
