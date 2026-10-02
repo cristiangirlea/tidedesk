@@ -311,41 +311,50 @@ pub fn run(hidden: bool) -> Result<()> {
         .with_maximize_button(false)
         .with_taskbar(show_in_taskbar)
         .with_visible(!start_hidden);
-    let mut shell = Some(Shell {
-        tab: Tab::default(),
-        sharing,
-        consent,
-        config_dir,
-        notices: third_party_notices(),
-        reading: None,
-        launcher: Launcher::new(),
-        viewer_settings: Editor::default(),
-        licence: LicenceBox {
-            held: licence::load(),
-            ..LicenceBox::default()
-        },
-        history: Default::default(),
-        logo: None,
-        settings_group: SettingsPage::default(),
-    });
+    let mut shell = Some(Shell::new(sharing, consent, config_dir));
     egui_software_backend::run_app_with_software_backend(config, move |ctx| {
         let mut shell = shell.take().expect("the window is created once");
-        tidedesk_ui::apply(&ctx);
-        let icon = tidedesk_host::window_icon();
-        let image = egui::ColorImage::from_rgba_unmultiplied(
-            [icon.width as usize, icon.height as usize],
-            &icon.rgba,
-        );
-        shell.logo = Some(ctx.load_texture("tidedesk-logo", image, Default::default()));
-        if let Some(host) = shell.host() {
-            host.attach(ctx);
-        }
+        shell.attach(&ctx);
         shell
     })
     .map_err(|e| anyhow!("cannot open the TideDesk window: {e}"))
 }
 
 impl Shell {
+    fn new(sharing: Option<Sharing>, consent: Consent, config_dir: Option<PathBuf>) -> Self {
+        Shell {
+            tab: Tab::default(),
+            sharing,
+            consent,
+            config_dir,
+            notices: third_party_notices(),
+            reading: None,
+            launcher: Launcher::new(),
+            viewer_settings: Editor::default(),
+            licence: LicenceBox {
+                held: licence::load(),
+                ..LicenceBox::default()
+            },
+            history: Default::default(),
+            logo: None,
+            settings_group: SettingsPage::default(),
+        }
+    }
+
+    /// Takes the look, the logo and the host's repaints from `ctx`.
+    fn attach(&mut self, ctx: &egui::Context) {
+        tidedesk_ui::apply(ctx);
+        let icon = tidedesk_host::window_icon();
+        let image = egui::ColorImage::from_rgba_unmultiplied(
+            [icon.width as usize, icon.height as usize],
+            &icon.rgba,
+        );
+        self.logo = Some(ctx.load_texture("tidedesk-logo", image, Default::default()));
+        if let Some(host) = self.host() {
+            host.attach(ctx.clone());
+        }
+    }
+
     fn host(&mut self) -> Option<&mut HostApp> {
         self.sharing.as_mut().and_then(|s| s.host.as_mut().ok())
     }
@@ -720,6 +729,13 @@ impl Shell {
 
 impl egui_software_backend::App for Shell {
     fn ui(&mut self, ui: &mut egui::Ui, _backend: &mut SoftwareBackend) {
+        self.draw(ui);
+    }
+}
+
+impl Shell {
+    /// One frame of the window.
+    fn draw(&mut self, ui: &mut egui::Ui) {
         if let Some(host) = self.host() {
             host.frame();
         }
@@ -771,6 +787,67 @@ impl egui_software_backend::App for Shell {
 #[cfg(test)]
 mod tests {
     use super::{Badge, Licence, Tab, badge, licence_line};
+
+    /// Draws each page with the window's own renderer, no window or screen
+    /// involved, and saves them as PNG files in `TIDEDESK_PICTURES`: to see
+    /// a change, and for the website. Run it with `APPDATA` pointing to a
+    /// scratch settings folder, so no real device ID or computer shows:
+    ///
+    /// ```text
+    /// TIDEDESK_PICTURES=pictures APPDATA=scratch cargo test -p tidedesk pictures -- --ignored
+    /// ```
+    #[test]
+    #[ignore = "draws pictures when asked"]
+    fn pictures_of_the_pages() {
+        use egui_software_backend::{BufferMutRef, ColorFieldOrder, EguiSoftwareRender};
+        let dir = std::path::PathBuf::from(
+            std::env::var_os("TIDEDESK_PICTURES").expect("TIDEDESK_PICTURES names a folder"),
+        );
+        std::fs::create_dir_all(&dir).unwrap();
+        let (width, height) = (1100, 760);
+        let ctx = egui::Context::default();
+        let (sharing, _, _) = super::start_sharing(false);
+        let mut shell = super::Shell::new(
+            Some(sharing),
+            super::terms::Consent::Accepted,
+            tidedesk_core::paths::config_dir().ok(),
+        );
+        shell.attach(&ctx);
+        let mut renderer = EguiSoftwareRender::new(ColorFieldOrder::Rgba);
+        for tab in Tab::ALL {
+            shell.tab = tab;
+            let mut pixels = vec![[0u8; 4]; width * height];
+            // A few frames, for the fonts and the layout to settle.
+            for _ in 0..4 {
+                let input = egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(width as f32, height as f32),
+                    )),
+                    ..Default::default()
+                };
+                let output = ctx.run_ui(input, |ui| shell.draw(ui));
+                let jobs = ctx.tessellate(output.shapes, output.pixels_per_point);
+                renderer.render(
+                    &mut BufferMutRef::new(&mut pixels, width, height),
+                    &jobs,
+                    &output.textures_delta,
+                    output.pixels_per_point,
+                );
+            }
+            for pixel in &mut pixels {
+                pixel[3] = 255;
+            }
+            let name = tab.label().to_lowercase().replace(' ', "-");
+            let file = std::fs::File::create(dir.join(format!("{name}.png"))).unwrap();
+            let mut png =
+                png::Encoder::new(std::io::BufWriter::new(file), width as u32, height as u32);
+            png.set_color(png::ColorType::Rgba);
+            png.set_depth(png::BitDepth::Eight);
+            let mut writer = png.write_header().unwrap();
+            writer.write_image_data(pixels.as_flattened()).unwrap();
+        }
+    }
 
     #[test]
     fn the_window_opens_on_sharing_and_names_its_tabs() {
