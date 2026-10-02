@@ -2,6 +2,8 @@
 param(
     [Parameter(Mandatory)][string]$Version,
     [string]$BinaryDirectory = 'target/release',
+    # The Cargo workspace the program was built from, for its dependencies' notices.
+    [string]$DependencyWorkspace,
     [string]$OutputDirectory = 'target/dist',
     [switch]$Signed
 )
@@ -43,7 +45,7 @@ foreach ($file in $files) { Copy-Item -LiteralPath (Join-Path $binaryRoot $file)
 Copy-Item -LiteralPath (Join-Path $repo 'LICENSE') -Destination $stage
 # Binary distribution must carry the dependencies' license notices.
 Copy-Item -LiteralPath (Join-Path $repo 'licenses') -Destination $stage -Recurse
-& (Join-Path $repo 'tools/package-third-party-notices.ps1') -StageDirectory $stage | Out-Null
+& (Join-Path $repo 'tools/package-third-party-notices.ps1') -StageDirectory $stage -Workspace $DependencyWorkspace | Out-Null
 $signingText = if ($Signed) {
     'tidedesk.exe has a verified, timestamped Authenticode signature. Windows reputation checks may still show a warning.'
 } else {
