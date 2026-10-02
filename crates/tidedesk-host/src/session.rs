@@ -241,7 +241,7 @@ pub async fn run(conn: quinn::Connection, state: Arc<HostState>) -> Result<()> {
     let fingerprint = net::peer_fingerprint(&conn);
     let trusted = fingerprint
         .as_deref()
-        .is_some_and(|fp| state.trusted.lock().unwrap().trusts(fp));
+        .is_some_and(|fp| crate::trusted::trusted_anywhere(&state.trusted.lock().unwrap(), fp));
     if !trusted && !way_allowed(&tidedesk_core::policy::current(), &proof) {
         tracing::info!("refused {remote}: the administrator does not allow this way in");
         return reject(&mut send, &conn, RejectReason::WayNotAllowed).await;
