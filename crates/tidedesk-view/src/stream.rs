@@ -34,6 +34,8 @@ pub enum UiEvent {
     Silent(Option<std::time::Duration>),
     /// A line of test control: a command, or what is wrong with the line.
     Command(Result<crate::control::Command, String>),
+    /// This computer is a company computer without a licence: its hours.
+    OwnCompany(tidedesk_core::company::Allowance),
     Disconnected(String),
 }
 

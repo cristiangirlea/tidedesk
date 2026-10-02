@@ -256,9 +256,115 @@ pub fn draw_host_cursor(
     }
 }
 
+/// The mark an unlicensed company computer's sessions show from 2 hours.
+pub const MARK: &str = "UNLICENSED COMPANY COMPUTER";
+
+/// 5x7 letters for [`MARK`], one row per byte, the high bit on the left.
+fn glyph(letter: char) -> Option<[u8; 7]> {
+    Some(match letter {
+        'A' => [0x0e, 0x11, 0x11, 0x1f, 0x11, 0x11, 0x11],
+        'C' => [0x0e, 0x11, 0x10, 0x10, 0x10, 0x11, 0x0e],
+        'D' => [0x1e, 0x11, 0x11, 0x11, 0x11, 0x11, 0x1e],
+        'E' => [0x1f, 0x10, 0x10, 0x1e, 0x10, 0x10, 0x1f],
+        'I' => [0x0e, 0x04, 0x04, 0x04, 0x04, 0x04, 0x0e],
+        'L' => [0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1f],
+        'M' => [0x11, 0x1b, 0x15, 0x15, 0x11, 0x11, 0x11],
+        'N' => [0x11, 0x19, 0x15, 0x13, 0x11, 0x11, 0x11],
+        'O' => [0x0e, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0e],
+        'P' => [0x1e, 0x11, 0x11, 0x1e, 0x10, 0x10, 0x10],
+        'R' => [0x1e, 0x11, 0x11, 0x1e, 0x14, 0x12, 0x11],
+        'S' => [0x0f, 0x10, 0x10, 0x0e, 0x01, 0x01, 0x1e],
+        'T' => [0x1f, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04],
+        'U' => [0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0e],
+        'Y' => [0x11, 0x11, 0x0a, 0x04, 0x04, 0x04, 0x04],
+        _ => return None,
+    })
+}
+
+/// `color` over `pixel`, `alpha` out of 256.
+fn tint(pixel: u32, color: u32, alpha: u32) -> u32 {
+    let mix = |shift: u32| {
+        let (a, b) = ((pixel >> shift) & 0xff, (color >> shift) & 0xff);
+        ((a * (256 - alpha) + b * alpha) >> 8) << shift
+    };
+    mix(16) | mix(8) | mix(0)
+}
+
+/// Draws [`MARK`] half-transparent in the picture's bottom-right corner;
+/// nothing when the picture is too small for it.
+pub fn draw_mark(dst: &mut [u32], dst_w: u32, p: Placement, scale_factor: f64) {
+    let scale = (scale_factor * 2.0).round().clamp(2.0, 8.0) as u32;
+    let letters = MARK.chars().count() as u32;
+    let (pad, margin) = (3 * scale, 8 * scale);
+    let (text_w, text_h) = (letters * 6 * scale - scale, 7 * scale);
+    let (box_w, box_h) = (text_w + 2 * pad, text_h + 2 * pad);
+    if p.width < box_w + 2 * margin || p.height < box_h + 2 * margin || dst_w == 0 {
+        return;
+    }
+    let left = p.x + p.width - margin - box_w;
+    let top = p.y + p.height - margin - box_h;
+    let mut put = |x: u32, y: u32, color: u32, alpha: u32| {
+        if let Some(out) = dst.get_mut(y as usize * dst_w as usize + x as usize) {
+            *out = tint(*out, color, alpha);
+        }
+    };
+    for y in top..top + box_h {
+        for x in left..left + box_w {
+            put(x, y, 0x0000_0000, 96);
+        }
+    }
+    for (i, letter) in MARK.chars().enumerate() {
+        let Some(rows) = glyph(letter) else { continue };
+        let x0 = left + pad + i as u32 * 6 * scale;
+        for (row, bits) in rows.iter().enumerate() {
+            for column in 0..5 {
+                if bits & (0x10 >> column) == 0 {
+                    continue;
+                }
+                for dy in 0..scale {
+                    for dx in 0..scale {
+                        let (x, y) = (
+                            x0 + column * scale + dx,
+                            top + pad + row as u32 * scale + dy,
+                        );
+                        put(x, y, 0x00ff_ffff, 150);
+                    }
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_mark_sits_in_the_corner_and_only_when_it_fits() {
+        let (w, h) = (1280u32, 720u32);
+        let p = Placement::fit(w, h, w, h);
+        let mut pixels = vec![0x0020_4060u32; (w * h) as usize];
+        draw_mark(&mut pixels, w, p, 1.0);
+        let changed: Vec<usize> = (0..pixels.len())
+            .filter(|&i| pixels[i] != 0x0020_4060)
+            .collect();
+        assert!(!changed.is_empty());
+        let (min_x, min_y) = changed.iter().fold((w, h), |(x, y), &i| {
+            (x.min(i as u32 % w), y.min(i as u32 / w))
+        });
+        assert!(
+            min_x > w / 2 && min_y > h / 2,
+            "bottom-right only: {min_x},{min_y}"
+        );
+        // Half-transparent: the picture still shows through.
+        assert!(changed.iter().all(|&i| pixels[i] != 0x00ff_ffff));
+
+        let small = Placement::fit(200, 100, 200, 100);
+        let mut tiny = vec![7u32; 200 * 100];
+        draw_mark(&mut tiny, 200, small, 1.0);
+        assert!(tiny.iter().all(|&p| p == 7), "too small: nothing drawn");
+        assert!(MARK.chars().all(|c| c == ' ' || glyph(c).is_some()));
+    }
 
     #[test]
     fn host_cursor_is_visible_at_edges_and_never_draws_in_letterbox_bars() {

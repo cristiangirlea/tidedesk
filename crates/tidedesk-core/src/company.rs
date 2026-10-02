@@ -293,6 +293,10 @@ impl Meter {
         }
         self.since = now;
         let today = &(self.today)();
+        if self.save {
+            // A host and a viewer on this computer may both be counting.
+            self.usage = load();
+        }
         self.usage.add(today, elapsed.as_secs());
         if self.save
             && let Err(e) = save(&self.usage)
@@ -326,6 +330,9 @@ impl Meter {
         self.since = now;
         if elapsed == 0 {
             return;
+        }
+        if self.save {
+            self.usage = load();
         }
         self.usage.add(&(self.today)(), elapsed);
         if self.save
