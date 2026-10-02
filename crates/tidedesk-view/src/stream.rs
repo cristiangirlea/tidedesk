@@ -36,6 +36,8 @@ pub enum UiEvent {
     Command(Result<crate::control::Command, String>),
     /// This computer is a company computer without a licence: its hours.
     OwnCompany(tidedesk_core::company::Allowance),
+    /// Something for the title to say.
+    Notice(String),
     Disconnected(String),
 }
 

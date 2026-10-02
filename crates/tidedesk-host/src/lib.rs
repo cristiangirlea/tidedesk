@@ -267,6 +267,8 @@ pub fn start(options: &StartOptions) -> Result<Started> {
         audio: AtomicBool::new(config.share_audio && !options.no_audio),
         clipboard: AtomicBool::new(config.allow_clipboard),
         mouse: AtomicBool::new(config.allow_mouse),
+        files: AtomicBool::new(config.allow_files),
+        files_note: Mutex::new(None),
         accepting: AtomicBool::new(true),
         throttle: Mutex::new(auth::Throttle::default()),
         busy: AtomicBool::new(false),

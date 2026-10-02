@@ -34,6 +34,18 @@ use winit::event_loop::{EventLoop, EventLoopProxy};
 use child::ChildLine;
 use stream::{Notify, Picture, UiEvent};
 
+/// Whether sending failed because the host stopped the stream.
+fn stopped(e: &anyhow::Error) -> bool {
+    e.chain().any(|cause| {
+        let write = cause
+            .downcast_ref::<std::io::Error>()
+            .and_then(|io| io.get_ref())
+            .and_then(|inner| inner.downcast_ref::<quinn::WriteError>())
+            .or_else(|| cause.downcast_ref::<quinn::WriteError>());
+        matches!(write, Some(quinn::WriteError::Stopped(_)))
+    })
+}
+
 /// Why this computer cannot connect, or a session ended, when it is a
 /// company computer without a licence whose hours are used.
 pub const OWN_HOURS_USED: &str = "this computer is a company computer without a TideDesk licence, and this month's hours are used";
@@ -473,6 +485,31 @@ fn run(program: &str, argv: Vec<OsString>) -> Result<()> {
         game_boost,
     );
     app.own_company = own_company;
+    if tidedesk_core::net::extras(&conn) {
+        let (files_tx, mut files_rx) = tokio::sync::mpsc::unbounded_channel::<std::path::PathBuf>();
+        app.files = Some(files_tx);
+        let conn = conn.clone();
+        let ui = ui.clone();
+        runtime.spawn(async move {
+            use tidedesk_core::files;
+            // One at a time, below the picture, input and sound.
+            while let Some(path) = files_rx.recv().await {
+                let sent = async {
+                    let mut stream = conn.open_uni().await?;
+                    stream.set_priority(files::PRIORITY)?;
+                    files::send(&mut stream, &path).await?;
+                    stream.finish()?;
+                    anyhow::Ok(())
+                }
+                .await;
+                // A host that refuses the file stops it and says why itself.
+                if let Some(e) = sent.as_ref().err().filter(|e| !stopped(e)) {
+                    let name = path.file_name().unwrap_or_default().to_string_lossy();
+                    ui.notify(UiEvent::Notice(format!("Could not send {name}: {e:#}")));
+                }
+            }
+        });
+    }
     if args.control {
         let conn = conn.clone();
         app.test.path = Some(Box::new(move || {
@@ -513,6 +550,17 @@ fn run(program: &str, argv: Vec<OsString>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use tidedesk_core::nat::signal::DEFAULT_RENDEZVOUS;
+
+    /// A send the host stopped stays quiet: the host says why itself.
+    #[test]
+    fn a_stopped_send_is_told_apart() {
+        let stopped = anyhow::Error::new(std::io::Error::other(quinn::WriteError::Stopped(
+            1u32.into(),
+        )));
+        assert!(super::stopped(&stopped));
+        assert!(super::stopped(&stopped.context("sending a.txt")));
+        assert!(!super::stopped(&anyhow::anyhow!("the disk is full")));
+    }
 
     use super::rendezvous_service;
 

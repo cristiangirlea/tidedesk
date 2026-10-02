@@ -15,6 +15,21 @@ use crate::identity::{self, HostIdentity, ViewerIdentity};
 use crate::nat::SharedSocket;
 
 pub const ALPN: &[u8] = b"tidedesk/1";
+/// Offered first by TideDesk that copies files and chats; both sides fall back
+/// to [`ALPN`] with one that does not, and [`extras`] tells which was agreed.
+pub const ALPN_EXTRAS: &[u8] = b"tidedesk/2";
+
+fn alpn() -> Vec<Vec<u8>> {
+    vec![ALPN_EXTRAS.to_vec(), ALPN.to_vec()]
+}
+
+/// Whether the other side copies files and chats (it agreed on [`ALPN_EXTRAS`]).
+pub fn extras(conn: &quinn::Connection) -> bool {
+    conn.handshake_data()
+        .and_then(|data| data.downcast::<quinn::crypto::rustls::HandshakeData>().ok())
+        .and_then(|data| data.protocol)
+        .is_some_and(|protocol| protocol == ALPN_EXTRAS)
+}
 
 fn transport() -> Arc<quinn::TransportConfig> {
     let mut t = quinn::TransportConfig::default();
@@ -57,7 +72,7 @@ pub fn server_config(id: &HostIdentity) -> Result<quinn::ServerConfig> {
         .with_client_cert_verifier(Arc::new(AnyCertificate(provider())))
         .with_single_cert(vec![id.cert.clone()], id.key.clone_key())
         .context("loading host certificate")?;
-    tls.alpn_protocols = vec![ALPN.to_vec()];
+    tls.alpn_protocols = alpn();
     let mut cfg = quinn::ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(tls)?));
     cfg.transport_config(transport());
     Ok(cfg)
@@ -87,7 +102,7 @@ fn client_config_with(identity: Option<&ViewerIdentity>) -> Result<quinn::Client
             .context("loading the viewer's certificate")?,
         None => builder.with_no_client_auth(),
     };
-    tls.alpn_protocols = vec![ALPN.to_vec()];
+    tls.alpn_protocols = alpn();
     let mut cfg = quinn::ClientConfig::new(Arc::new(QuicClientConfig::try_from(tls)?));
     cfg.transport_config(transport());
     Ok(cfg)
@@ -323,6 +338,50 @@ mod tests {
         }
         let seen = seen.await.unwrap();
         assert_eq!(seen, [Some(viewer_id.fingerprint()), None]);
+    }
+
+    /// Both sides agree on files and chat when both offer them, and fall
+    /// back to what came before when one does not.
+    #[tokio::test]
+    async fn extras_are_agreed_only_when_both_sides_offer_them() {
+        let identity = test_identity("net-extras");
+        let loopback: SocketAddr = "127.0.0.1:0".parse().unwrap();
+        let (host_socket, _) = SharedSocket::bind(loopback).unwrap();
+        let host_addr = host_socket.local_addr().unwrap();
+        let host = server_endpoint_on(host_socket, &identity).unwrap();
+        let seen = tokio::spawn(async move {
+            let mut seen = Vec::new();
+            for _ in 0..2 {
+                let conn = accept_validated(&host).await.unwrap().await.unwrap();
+                seen.push(extras(&conn));
+            }
+            seen
+        });
+        for old in [false, true] {
+            let mut config = client_config_with(None).unwrap();
+            if old {
+                let mut tls = rustls::ClientConfig::builder_with_provider(provider())
+                    .with_protocol_versions(&[&rustls::version::TLS13])
+                    .unwrap()
+                    .dangerous()
+                    .with_custom_certificate_verifier(Arc::new(FingerprintVerifier(provider())))
+                    .with_no_client_auth();
+                tls.alpn_protocols = vec![ALPN.to_vec()];
+                config =
+                    quinn::ClientConfig::new(Arc::new(QuicClientConfig::try_from(tls).unwrap()));
+            }
+            let (socket, _) = SharedSocket::bind(loopback).unwrap();
+            let mut viewer = endpoint_on(socket, None).unwrap();
+            viewer.set_default_client_config(config);
+            let conn = viewer
+                .connect(host_addr, "tidedesk-host")
+                .unwrap()
+                .await
+                .unwrap();
+            assert_eq!(extras(&conn), !old);
+            conn.close(0u32.into(), b"done");
+        }
+        assert_eq!(seen.await.unwrap(), [true, false]);
     }
 
     #[test]
