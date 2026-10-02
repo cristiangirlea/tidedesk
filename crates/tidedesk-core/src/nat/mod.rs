@@ -14,6 +14,7 @@ pub mod punch;
 pub mod signal;
 pub mod socket;
 pub mod stun;
+mod upnp;
 
 pub use agent::{Agent, AgentStatus, PublicStatus, PunchError};
 pub use punch::{Punched, SessionId};

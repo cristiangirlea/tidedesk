@@ -1118,7 +1118,7 @@ impl HostApp {
                     "Ask the router to open TideDesk's port",
                 )
                 .on_hover_text(format!(
-                    "Asks your router (PCP or NAT-PMP) to forward UDP port {} to this \
+                    "Asks your router (PCP, NAT-PMP or UPnP) to forward UDP port {} to this \
                          computer while it is reachable from other networks, so viewers \
                          whose networks block hole punching still get in. Only this port, \
                          and it is closed again when TideDesk stops.",
