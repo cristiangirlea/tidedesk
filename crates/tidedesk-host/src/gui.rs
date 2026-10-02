@@ -86,9 +86,8 @@ pub struct HostApp {
     declaring: bool,
     /// A chat message being written.
     chat_draft: String,
-    /// What the session history is filtered by, and what its export did.
-    history_search: String,
-    history_note: Option<String>,
+    /// The History tab: its search, export and page.
+    history: HistoryView,
 }
 
 pub(crate) struct Address {
@@ -181,22 +180,49 @@ fn cached_history() -> Arc<tidedesk_core::history::History> {
 
 /// Who connected to this computer: the last 30 days for everyone, the full
 /// history with search and export with a licence that includes it.
-pub fn session_history(ui: &mut egui::Ui, search: &mut String, note: &mut Option<String>) {
+#[derive(Debug, Default)]
+pub struct HistoryView {
+    search: String,
+    /// What the last export said.
+    note: Option<String>,
+    /// The page shown, from 0.
+    page: usize,
+}
+
+impl HistoryView {
+    pub fn ui(&mut self, ui: &mut egui::Ui) {
+        let now = crate::session_log::secs(std::time::SystemTime::now());
+        history_page(ui, self, &cached_history(), crate::session_log::full(), now);
+    }
+}
+
+/// The history page for `past` at `now` (seconds since 1970); `full` with a
+/// licence that includes the whole history.
+fn history_page(
+    ui: &mut egui::Ui,
+    view: &mut HistoryView,
+    past: &tidedesk_core::history::History,
+    full: bool,
+    now: u64,
+) {
     use tidedesk_core::history;
+    let HistoryView { search, note, page } = view;
     ui.label(RichText::new("Session history").strong());
-    let full = crate::session_log::full();
-    let past = cached_history();
     if past.changed {
         ui.colored_label(
             ERROR_RED,
             "The history was changed outside TideDesk: sessions may be missing or altered.",
         );
     }
-    let now = crate::session_log::secs(std::time::SystemTime::now());
     let (mut shown, older) = history::shown(&past.records, now, full);
     if full {
         ui.horizontal(|ui| {
-            ui.add(egui::TextEdit::singleline(search).hint_text("Search"));
+            if ui
+                .add(egui::TextEdit::singleline(search).hint_text("Search"))
+                .changed()
+            {
+                *page = 0;
+            }
             if ui.button("Export CSV").clicked() {
                 *note = Some(export_history(&past.records));
             }
@@ -218,39 +244,79 @@ pub fn session_history(ui: &mut egui::Ui, search: &mut String, note: &mut Option
             history::FREE_DAYS
         ));
     }
+    let this_page = history::page(&shown, *page, history::PER_PAGE);
+    *page = this_page.number;
     if shown.is_empty() {
-        ui.small("No sessions yet.");
+        ui.small(if full && !search.trim().is_empty() {
+            "No sessions match."
+        } else {
+            "No sessions yet."
+        });
     } else {
-        egui::ScrollArea::vertical()
+        let mut turned = false;
+        ui.horizontal(|ui| {
+            if ui
+                .add_enabled(this_page.number > 0, egui::Button::new("Previous"))
+                .clicked()
+            {
+                *page = this_page.number - 1;
+                turned = true;
+            }
+            let sessions = match shown.len() {
+                1 => "1 session".to_string(),
+                n => format!("{n} sessions"),
+            };
+            ui.label(format!(
+                "Page {} of {} ({sessions})",
+                this_page.number + 1,
+                this_page.pages
+            ));
+            if ui
+                .add_enabled(
+                    this_page.number + 1 < this_page.pages,
+                    egui::Button::new("Next"),
+                )
+                .clicked()
+            {
+                *page = this_page.number + 1;
+                turned = true;
+            }
+        });
+        let mut list = egui::ScrollArea::vertical()
             .id_salt("history")
-            .max_height(220.0)
-            .show(ui, |ui| {
-                egui::Grid::new("history-grid")
-                    .striped(true)
-                    .spacing([10.0, 4.0])
-                    .show(ui, |ui| {
-                        for title in [
-                            "Started (UTC)",
-                            "Min",
-                            "Viewer",
-                            "From",
-                            "Let in by",
-                            "Ended",
-                        ] {
-                            ui.label(RichText::new(title).small().strong());
-                        }
+            .auto_shrink([false, true])
+            .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysVisible)
+            .max_height((ui.available_height() - 40.0).max(160.0));
+        if turned {
+            list = list.vertical_scroll_offset(0.0);
+        }
+        list.show(ui, |ui| {
+            egui::Grid::new("history-grid")
+                .striped(true)
+                .spacing([10.0, 4.0])
+                .show(ui, |ui| {
+                    for title in [
+                        "Started (UTC)",
+                        "Min",
+                        "Viewer",
+                        "From",
+                        "Let in by",
+                        "Ended",
+                    ] {
+                        ui.label(RichText::new(title).small().strong());
+                    }
+                    ui.end_row();
+                    for record in &this_page.records {
+                        ui.small(tidedesk_core::dates::time(record.started));
+                        ui.small(record.minutes().to_string());
+                        ui.small(&record.viewer);
+                        ui.small(&record.address);
+                        ui.small(&record.admitted_by);
+                        ui.small(&record.ended_because);
                         ui.end_row();
-                        for record in shown.iter().rev() {
-                            ui.small(tidedesk_core::dates::time(record.started));
-                            ui.small(record.minutes().to_string());
-                            ui.small(&record.viewer);
-                            ui.small(&record.address);
-                            ui.small(&record.admitted_by);
-                            ui.small(&record.ended_because);
-                            ui.end_row();
-                        }
-                    });
-            });
+                    }
+                });
+        });
     }
     if older > 0 {
         ui.small(format!(
@@ -326,8 +392,7 @@ impl HostApp {
             autostart: platform::autostart_enabled(),
             declaring: false,
             chat_draft: String::new(),
-            history_search: String::new(),
-            history_note: None,
+            history: HistoryView::default(),
             tray: None,
             window_hooked: false,
         }
@@ -1084,9 +1149,7 @@ impl egui_software_backend::App for HostApp {
             ui.separator();
             egui::ScrollArea::vertical().show(ui, |ui| match self.tab {
                 Tab::Status => self.status_tab(ui),
-                Tab::History => {
-                    session_history(ui, &mut self.history_search, &mut self.history_note)
-                }
+                Tab::History => self.history.ui(ui),
                 Tab::Settings => self.settings_tab(ui),
             });
         });
@@ -1105,6 +1168,116 @@ fn display_label(d: &DisplayInfo) -> String {
 
 #[cfg(test)]
 mod tests {
+    use egui::accesskit::{Node, Role};
+
+    /// What a widget says: a button's label, a label's text.
+    fn text(node: &Node) -> &str {
+        node.label().or(node.value()).unwrap_or_default()
+    }
+
+    /// Pressing and releasing the mouse on the widget that says `wanted`,
+    /// one frame each.
+    fn click(nodes: &[Node], wanted: impl Fn(&Node) -> bool) -> [Vec<egui::Event>; 2] {
+        let node = nodes
+            .iter()
+            .find(|n| wanted(n))
+            .expect("the widget is shown");
+        assert!(!node.is_disabled(), "{} can be used", text(node));
+        let bounds = node.bounds().expect("the widget has a place");
+        let pos = egui::pos2(
+            ((bounds.x0 + bounds.x1) / 2.0) as f32,
+            ((bounds.y0 + bounds.y1) / 2.0) as f32,
+        );
+        let button = |pressed| egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        [
+            vec![egui::Event::PointerMoved(pos), button(true)],
+            vec![button(false)],
+        ]
+    }
+
+    /// The history page drawn without a screen: 25 sessions a page, newest
+    /// first, turned with Next and Previous; a new search starts again at
+    /// the first page.
+    #[test]
+    fn the_history_comes_in_pages_that_turn() {
+        use tidedesk_core::history::{History, Record};
+        const NOW: u64 = 1_790_000_000;
+        let past = History {
+            records: (0..60u64)
+                .map(|i| Record {
+                    started: NOW - (60 - i) * 3600,
+                    ended: NOW - (60 - i) * 3600 + 600,
+                    viewer: format!("Viewer {i}"),
+                    fingerprint: String::new(),
+                    address: "192.168.1.50:51000".into(),
+                    admitted_by: "access code".into(),
+                    ended_because: "the viewer disconnected".into(),
+                })
+                .collect(),
+            changed: false,
+        };
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let mut view = super::HistoryView::default();
+        let mut frame = |events: Vec<egui::Event>| -> Vec<Node> {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1000.0, 800.0),
+                )),
+                events,
+                ..Default::default()
+            };
+            let output = ctx.run_ui(input, |ui| {
+                super::history_page(ui, &mut view, &past, true, NOW)
+            });
+            let tree = output.platform_output.accesskit_update.expect("a tree");
+            tree.nodes.into_iter().map(|(_, node)| node).collect()
+        };
+        let shows = |nodes: &[Node], wanted: &str| nodes.iter().any(|n| text(n) == wanted);
+        let button =
+            |label: &'static str| move |n: &Node| n.role() == Role::Button && text(n) == label;
+        let press = |nodes: &[Node],
+                     wanted: &dyn Fn(&Node) -> bool,
+                     frame: &mut dyn FnMut(Vec<egui::Event>) -> Vec<Node>| {
+            let [down, up] = click(nodes, wanted);
+            frame(down);
+            frame(up);
+            // What the click changed shows in the frame after it.
+            frame(Vec::new())
+        };
+
+        frame(Vec::new());
+        let nodes = frame(Vec::new());
+        assert!(shows(&nodes, "Page 1 of 3 (60 sessions)"));
+        assert!(shows(&nodes, "Viewer 59") && shows(&nodes, "Viewer 35"));
+        assert!(!shows(&nodes, "Viewer 34"), "25 to a page");
+        let previous = nodes.iter().find(|n| button("Previous")(n)).unwrap();
+        assert!(previous.is_disabled(), "nothing before the first page");
+
+        let nodes = press(&nodes, &button("Next"), &mut frame);
+        let nodes = press(&nodes, &button("Next"), &mut frame);
+        assert!(shows(&nodes, "Page 3 of 3 (60 sessions)"));
+        assert!(shows(&nodes, "Viewer 9") && shows(&nodes, "Viewer 0"));
+        assert!(!shows(&nodes, "Viewer 10"));
+        let next = nodes.iter().find(|n| button("Next")(n)).unwrap();
+        assert!(next.is_disabled(), "nothing after the last page");
+
+        let nodes = press(&nodes, &button("Previous"), &mut frame);
+        assert!(shows(&nodes, "Page 2 of 3 (60 sessions)"));
+        assert!(shows(&nodes, "Viewer 34") && shows(&nodes, "Viewer 10"));
+
+        // Typing a search goes back to the first page.
+        press(&nodes, &|n: &Node| n.role() == Role::TextInput, &mut frame);
+        frame(vec![egui::Event::Text("Viewer".into())]);
+        assert!(shows(&frame(Vec::new()), "Page 1 of 3 (60 sessions)"));
+    }
+
     #[test]
     fn a_blocked_address_is_named_with_its_wait() {
         use std::time::Duration;
