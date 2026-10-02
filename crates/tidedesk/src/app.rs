@@ -328,6 +328,9 @@ impl Shell {
                 _ => ui.colored_label(ui.visuals().warn_fg_color, line),
             };
         }
+        if let Some(declared) = tidedesk_core::company::declaration() {
+            ui.small(format!("This computer: {}", declared.describe()));
+        }
         ui.small(
             "Free for personal, non-commercial use under the TideDesk Personal Use Source \
              License 1.0. Business use needs separate written permission.",
