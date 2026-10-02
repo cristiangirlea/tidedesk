@@ -618,6 +618,19 @@ impl HostApp {
         ui.checkbox(&mut cfg.allow_mouse, "Allow viewer mouse control");
         ui.small("Applies immediately. Clipboard also needs to be enabled in Viewer Settings.");
         ui.add_space(8.0);
+        if crate::session_log::on()
+            && let Ok(log) = crate::session_log::path()
+        {
+            ui.label(RichText::new("Session log").strong());
+            ui.small(format!(
+                "Every session is recorded in {}: who, from where, when, and why it ended.",
+                log.display()
+            ));
+            if log.exists() && ui.button("Open the session log").clicked() {
+                platform::open_link(&log.to_string_lossy());
+            }
+            ui.add_space(8.0);
+        }
 
         ui.label(RichText::new("Window").strong());
         ui.checkbox(&mut cfg.show_in_taskbar, "Show in the taskbar")

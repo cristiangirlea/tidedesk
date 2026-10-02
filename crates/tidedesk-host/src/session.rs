@@ -13,6 +13,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::time::timeout;
 
 use crate::input::Injector;
+use crate::session_log;
 use crate::video::{self, VideoControl, VideoSettings};
 use tidedesk_core::clipboard::{ClipboardBridge, valid_text};
 use tidedesk_core::protocol::InputEvent;
@@ -265,6 +266,20 @@ pub async fn run(conn: quinn::Connection, state: Arc<HostState>) -> Result<()> {
         return reject(&mut send, &conn, RejectReason::Busy).await;
     }
     let _session = SessionGuard(&state);
+    let admitted_by = match proof {
+        _ if trusted => "trusted viewer",
+        Knows::Code(_) => "access code",
+        Knows::Password(_) => "saved password",
+    };
+    let mut record = session_log::Recorder(session_log::on().then(|| session_log::Entry {
+        started: std::time::SystemTime::now(),
+        ended: std::time::SystemTime::now(),
+        viewer: client_name.clone(),
+        fingerprint: fingerprint.clone(),
+        address: remote.to_string(),
+        admitted_by,
+        ended_because: "the session could not start".into(),
+    }));
     *state.viewer.lock().unwrap() = Some(ViewerInfo {
         name: client_name.clone(),
         fingerprint,
@@ -461,6 +476,7 @@ pub async fn run(conn: quinn::Connection, state: Arc<HostState>) -> Result<()> {
         anyhow::Ok(())
     };
 
+    record.ended_because("TideDesk stopped during the session".into());
     let result = tokio::select! {
         r = video_task => r.context("video stream"),
         r = audio_task => r.context("audio"),
@@ -468,6 +484,10 @@ pub async fn run(conn: quinn::Connection, state: Arc<HostState>) -> Result<()> {
         r = reader_task => r.context("control reader"),
         e = conn.closed() => { tracing::debug!("connection closed: {e}"); Ok(()) }
     };
+    record.ended_because(match &result {
+        Ok(()) => "the connection closed".into(),
+        Err(e) => format!("{e:#}"),
+    });
     drop(stop_video);
     injector.release_all();
     let _ = send.shutdown().await;

@@ -53,6 +53,18 @@ pub fn today() -> String {
     format(days)
 }
 
+/// `YYYY-MM-DD HH:MM:SS` in UTC for seconds since 1970-01-01.
+pub fn time(secs: u64) -> String {
+    let (days, secs) = (secs / 86_400, secs % 86_400);
+    format!(
+        "{} {:02}:{:02}:{:02}",
+        format(days as i64),
+        secs / 3600,
+        secs / 60 % 60,
+        secs % 60
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -74,5 +86,10 @@ mod tests {
             assert_eq!(parse(bad), None, "{bad}");
         }
         assert!(today().as_str() >= "2026-01-01");
+        assert_eq!(
+            time(20_728 * 86_400 + 8 * 3600 + 45 * 60 + 2),
+            "2026-10-02 08:45:02"
+        );
+        assert_eq!(time(0), "1970-01-01 00:00:00");
     }
 }

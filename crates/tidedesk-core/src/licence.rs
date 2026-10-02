@@ -91,6 +91,17 @@ impl Licence {
             Standing::Expired
         }
     }
+
+    /// Whether this licence turns `feature` on, on `today`: listed, and not
+    /// past its grace.
+    pub fn allows(&self, feature: &str, today: &str) -> bool {
+        self.standing(today) != Standing::Expired && self.features.iter().any(|f| f == feature)
+    }
+}
+
+/// Whether the licence this computer holds turns `feature` on today.
+pub fn allows(feature: &str) -> bool {
+    load().is_some_and(|l| l.allows(feature, &crate::dates::today()))
 }
 
 /// The signed lines and the signature of a licence block.
@@ -187,9 +198,15 @@ pub fn path() -> Result<PathBuf> {
 
 /// The licence this computer holds, if one is there and checks out.
 pub fn load() -> Option<Licence> {
+    static WARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     let text = std::fs::read_to_string(path().ok()?).ok()?;
     read(&text)
-        .inspect_err(|e| tracing::warn!("the saved licence is not used: {e:#}"))
+        .inspect_err(|e| {
+            // Once: the licence is looked up again every few seconds.
+            if !WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                tracing::warn!("the saved licence is not used: {e:#}");
+            }
+        })
         .ok()
 }
 
@@ -354,5 +371,14 @@ mod tests {
             ..licence
         };
         assert_eq!(forever.standing("2099-01-01"), Standing::Active);
+    }
+
+    #[test]
+    fn a_licence_allows_its_features_until_its_grace_ends() {
+        let licence = licence();
+        assert!(licence.allows("work", "2027-10-02"));
+        assert!(licence.allows("work", "2027-10-16"), "in grace");
+        assert!(!licence.allows("work", "2027-10-17"), "expired");
+        assert!(!licence.allows("session-log", "2027-10-02"), "not listed");
     }
 }
