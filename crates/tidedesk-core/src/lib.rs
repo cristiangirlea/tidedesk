@@ -19,6 +19,7 @@ pub mod nat;
 pub mod net;
 pub mod password;
 pub mod paths;
+pub mod policy;
 pub mod protocol;
 pub mod secret;
 pub mod sharing;
