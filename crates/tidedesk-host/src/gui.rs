@@ -760,7 +760,9 @@ impl HostApp {
 
         ui.horizontal_wrapped(|ui| {
             let mut accept = accepting;
-            if ui.checkbox(&mut accept, "Accept new connections").changed() {
+            let managed = tidedesk_core::policy::current();
+            let kept_on = (!crate::may_stop_sharing(&managed)).then_some(true);
+            if locked_checkbox(ui, &mut accept, kept_on, "Accept new connections").changed() {
                 state.accepting.store(accept, Ordering::SeqCst);
             }
             let mut after_session = state.new_code_after_session.load(Ordering::SeqCst);

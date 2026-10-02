@@ -161,6 +161,13 @@ pub(crate) fn maps_port(config: &config::HostConfig, managed: &Policy) -> bool {
             .is_some()
 }
 
+/// Whether the person at this computer may stop sharing or quit: unless the
+/// administrator said no (`AllowStopSharing = 0`). Sessions stay visible
+/// and endable either way: the connected notice always shows them.
+pub fn may_stop_sharing(managed: &Policy) -> bool {
+    Policy::bool_or(managed.stop_sharing, true)
+}
+
 /// The service to register with now, as [`rendezvous_choice`] with the
 /// administrator's settings in force.
 pub(crate) fn rendezvous_now(
@@ -686,5 +693,16 @@ mod tests {
             maps_port(&unregistered, &forced),
             "the administrator's service registers"
         );
+    }
+
+    #[test]
+    fn the_administrator_may_keep_sharing_on() {
+        use super::may_stop_sharing;
+        assert!(may_stop_sharing(&Policy::default()));
+        let kept_on = Policy {
+            stop_sharing: Some(false),
+            ..Policy::default()
+        };
+        assert!(!may_stop_sharing(&kept_on));
     }
 }
