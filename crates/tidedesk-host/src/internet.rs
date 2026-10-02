@@ -8,7 +8,7 @@ use std::time::{Duration, Instant};
 
 use tidedesk_core::DEFAULT_PORT;
 use tidedesk_core::nat::punch::KEEPALIVE_MAX;
-use tidedesk_core::nat::signal::RendezvousStatus;
+use tidedesk_core::nat::signal::{DEFAULT_RENDEZVOUS, RendezvousStatus, service_name};
 use tidedesk_core::nat::{Agent, NatKind, NotPublic, PunchError, check_public};
 use tokio::runtime::Handle;
 
@@ -64,26 +64,33 @@ impl ExpectedViewer {
     }
 }
 
-/// The line under the device ID in the host window.
-pub fn describe_rendezvous(status: &RendezvousStatus) -> String {
+/// The line under the device ID in the host window; `service` is the one it
+/// registers with.
+pub fn describe_rendezvous(status: &RendezvousStatus, service: Option<&str>) -> String {
+    let own = service.is_none_or(|s| service_name(s) == service_name(DEFAULT_RENDEZVOUS));
+    let name = service.map_or_else(|| "the connection service".into(), service_name);
     match status {
         RendezvousStatus::Off => {
-            "Turned off under Settings, Internet: viewers on other networks cannot connect \
-             with this ID."
+            "Turned off under Settings, Internet: viewers on other networks cannot connect              with this ID."
                 .into()
         }
-        RendezvousStatus::Connecting => "Connecting to TideDesk's service…".into(),
+        RendezvousStatus::Connecting => format!("Connecting to {name}…"),
         RendezvousStatus::Registered {
             nat: NatKind::Symmetric,
             ..
-        } => "Registered, but this network uses a symmetric NAT: viewers on other networks \
-              cannot reach it directly. A VPN or port forwarding still works."
+        } => "Registered, but this network uses a symmetric NAT: viewers on other networks               cannot reach it directly. A VPN or port forwarding still works."
             .into(),
-        RendezvousStatus::Registered { .. } => {
+        RendezvousStatus::Registered { .. } if own => {
             "Viewers on other networks can connect with this ID.".into()
         }
-        RendezvousStatus::Unreachable(reason) => {
+        RendezvousStatus::Registered { .. } => {
+            format!("Viewers on other networks can connect with this ID through {name}.")
+        }
+        RendezvousStatus::Unreachable(reason) if own => {
             format!("Connection service unavailable: {reason}")
+        }
+        RendezvousStatus::Unreachable(reason) => {
+            format!("Connection service {name} unavailable: {reason}")
         }
     }
 }
@@ -248,20 +255,55 @@ mod tests {
     #[test]
     fn rendezvous_status_lines() {
         let public = addr("203.0.113.5:40000");
-        let off = describe_rendezvous(&RendezvousStatus::Off);
+        let own = Some(DEFAULT_RENDEZVOUS);
+        let off = describe_rendezvous(&RendezvousStatus::Off, None);
         assert!(off.contains("Settings"), "{off}");
-        let ready = describe_rendezvous(&RendezvousStatus::Registered {
+        let registered = RendezvousStatus::Registered {
             public,
             nat: NatKind::EndpointIndependent,
-        });
-        assert!(ready.contains("can connect with this ID"), "{ready}");
-        let symmetric = describe_rendezvous(&RendezvousStatus::Registered {
-            public,
-            nat: NatKind::Symmetric,
-        });
+        };
+        assert_eq!(
+            describe_rendezvous(&registered, own),
+            "Viewers on other networks can connect with this ID."
+        );
+        let symmetric = describe_rendezvous(
+            &RendezvousStatus::Registered {
+                public,
+                nat: NatKind::Symmetric,
+            },
+            own,
+        );
         assert!(symmetric.contains("symmetric NAT"), "{symmetric}");
-        let down = describe_rendezvous(&RendezvousStatus::Unreachable("no answer".into()));
-        assert!(down.contains("no answer"), "{down}");
+        let down = RendezvousStatus::Unreachable("no answer".into());
+        assert_eq!(
+            describe_rendezvous(&down, own),
+            "Connection service unavailable: no answer"
+        );
+        assert_eq!(
+            describe_rendezvous(&RendezvousStatus::Connecting, own),
+            "Connecting to TideDesk's connection service…"
+        );
+    }
+
+    #[test]
+    fn another_service_is_named_in_the_status_lines() {
+        let other = Some("tidedesk.example.com:47900");
+        assert_eq!(
+            describe_rendezvous(&RendezvousStatus::Connecting, other),
+            "Connecting to tidedesk.example.com…"
+        );
+        let registered = RendezvousStatus::Registered {
+            public: addr("203.0.113.5:40000"),
+            nat: NatKind::EndpointIndependent,
+        };
+        assert_eq!(
+            describe_rendezvous(&registered, other),
+            "Viewers on other networks can connect with this ID through tidedesk.example.com."
+        );
+        assert_eq!(
+            describe_rendezvous(&RendezvousStatus::Unreachable("no answer".into()), other),
+            "Connection service tidedesk.example.com unavailable: no answer"
+        );
     }
 
     #[test]
