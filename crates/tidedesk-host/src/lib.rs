@@ -9,6 +9,7 @@ pub mod gui;
 mod icon;
 mod input;
 mod internet;
+pub mod notice;
 mod platform;
 pub mod saved_password;
 pub mod session;
@@ -367,6 +368,8 @@ pub fn start(options: &StartOptions) -> Result<Started> {
         }
     });
     runtime.spawn(accept_loop(endpoint, state.clone()));
+    // Every session shows on screen, whatever else is set.
+    notice::start(state.clone());
 
     let info = gui::HostInfo {
         state,
