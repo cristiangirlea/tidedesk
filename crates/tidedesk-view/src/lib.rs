@@ -34,16 +34,54 @@ use winit::event_loop::{EventLoop, EventLoopProxy};
 use child::ChildLine;
 use stream::{Notify, Picture, UiEvent};
 
-/// Whether sending failed because the host stopped the stream.
-fn stopped(e: &anyhow::Error) -> bool {
-    e.chain().any(|cause| {
-        let write = cause
-            .downcast_ref::<std::io::Error>()
-            .and_then(|io| io.get_ref())
-            .and_then(|inner| inner.downcast_ref::<quinn::WriteError>())
-            .or_else(|| cause.downcast_ref::<quinn::WriteError>());
-        matches!(write, Some(quinn::WriteError::Stopped(_)))
-    })
+/// Files the host sends, each on its own stream, saved in Downloads\TideDesk
+/// unless Viewer Settings refuse them; the host hears where each went.
+async fn receive_files(
+    conn: quinn::Connection,
+    ui: Arc<dyn Notify>,
+    control: tokio::sync::mpsc::UnboundedSender<tidedesk_core::protocol::ClientMessage>,
+) {
+    use tidedesk_core::files;
+    use tidedesk_core::protocol::ClientMessage;
+    while let Ok(mut stream) = conn.accept_uni().await {
+        let (ui, control) = (ui.clone(), control.clone());
+        tokio::spawn(async move {
+            let Ok(header) = files::read_header(&mut stream).await else {
+                return;
+            };
+            let allowed = settings::ViewerSettings::load().map_or(true, |s| s.allow_files);
+            let saved = if allowed {
+                match files::downloads() {
+                    Ok(dir) => files::save(&mut stream, &header, &dir).await,
+                    Err(e) => Err(e),
+                }
+            } else {
+                let _ = stream.stop(1u32.into());
+                Err(anyhow!("the viewer does not accept files"))
+            };
+            let reply = match saved {
+                Ok(path) => {
+                    let name = path
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .into_owned();
+                    ui.notify(UiEvent::Notice(format!(
+                        "Received {name} from the host, in Downloads\\TideDesk"
+                    )));
+                    ClientMessage::FileSaved { name, error: None }
+                }
+                Err(e) => {
+                    tracing::warn!("a file from the host was not saved: {e:#}");
+                    ClientMessage::FileSaved {
+                        name: header.name,
+                        error: Some(format!("{e:#}")),
+                    }
+                }
+            };
+            let _ = control.send(reply);
+        });
+    }
 }
 
 /// Why this computer cannot connect, or a session ended, when it is a
@@ -436,6 +474,10 @@ fn run(program: &str, argv: Vec<OsString>) -> Result<()> {
                     .accept_uni()
                     .await
                     .context("waiting for video stream")?;
+                // The video stream comes first; any after it carry files.
+                if tidedesk_core::net::extras(&conn) {
+                    tokio::spawn(receive_files(conn.clone(), ui.clone(), control_tx.clone()));
+                }
                 stream::video_loop(stream, picture, control_tx, ui.clone(), stats, game_boost).await
             };
             let audio = async {
@@ -503,7 +545,7 @@ fn run(program: &str, argv: Vec<OsString>) -> Result<()> {
                 }
                 .await;
                 // A host that refuses the file stops it and says why itself.
-                if let Some(e) = sent.as_ref().err().filter(|e| !stopped(e)) {
+                if let Some(e) = sent.as_ref().err().filter(|e| !files::stopped(e)) {
                     let name = path.file_name().unwrap_or_default().to_string_lossy();
                     ui.notify(UiEvent::Notice(format!("Could not send {name}: {e:#}")));
                 }
@@ -550,17 +592,6 @@ fn run(program: &str, argv: Vec<OsString>) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use tidedesk_core::nat::signal::DEFAULT_RENDEZVOUS;
-
-    /// A send the host stopped stays quiet: the host says why itself.
-    #[test]
-    fn a_stopped_send_is_told_apart() {
-        let stopped = anyhow::Error::new(std::io::Error::other(quinn::WriteError::Stopped(
-            1u32.into(),
-        )));
-        assert!(super::stopped(&stopped));
-        assert!(super::stopped(&stopped.context("sending a.txt")));
-        assert!(!super::stopped(&anyhow::anyhow!("the disk is full")));
-    }
 
     use super::rendezvous_service;
 

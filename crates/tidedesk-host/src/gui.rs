@@ -421,6 +421,23 @@ impl HostApp {
                 }
             });
         }
+        if viewer.as_ref().is_some_and(|v| v.files)
+            && ui
+                .button("Send files to the viewer...")
+                .on_hover_text("They are saved in Downloads\\TideDesk on the viewer's computer.")
+                .clicked()
+        {
+            // To this session only: if it ends while the picker is open,
+            // nothing goes to whoever connects next.
+            let outgoing = state.outgoing.lock().unwrap().clone();
+            platform::pick_files("Send files to the viewer", move |paths| {
+                if let Some(outgoing) = outgoing {
+                    for path in paths {
+                        let _ = outgoing.send(path);
+                    }
+                }
+            });
+        }
         if let Some(note) = state.files_note.lock().unwrap().as_ref() {
             ui.small(note);
         }

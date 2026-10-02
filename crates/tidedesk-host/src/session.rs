@@ -29,6 +29,8 @@ pub struct ViewerInfo {
     pub fingerprint: Option<String>,
     pub address: SocketAddr,
     pub connection: quinn::Connection,
+    /// It copies files ([`net::extras`]).
+    pub files: bool,
 }
 
 /// Registers with `service` for `code`.
@@ -59,8 +61,10 @@ pub struct HostState {
     pub mouse: AtomicBool,
     /// Save files the viewer sends.
     pub files: AtomicBool,
-    /// The last file received, for the window to say.
+    /// The last file received or sent, for the window to say.
     pub files_note: Mutex<Option<String>>,
+    /// Files to send to the viewer, while one that copies files is connected.
+    pub outgoing: Mutex<Option<tokio::sync::mpsc::UnboundedSender<std::path::PathBuf>>>,
     pub accepting: AtomicBool,
     pub throttle: Mutex<Throttle>,
     pub busy: AtomicBool,
@@ -112,6 +116,7 @@ struct SessionGuard<'a>(&'a HostState);
 impl Drop for SessionGuard<'_> {
     fn drop(&mut self) {
         *self.0.viewer.lock().unwrap() = None;
+        *self.0.outgoing.lock().unwrap() = None;
         self.0.busy.store(false, Ordering::SeqCst);
         if self.0.new_code_after_session.load(Ordering::SeqCst)
             && let Err(e) = self.0.renew_code(true)
@@ -296,6 +301,7 @@ pub async fn run(conn: quinn::Connection, state: Arc<HostState>) -> Result<()> {
         fingerprint,
         address: remote,
         connection: conn.clone(),
+        files: net::extras(&conn),
     });
     state.changed();
     let how = if trusted { " (trusted)" } else { "" };
@@ -338,6 +344,18 @@ pub async fn run(conn: quinn::Connection, state: Arc<HostState>) -> Result<()> {
     }
     let mut meter = company.map(|told| company::Meter::new(company::load(), told, Instant::now()));
     let company_over = AtomicBool::new(false);
+
+    // Files the host picked for the viewer, one at a time.
+    let (outgoing_tx, mut outgoing_rx) = tokio::sync::mpsc::unbounded_channel();
+    if net::extras(&conn) {
+        *state.outgoing.lock().unwrap() = Some(outgoing_tx);
+    }
+    let send_files_task = async {
+        while let Some(path) = outgoing_rx.recv().await {
+            send_file(&conn, &path, &state).await;
+        }
+        std::future::pending::<Result<()>>().await
+    };
 
     // Files from a viewer that copies them, each on its own stream.
     let (saved_tx, mut saved_rx) = tokio::sync::mpsc::unbounded_channel::<ServerMessage>();
@@ -523,6 +541,13 @@ pub async fn run(conn: quinn::Connection, state: Arc<HostState>) -> Result<()> {
                     bail!("duplicate Hello")
                 }
                 ClientMessage::PasswordProof { .. } => bail!("password proof after the handshake"),
+                ClientMessage::FileSaved { name, error } => {
+                    *state.files_note.lock().unwrap() = Some(match error {
+                        None => format!("The viewer saved {name} in Downloads\\TideDesk."),
+                        Some(why) => format!("The viewer did not save {name}: {why}"),
+                    });
+                    state.changed();
+                }
             }
         }
         anyhow::Ok(())
@@ -535,6 +560,7 @@ pub async fn run(conn: quinn::Connection, state: Arc<HostState>) -> Result<()> {
         r = control_task => r.context("control stream"),
         r = reader_task => r.context("control reader"),
         r = files_task => r.context("files"),
+        r = send_files_task => r.context("sending files"),
         e = conn.closed() => { tracing::debug!("connection closed: {e}"); Ok(()) }
     };
     record.ended_because(match &result {
@@ -552,6 +578,33 @@ pub async fn run(conn: quinn::Connection, state: Arc<HostState>) -> Result<()> {
     conn.close(0u32.into(), reason);
     tracing::info!("viewer \"{client_name}\" disconnected");
     result
+}
+
+/// Sends one file the host picked to the viewer; the viewer says where it
+/// went (`ClientMessage::FileSaved`).
+async fn send_file(conn: &quinn::Connection, path: &std::path::Path, state: &HostState) {
+    use tidedesk_core::files;
+    let name = path
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
+    *state.files_note.lock().unwrap() = Some(format!("Sending {name} to the viewer..."));
+    state.changed();
+    let sent = async {
+        let mut stream = conn.open_uni().await?;
+        stream.set_priority(files::PRIORITY)?;
+        files::send(&mut stream, path).await?;
+        stream.finish()?;
+        anyhow::Ok(())
+    }
+    .await;
+    // A viewer that refused the file stopped it and says why itself.
+    if let Some(e) = sent.as_ref().err().filter(|e| !files::stopped(e)) {
+        tracing::warn!("could not send {name} to the viewer: {e:#}");
+        *state.files_note.lock().unwrap() = Some(format!("Could not send {name}: {e:#}"));
+        state.changed();
+    }
 }
 
 /// Saves one file from the viewer in Downloads\TideDesk, and tells the
