@@ -17,6 +17,7 @@ postcard.workspace = true
 quinn.workspace = true
 rcgen.workspace = true
 ring.workspace = true
+tidedesk-signed.workspace = true
 rustls.workspace = true
 serde.workspace = true
 spake2.workspace = true
@@ -34,4 +35,5 @@ features = [
     "Win32_NetworkManagement_NetManagement",
     "Win32_Networking_WinSock",
     "Win32_Security_Cryptography",
+    "Win32_System_Registry",
 ]

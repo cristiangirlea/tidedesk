@@ -3741,6 +3741,7 @@ dependencies = [
  "serde",
  "spake2",
  "tidedesk-rendezvous-proto",
+ "tidedesk-signed",
  "tokio",
  "toml 1.1.6+spec-1.1.0",
  "tracing",
@@ -3781,6 +3782,16 @@ dependencies = [
  "rcgen",
  "ring",
  "serde",
+]
+
+[[package]]
+name = "tidedesk-signed"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "ring",
+ "serde",
+ "toml 1.1.6+spec-1.1.0",
 ]
 
 [[package]]

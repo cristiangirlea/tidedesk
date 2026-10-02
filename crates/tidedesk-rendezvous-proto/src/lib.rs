@@ -174,6 +174,11 @@ pub enum ToServer {
         nonce: Nonce,
         challenge: Challenge,
     },
+    /// A message for one service's own purposes, outside this format: a
+    /// service built on the same core may define `kind`s for itself. A
+    /// service that knows no such kind drops it unanswered, as it drops any
+    /// message it cannot read, so a client must expect no answer.
+    Extension { kind: u16, body: Vec<u8> },
 }
 
 impl ToServer {
@@ -228,6 +233,12 @@ pub enum FromServer {
         session: Session,
         peer: SocketAddr,
         candidates: Vec<u8>,
+    },
+    /// An answer to a [`ToServer::Extension`], of a kind that service
+    /// defines. A client ignores kinds it does not know.
+    Extension {
+        kind: u16,
+        body: Vec<u8>,
     },
 }
 
@@ -588,6 +599,19 @@ mod tests {
             candidates: vec![3],
         };
         assert_eq!(variant(encode(&introduced_with_candidates)), 6);
+
+        let extension = ToServer::Extension {
+            kind: 1,
+            body: vec![2],
+        };
+        assert_eq!(variant(encode(&extension)), 6);
+        assert_eq!(decode::<ToServer>(&encode(&extension)), Some(extension));
+        let answer = FromServer::Extension {
+            kind: 1,
+            body: vec![2],
+        };
+        assert_eq!(variant(encode(&answer)), 7);
+        assert_eq!(decode::<FromServer>(&encode(&answer)), Some(answer));
     }
 
     #[test]

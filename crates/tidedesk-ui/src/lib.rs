@@ -226,6 +226,8 @@ pub enum Icon {
     History,
     Settings,
     About,
+    /// A page of text: for sections another program adds.
+    Page,
 }
 
 /// Draws `icon` in `rect` with `color`.
@@ -269,6 +271,17 @@ pub fn paint_icon(painter: &egui::Painter, rect: egui::Rect, icon: Icon, color: 
             painter.circle_stroke(at(12.0, 12.0), 8.0 * unit, stroke);
             line(&[(12.0, 11.0), (12.0, 16.0)]);
             painter.circle_filled(at(12.0, 8.0), 1.2 * unit, color);
+        }
+        Icon::Page => {
+            painter.rect_stroke(
+                egui::Rect::from_min_max(at(6.0, 3.0), at(18.0, 21.0)),
+                CornerRadius::same(2),
+                stroke,
+                StrokeKind::Middle,
+            );
+            line(&[(9.0, 8.0), (15.0, 8.0)]);
+            line(&[(9.0, 12.0), (15.0, 12.0)]);
+            line(&[(9.0, 16.0), (13.0, 16.0)]);
         }
     }
 }

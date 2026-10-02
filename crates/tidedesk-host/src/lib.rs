@@ -9,6 +9,7 @@ pub mod gui;
 mod icon;
 mod input;
 mod internet;
+pub mod limits;
 pub mod notice;
 mod platform;
 pub mod saved_password;
