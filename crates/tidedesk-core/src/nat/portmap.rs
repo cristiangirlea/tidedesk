@@ -19,6 +19,8 @@ use std::time::Duration;
 
 use tokio::net::UdpSocket;
 
+use super::upnp::{self, Gateway};
+
 /// The router's port for PCP and NAT-PMP.
 pub const ROUTER_PORT: u16 = 5351;
 
@@ -31,6 +33,30 @@ const RETRY: Duration = Duration::from_secs(5 * 60);
 
 /// The first wait for an answer; each try waits twice the one before.
 const FIRST_WAIT: Duration = Duration::from_millis(250);
+
+/// How long to wait for a router, and where to search for UPnP ones.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct How {
+    pub first_wait: Duration,
+    pub ssdp: SocketAddr,
+}
+
+impl How {
+    /// UPnP's search answers and HTTP exchanges take longer than one
+    /// datagram's round trip.
+    fn search_wait(self) -> Duration {
+        self.first_wait * 8
+    }
+
+    fn http_wait(self) -> Duration {
+        self.first_wait * 12
+    }
+}
+
+const REAL: How = How {
+    first_wait: FIRST_WAIT,
+    ssdp: SocketAddr::V4(upnp::SSDP),
+};
 const TRIES: u32 = 3;
 
 /// IANA protocol number of UDP, which QUIC runs over.
@@ -40,6 +66,7 @@ const UDP: u8 = 17;
 pub enum Method {
     Pcp,
     NatPmp,
+    Upnp,
 }
 
 impl fmt::Display for Method {
@@ -47,6 +74,7 @@ impl fmt::Display for Method {
         f.write_str(match self {
             Self::Pcp => "PCP",
             Self::NatPmp => "NAT-PMP",
+            Self::Upnp => "UPnP",
         })
     }
 }
@@ -62,12 +90,14 @@ pub struct Mapping {
     pub lifetime: Duration,
     /// PCP's nonce: renewing or removing the mapping needs the same one.
     nonce: [u8; 12],
+    /// Where a UPnP router is asked.
+    gateway: Option<Gateway>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MapError {
     NoRouter,
-    /// Neither PCP nor NAT-PMP answered.
+    /// None of PCP, NAT-PMP and UPnP answered.
     NoAnswer,
     /// The router answered with an error code.
     Refused {
@@ -82,8 +112,8 @@ impl fmt::Display for MapError {
         match self {
             Self::NoRouter => f.write_str("no router found on this network"),
             Self::NoAnswer => f.write_str(
-                "no answer from the router (it may not support PCP or NAT-PMP, or has them \
-                 turned off)",
+                "no answer from the router (it may not support PCP, NAT-PMP or UPnP, or has \
+                 them turned off)",
             ),
             Self::Refused { method, code } => {
                 write!(
@@ -107,6 +137,8 @@ fn meaning(method: Method, code: u16) -> &'static str {
         (Method::NatPmp, 4) | (Method::Pcp, 8) => "it has no ports left",
         (Method::Pcp, 11) => "it cannot give this computer an address outside",
         (Method::Pcp, 12) => "this computer's address does not match what it sees",
+        (Method::Upnp, 718) => "the port is already forwarded to another computer",
+        (Method::Upnp, 606) => "not allowed by its settings",
         _ => "unsupported request",
     }
 }
@@ -364,7 +396,7 @@ pub async fn map(
     lifetime: Duration,
     earlier: Option<&Mapping>,
 ) -> Result<Mapping, MapError> {
-    map_with(router, internal_port, lifetime, earlier, FIRST_WAIT).await
+    map_with(router, internal_port, lifetime, earlier, REAL).await
 }
 
 async fn map_with(
@@ -372,10 +404,13 @@ async fn map_with(
     internal_port: u16,
     lifetime: Duration,
     earlier: Option<&Mapping>,
-    first_wait: Duration,
+    how: How,
 ) -> Result<Mapping, MapError> {
     let (socket, client) = towards(router).await?;
     let seconds = u32::try_from(lifetime.as_secs()).unwrap_or(u32::MAX);
+    if let Some(gateway) = earlier.and_then(|m| m.gateway.clone()) {
+        return upnp_map(gateway, client, internal_port, lifetime, how).await;
+    }
     if earlier.is_none_or(|m| m.method == Method::Pcp) {
         let nonce = earlier.map_or_else(super::random_bytes, |m| m.nonce);
         let suggested = earlier.map_or(
@@ -383,7 +418,7 @@ async fn map_with(
             |m| m.external,
         );
         let request = pcp_map_request(&nonce, client, internal_port, suggested, seconds);
-        match ask(&socket, &request, first_wait, |d| {
+        match ask(&socket, &request, how.first_wait, |d| {
             parse_pcp(d, &nonce, internal_port)
         })
         .await
@@ -395,6 +430,7 @@ async fn map_with(
                     internal_port,
                     lifetime: Duration::from_secs(lifetime.into()),
                     nonce,
+                    gateway: None,
                 });
             }
             Some(PcpAnswer::Error(code)) => {
@@ -406,12 +442,58 @@ async fn map_with(
             Some(PcpAnswer::UnsupportedVersion) | None => {}
         }
     }
-    // NAT-PMP: the router's own address first, then the mapping.
+    match natpmp_map(&socket, internal_port, seconds, earlier, how).await {
+        Err(MapError::NoAnswer) if earlier.is_none() => {}
+        done => return done,
+    }
+    let SocketAddr::V4(router) = router else {
+        return Err(MapError::NoAnswer);
+    };
+    match upnp::discover(*router.ip(), how.ssdp, how.search_wait()).await {
+        Some(gateway) => upnp_map(gateway, client, internal_port, lifetime, how).await,
+        None => Err(MapError::NoAnswer),
+    }
+}
+
+/// Asks a UPnP router at `gateway` to forward `internal_port` to `client`.
+async fn upnp_map(
+    gateway: Gateway,
+    client: Ipv4Addr,
+    internal_port: u16,
+    lifetime: Duration,
+    how: How,
+) -> Result<Mapping, MapError> {
+    let seconds = u32::try_from(lifetime.as_secs()).unwrap_or(u32::MAX);
+    let (external, lease) =
+        upnp::add(&gateway, client, internal_port, seconds, how.http_wait()).await?;
+    Ok(Mapping {
+        method: Method::Upnp,
+        external,
+        internal_port,
+        // A router that keeps mappings until removed is renewed as often.
+        lifetime: if lease == 0 {
+            lifetime
+        } else {
+            Duration::from_secs(lease.into())
+        },
+        nonce: [0; 12],
+        gateway: Some(gateway),
+    })
+}
+
+/// NAT-PMP: the router's own address first, then the mapping.
+async fn natpmp_map(
+    socket: &UdpSocket,
+    internal_port: u16,
+    seconds: u32,
+    earlier: Option<&Mapping>,
+    how: How,
+) -> Result<Mapping, MapError> {
     let refused = |code| MapError::Refused {
         method: Method::NatPmp,
         code,
     };
-    let outer = match ask(&socket, &natpmp_address_request(), first_wait, |d| {
+    let outer = match ask(socket, &natpmp_address_request(), how.first_wait, |d| {
         parse_natpmp(d, 0)
     })
     .await
@@ -422,7 +504,7 @@ async fn map_with(
     };
     let suggested = earlier.map_or(internal_port, |m| m.external.port());
     let request = natpmp_map_request(internal_port, suggested, seconds);
-    match ask(&socket, &request, first_wait, |d| parse_natpmp(d, 1)).await {
+    match ask(socket, &request, how.first_wait, |d| parse_natpmp(d, 1)).await {
         Some(Ok(NatPmpAnswer::Mapped {
             internal,
             external,
@@ -433,6 +515,7 @@ async fn map_with(
             internal_port,
             lifetime: Duration::from_secs(lifetime.into()),
             nonce: [0; 12],
+            gateway: None,
         }),
         Some(Err(code)) => Err(refused(code)),
         _ => Err(MapError::NoAnswer),
@@ -441,20 +524,19 @@ async fn map_with(
 
 /// Asks `router` to remove `mapping`.
 pub async fn unmap(router: SocketAddr, mapping: &Mapping) -> Result<(), MapError> {
-    unmap_with(router, mapping, FIRST_WAIT).await
+    unmap_with(router, mapping, REAL).await
 }
 
-async fn unmap_with(
-    router: SocketAddr,
-    mapping: &Mapping,
-    first_wait: Duration,
-) -> Result<(), MapError> {
-    let (socket, client) = towards(router).await?;
+async fn unmap_with(router: SocketAddr, mapping: &Mapping, how: How) -> Result<(), MapError> {
     let port = mapping.internal_port;
+    if let Some(gateway) = &mapping.gateway {
+        return upnp::delete(gateway, port, how.http_wait()).await;
+    }
+    let (socket, client) = towards(router).await?;
     let answered = match mapping.method {
         Method::Pcp => {
             let request = pcp_map_request(&mapping.nonce, client, port, mapping.external, 0);
-            match ask(&socket, &request, first_wait, |d| {
+            match ask(&socket, &request, how.first_wait, |d| {
                 parse_pcp(d, &mapping.nonce, port)
             })
             .await
@@ -466,12 +548,13 @@ async fn unmap_with(
         }
         Method::NatPmp => {
             let request = natpmp_map_request(port, 0, 0);
-            match ask(&socket, &request, first_wait, |d| parse_natpmp(d, 1)).await {
+            match ask(&socket, &request, how.first_wait, |d| parse_natpmp(d, 1)).await {
                 Some(Ok(_)) => Ok(()),
                 Some(Err(code)) => Err(code),
                 None => return Err(MapError::NoAnswer),
             }
         }
+        Method::Upnp => return Err(MapError::NoAnswer),
     };
     answered.map_err(|code| MapError::Refused {
         method: mapping.method,
@@ -504,7 +587,7 @@ pub(crate) async fn keep(
     find: impl Fn() -> Option<SocketAddr>,
     report: impl Fn(MappingStatus),
     mut stop: tokio::sync::watch::Receiver<()>,
-    first_wait: Duration,
+    how: How,
 ) {
     let mut current: Option<(SocketAddr, Mapping)> = None;
     loop {
@@ -524,7 +607,7 @@ pub(crate) async fn keep(
                     .as_ref()
                     .filter(|(at, _)| *at == router)
                     .map(|(_, m)| m);
-                match map_with(router, internal_port, LIFETIME, earlier, first_wait).await {
+                match map_with(router, internal_port, LIFETIME, earlier, how).await {
                     Ok(mapping) => {
                         report(status_of(&mapping));
                         let renew = (mapping.lifetime / 2).max(Duration::from_secs(30));
@@ -546,7 +629,7 @@ pub(crate) async fn keep(
     }
     if let Some((router, mapping)) = current {
         // Best effort: the router forgets it after its lifetime anyway.
-        let _ = unmap_with(router, &mapping, first_wait).await;
+        let _ = unmap_with(router, &mapping, how).await;
     }
     report(MappingStatus::Off);
 }
@@ -558,15 +641,19 @@ pub(crate) async fn keep_on_this_network(
     stop: tokio::sync::watch::Receiver<()>,
 ) {
     let find = || router().map(|ip| SocketAddr::from((ip, ROUTER_PORT)));
-    keep(internal_port, find, report, stop, FIRST_WAIT).await;
+    keep(internal_port, find, report, stop, REAL).await;
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
 
-    const SHORT: Duration = Duration::from_millis(20);
+    /// Searches go to a closed port: no test ever searches the real network.
+    const SHORT: How = How {
+        first_wait: Duration::from_millis(20),
+        ssdp: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 9)),
+    };
 
     #[test]
     fn nat_pmp_requests_and_answers_follow_rfc_6886() {
@@ -660,7 +747,7 @@ mod tests {
         Silent,
     }
 
-    type Seen = Arc<Mutex<Vec<Vec<u8>>>>;
+    pub(super) type Seen = Arc<Mutex<Vec<Vec<u8>>>>;
 
     /// A router on the loopback that answers as `kind` and keeps what it
     /// was asked.
@@ -727,6 +814,156 @@ mod tests {
     }
 
     const OUTER: Ipv4Addr = Ipv4Addr::new(203, 0, 113, 7);
+
+    /// A UPnP router on the loopback: answers searches on UDP, serves its
+    /// description and its SOAP control over HTTP, and keeps each SOAP
+    /// call it got. With `permanent_only`, it refuses leases as some do.
+    pub(in crate::nat) async fn fake_upnp_router(permanent_only: bool) -> (SocketAddr, Seen) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let http = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let http_port = http.local_addr().unwrap().port();
+        let search = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let search_at = search.local_addr().unwrap();
+        tokio::spawn(async move {
+            let mut buffer = [0u8; 2048];
+            while let Ok((_, from)) = search.recv_from(&mut buffer).await {
+                let answer = format!(
+                    "HTTP/1.1 200 OK\r\nST: urn:schemas-upnp-org:device:InternetGatewayDevice:1\r\n\
+                     LOCATION: http://127.0.0.1:{http_port}/rootDesc.xml\r\n\r\n"
+                );
+                let _ = search.send_to(answer.as_bytes(), from).await;
+            }
+        });
+        let seen = Seen::default();
+        let log = seen.clone();
+        tokio::spawn(async move {
+            while let Ok((mut stream, _)) = http.accept().await {
+                let mut request = Vec::new();
+                let mut buffer = [0u8; 4096];
+                // The head, then as much body as it announces.
+                loop {
+                    let n = stream.read(&mut buffer).await.unwrap_or(0);
+                    request.extend_from_slice(&buffer[..n]);
+                    let text = String::from_utf8_lossy(&request).to_string();
+                    let Some((head, body)) = text.split_once("\r\n\r\n") else {
+                        if n == 0 {
+                            break;
+                        }
+                        continue;
+                    };
+                    let length = upnp::tests::header_value(head, "CONTENT-LENGTH")
+                        .and_then(|l| l.parse::<usize>().ok())
+                        .unwrap_or(0);
+                    if body.len() >= length || n == 0 {
+                        break;
+                    }
+                }
+                let text = String::from_utf8_lossy(&request).to_string();
+                let (status, body) = if text.starts_with("GET ") {
+                    (200, DESCRIPTION.to_string())
+                } else {
+                    let action = text
+                        .split('#')
+                        .nth(1)
+                        .and_then(|a| a.split('"').next())
+                        .unwrap_or("");
+                    log.lock().unwrap().push(text.clone().into_bytes());
+                    match action {
+                        "GetExternalIPAddress" => (
+                            200,
+                            format!("<NewExternalIPAddress>{OUTER}</NewExternalIPAddress>"),
+                        ),
+                        "AddPortMapping"
+                            if permanent_only
+                                && !text.contains("<NewLeaseDuration>0</NewLeaseDuration>") =>
+                        {
+                            (
+                                500,
+                                "<UPnPError><errorCode>725</errorCode></UPnPError>".into(),
+                            )
+                        }
+                        _ => (200, format!("<u:{action}Response/>")),
+                    }
+                };
+                let answer = format!(
+                    "HTTP/1.1 {status} X\r\nContent-Length: {}\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = stream.write_all(answer.as_bytes()).await;
+            }
+        });
+        (search_at, seen)
+    }
+
+    const DESCRIPTION: &str = "<root><device><serviceList><service>\
+        <serviceType>urn:schemas-upnp-org:service:WANIPConnection:1</serviceType>\
+        <controlURL>/ctl/IPConn</controlURL></service></serviceList></device></root>";
+
+    /// The SOAP actions a fake UPnP router was asked, in order.
+    fn actions(seen: &Seen) -> Vec<String> {
+        seen.lock()
+            .unwrap()
+            .iter()
+            .map(|r| {
+                let text = String::from_utf8_lossy(r).to_string();
+                text.split('#')
+                    .nth(1)
+                    .unwrap()
+                    .split('"')
+                    .next()
+                    .unwrap()
+                    .to_string()
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn a_upnp_router_is_asked_when_pcp_and_nat_pmp_say_nothing() {
+        let (router, _) = fake_router(Kind::Silent).await;
+        let (ssdp, seen) = fake_upnp_router(false).await;
+        let how = How { ssdp, ..SHORT };
+        let mapping = map_with(router, 47800, LIFETIME, None, how).await.unwrap();
+        assert_eq!(mapping.method, Method::Upnp);
+        assert_eq!(mapping.external, SocketAddrV4::new(OUTER, 47800));
+        assert_eq!(mapping.lifetime, LIFETIME);
+        let add = seen.lock().unwrap()[1].clone();
+        let add = String::from_utf8(add).unwrap();
+        assert!(add.contains("<NewProtocol>UDP</NewProtocol>"));
+        assert!(add.contains("<NewInternalClient>127.0.0.1</NewInternalClient>"));
+        assert!(add.contains("<NewLeaseDuration>7200</NewLeaseDuration>"));
+
+        let renewed = map_with(router, 47800, LIFETIME, Some(&mapping), how)
+            .await
+            .unwrap();
+        assert_eq!(renewed, mapping);
+        unmap_with(router, &mapping, how).await.unwrap();
+        assert_eq!(
+            actions(&seen),
+            [
+                "GetExternalIPAddress",
+                "AddPortMapping",
+                "GetExternalIPAddress",
+                "AddPortMapping",
+                "DeletePortMapping"
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_upnp_router_without_leases_keeps_the_mapping_until_removed() {
+        let (router, _) = fake_router(Kind::Silent).await;
+        let (ssdp, seen) = fake_upnp_router(true).await;
+        let how = How { ssdp, ..SHORT };
+        let mapping = map_with(router, 47800, LIFETIME, None, how).await.unwrap();
+        assert_eq!(mapping.method, Method::Upnp);
+        assert_eq!(
+            mapping.lifetime, LIFETIME,
+            "renewed as often as a leased one"
+        );
+        let calls = seen.lock().unwrap().clone();
+        let last = String::from_utf8(calls.last().unwrap().clone()).unwrap();
+        assert!(last.contains("<NewLeaseDuration>0</NewLeaseDuration>"));
+    }
 
     #[tokio::test]
     async fn a_nat_pmp_router_opens_renews_and_closes_the_port() {
@@ -812,7 +1049,7 @@ mod tests {
             if statuses.lock().unwrap().last().is_some_and(wanted) {
                 break;
             }
-            tokio::time::sleep(SHORT).await;
+            tokio::time::sleep(SHORT.first_wait).await;
         }
         stop.send(()).unwrap();
         task.await.unwrap();

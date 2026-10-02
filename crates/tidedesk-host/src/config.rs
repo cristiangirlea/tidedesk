@@ -42,7 +42,7 @@ pub struct HostConfig {
     /// Answer viewers on the local network that look for this computer's
     /// device ID, so they find it without the service or the internet.
     pub lan_discovery: bool,
-    /// Ask the router (PCP, NAT-PMP) to forward the UDP port while this
+    /// Ask the router (PCP, NAT-PMP, UPnP) to forward the UDP port while this
     /// computer is reachable by device ID from other networks.
     pub port_mapping: bool,
     /// A new access code once a session ends.
