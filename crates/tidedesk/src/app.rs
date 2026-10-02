@@ -195,6 +195,30 @@ struct LicenceBox {
     pasted: String,
     /// What became of the last licence pasted: what was added, or why not.
     outcome: Option<Result<String, String>>,
+    /// The paste box is shown.
+    open: bool,
+}
+
+/// How About's licence badge looks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Badge {
+    Free,
+    Active,
+    Renew,
+    Expired,
+}
+
+/// The licence badge on `today`: what it says and how it looks.
+fn badge(held: Option<&Licence>, today: &str) -> (String, Badge) {
+    let Some(licence) = held else {
+        return ("PERSONAL".into(), Badge::Free);
+    };
+    let edition = licence.edition.to_uppercase();
+    match licence.standing(today) {
+        Standing::Active => (edition, Badge::Active),
+        Standing::Grace { .. } => (format!("{edition} · RENEW"), Badge::Renew),
+        Standing::Expired => ("EXPIRED".into(), Badge::Expired),
+    }
 }
 
 /// What About says about a licence on `today`.
@@ -484,50 +508,109 @@ impl Shell {
         });
     }
 
+    /// About: the version, the licence, and the documents.
     fn about(&mut self, ui: &mut egui::Ui) {
-        ui.label(RichText::new("TideDesk").size(22.0).strong());
-        ui.horizontal(|ui| {
-            ui.label(RichText::new(format!("Version {}", crate::VERSION)).size(16.0));
-            copy_version(ui);
+        use egui::Color32;
+        use tidedesk_ui as look;
+        ui.label(look::title("About"));
+        ui.add_space(6.0);
+        let version = format!("TideDesk {}", crate::VERSION);
+        look::card().show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                if let Some(logo) = &self.logo {
+                    ui.add(egui::Image::new(logo).fit_to_exact_size(egui::vec2(48.0, 48.0)));
+                }
+                ui.vertical(|ui| {
+                    ui.label(look::label(&version).size(20.0));
+                    ui.label(
+                        RichText::new("Remote access to your own computers.").color(look::MUTED),
+                    );
+                });
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .button("Check for updates")
+                        .on_hover_text("Opens the page with every version.")
+                        .clicked()
+                    {
+                        tidedesk_host::open_link(RELEASES_URL);
+                    }
+                    look::copy(ui, "Copy version", &version, false)
+                        .on_hover_text("Copies the version, for a question or a problem report.");
+                });
+            });
         });
-        ui.small("Remote access to your own computers.");
-        if ui.button("Is there a newer version?").clicked() {
-            tidedesk_host::open_link(RELEASES_URL);
-        }
         ui.add_space(8.0);
-        if let Some(held) = &self.licence.held {
+        look::card().show(ui, |ui| {
+            ui.set_width(ui.available_width());
             let today = tidedesk_core::dates::today();
-            let line = licence_line(held, &today);
-            match held.standing(&today) {
-                Standing::Active => ui.label(RichText::new(line).strong()),
-                _ => ui.colored_label(ui.visuals().warn_fg_color, line),
-            };
-        }
-        if let Some(declared) = tidedesk_core::company::declaration() {
-            ui.small(format!("This computer: {}", declared.describe()));
-        }
-        ui.small(
-            "Free for personal, non-commercial use under the TideDesk Personal Use Source \
-             License 1.0. Business use needs separate written permission.",
-        );
+            ui.horizontal(|ui| {
+                ui.label(look::label("Licence").size(16.0));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    let (text, kind) = badge(self.licence.held.as_ref(), &today);
+                    let (dot, fill, color) = match kind {
+                        Badge::Free => (
+                            look::ACCENT,
+                            Color32::from_rgb(0x1F, 0x35, 0x50),
+                            look::READY,
+                        ),
+                        Badge::Active => (
+                            look::OK,
+                            Color32::from_rgb(0x12, 0x3A, 0x2A),
+                            Color32::from_rgb(0x9B, 0xE8, 0xC1),
+                        ),
+                        Badge::Renew => (look::WARN, look::WARN_BG, look::WARN),
+                        Badge::Expired => (look::DANGER, look::DANGER_BG, look::DANGER),
+                    };
+                    look::pill(ui, dot, fill, &text, color);
+                });
+            });
+            match &self.licence.held {
+                Some(held) => {
+                    let line = licence_line(held, &today);
+                    match held.standing(&today) {
+                        Standing::Active => ui.label(RichText::new(line).color(look::TEXT)),
+                        _ => ui.label(RichText::new(line).color(look::WARN)),
+                    };
+                }
+                None => {
+                    ui.label(
+                        RichText::new(
+                            "Free for personal, non-commercial use under the TideDesk Personal \
+                             Use Source License 1.0. Business use needs separate written \
+                             permission.",
+                        )
+                        .color(look::MUTED),
+                    );
+                }
+            }
+            if let Some(declared) = tidedesk_core::company::declaration() {
+                ui.label(
+                    RichText::new(format!("This computer: {}", declared.describe()))
+                        .color(look::MUTED),
+                );
+            }
+            ui.add_space(4.0);
+            self.licence_box(ui);
+        });
+        ui.add_space(8.0);
         ui.horizontal_wrapped(|ui| {
-            if ui.button("License").clicked() {
+            ui.spacing_mut().item_spacing.x = 18.0;
+            if ui.link("License").clicked() {
                 self.reading = Some(Reading::license());
             }
-            if ui.button("Terms of use").clicked() {
+            if ui.link("Terms of use").clicked() {
                 self.reading = Some(Reading::terms());
             }
-            if ui.button("Privacy").clicked() {
+            if ui.link("Privacy").clicked() {
                 tidedesk_host::open_link(PRIVACY_URL);
             }
             if let Some(notices) = &self.notices
-                && ui.button("Third-party notices").clicked()
+                && ui.link("Third-party notices").clicked()
             {
                 tidedesk_host::open_link(&notices.to_string_lossy());
             }
         });
-        ui.add_space(8.0);
-        self.licence_box(ui);
     }
 
     fn licence_box(&mut self, ui: &mut egui::Ui) {
@@ -536,43 +619,45 @@ impl Shell {
         } else {
             "Add a licence"
         };
-        egui::CollapsingHeader::new(title)
-            .id_salt("licence")
-            .show(ui, |ui| {
-                ui.small("Paste the licence from your email, from its BEGIN line to its END line.");
-                let edited = ui
-                    .add(
-                        egui::TextEdit::multiline(&mut self.licence.pasted)
-                            .desired_rows(6)
-                            .desired_width(f32::INFINITY)
-                            .code_editor(),
-                    )
-                    .changed();
-                if edited {
-                    self.licence.outcome = None;
+        if ui.button(title).clicked() {
+            self.licence.open = !self.licence.open;
+        }
+        if !self.licence.open {
+            return;
+        }
+        ui.small("Paste the licence from your email, from its BEGIN line to its END line.");
+        let edited = ui
+            .add(
+                egui::TextEdit::multiline(&mut self.licence.pasted)
+                    .desired_rows(6)
+                    .desired_width(f32::INFINITY)
+                    .code_editor(),
+            )
+            .changed();
+        if edited {
+            self.licence.outcome = None;
+        }
+        let pasted = !self.licence.pasted.trim().is_empty();
+        if ui.add_enabled(pasted, egui::Button::new("Add")).clicked() {
+            self.licence.outcome = Some(match licence::add(&self.licence.pasted) {
+                Ok(added) => {
+                    let line = licence_line(&added, &tidedesk_core::dates::today());
+                    self.licence.held = Some(added);
+                    self.licence.pasted.clear();
+                    Ok(format!("Licence added. {line}"))
                 }
-                let pasted = !self.licence.pasted.trim().is_empty();
-                if ui.add_enabled(pasted, egui::Button::new("Add")).clicked() {
-                    self.licence.outcome = Some(match licence::add(&self.licence.pasted) {
-                        Ok(added) => {
-                            let line = licence_line(&added, &tidedesk_core::dates::today());
-                            self.licence.held = Some(added);
-                            self.licence.pasted.clear();
-                            Ok(format!("Licence added. {line}"))
-                        }
-                        Err(e) => Err(format!("{e:#}")),
-                    });
-                }
-                match &self.licence.outcome {
-                    Some(Ok(added)) => {
-                        ui.label(added);
-                    }
-                    Some(Err(why)) => {
-                        ui.colored_label(ui.visuals().error_fg_color, why);
-                    }
-                    None => {}
-                }
+                Err(e) => Err(format!("{e:#}")),
             });
+        }
+        match &self.licence.outcome {
+            Some(Ok(added)) => {
+                ui.label(added);
+            }
+            Some(Err(why)) => {
+                ui.colored_label(ui.visuals().error_fg_color, why);
+            }
+            None => {}
+        }
     }
 
     /// The sections on the left, TideDesk's name on top and the edition
@@ -642,17 +727,6 @@ impl Shell {
     }
 }
 
-/// A button that copies the version, for a question or a report.
-fn copy_version(ui: &mut egui::Ui) {
-    if ui
-        .small_button("Copy")
-        .on_hover_text("Copies the version, for a question or a problem report.")
-        .clicked()
-    {
-        ui.ctx().copy_text(format!("TideDesk {}", crate::VERSION));
-    }
-}
-
 impl egui_software_backend::App for Shell {
     fn ui(&mut self, ui: &mut egui::Ui, _backend: &mut SoftwareBackend) {
         self.draw(ui);
@@ -712,7 +786,7 @@ impl Shell {
 
 #[cfg(test)]
 mod tests {
-    use super::{Licence, Tab, licence_line};
+    use super::{Badge, Licence, Tab, badge, licence_line};
 
     /// Draws each page with the window's own renderer, no window or screen
     /// involved, and saves them as PNG files in `TIDEDESK_PICTURES`: to see
@@ -801,6 +875,32 @@ mod tests {
         assert!(tiny.start[0] <= 640.0 && tiny.start[1] <= 480.0);
         assert!(tiny.min[0] <= tiny.max[0] && tiny.min[1] <= tiny.max[1]);
         assert_eq!(WindowSize::for_screen(None).start, [880.0, 660.0]);
+    }
+
+    #[test]
+    fn the_licence_badge_says_where_a_licence_stands() {
+        let licence = Licence {
+            licensee: "Ana Pop".into(),
+            email: "ana@example.com".into(),
+            edition: "Solo".into(),
+            features: vec!["work".into()],
+            seats: 1,
+            issued: "2026-10-02".into(),
+            expires: Some("2027-10-02".into()),
+        };
+        assert_eq!(badge(None, "2027-01-01"), ("PERSONAL".into(), Badge::Free));
+        assert_eq!(
+            badge(Some(&licence), "2027-01-01"),
+            ("SOLO".into(), Badge::Active)
+        );
+        assert_eq!(
+            badge(Some(&licence), "2027-10-05"),
+            ("SOLO · RENEW".into(), Badge::Renew)
+        );
+        assert_eq!(
+            badge(Some(&licence), "2027-10-17"),
+            ("EXPIRED".into(), Badge::Expired)
+        );
     }
 
     #[test]
