@@ -9,6 +9,10 @@ repository.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
+[lib]
+name = "tidedesk_app"
+path = "src/lib.rs"
+
 [[bin]]
 name = "tidedesk"
 path = "src/main.rs"
