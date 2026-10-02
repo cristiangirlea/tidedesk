@@ -1,5 +1,10 @@
 [CmdletBinding()]
-param([Parameter(Mandatory)][string]$StageDirectory)
+param(
+    [Parameter(Mandatory)][string]$StageDirectory,
+    # The Cargo workspace the program was built from: this one, or another
+    # program's that builds on these crates (its Cargo.lock lists them all).
+    [string]$Workspace
+)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
@@ -8,7 +13,8 @@ $stage = (Resolve-Path -LiteralPath $StageDirectory).Path
 $destination = Join-Path $stage 'licenses/third-party'
 if (Test-Path -LiteralPath $destination) { throw "Notices already exist: $destination" }
 
-Push-Location $repo
+$workspaceRoot = if ($Workspace) { (Resolve-Path -LiteralPath $Workspace).Path } else { $repo }
+Push-Location $workspaceRoot
 try {
     $metadataText = & cargo metadata --locked --offline --format-version 1 --filter-platform x86_64-pc-windows-msvc
     if ($LASTEXITCODE -ne 0) { throw 'Could not read locked Windows dependency metadata.' }

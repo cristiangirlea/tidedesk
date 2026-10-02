@@ -82,6 +82,35 @@ pub enum LookupOutcome {
     Unreachable(String),
 }
 
+/// How a viewer asks a service for a host, for a program built on TideDesk
+/// whose service wants more than the plain question, such as proof of who
+/// asks (a [`ToServer::Extension`]). The service answers as it answers any
+/// lookup: introduced, not found, or not at all.
+pub trait LookupForm: Send + Sync {
+    /// The message asking `service` for `device_id`, or `None` to ask the
+    /// plain way. `with_candidates`: the viewer can open sealed addresses.
+    fn lookup(
+        &self,
+        service: &str,
+        device_id: DeviceId,
+        nonce: Nonce,
+        challenge: Challenge,
+        with_candidates: bool,
+    ) -> Option<ToServer>;
+}
+
+static LOOKUP_FORM: std::sync::RwLock<Option<std::sync::Arc<dyn LookupForm>>> =
+    std::sync::RwLock::new(None);
+
+/// Sets how lookups ask from now on, replacing any earlier form.
+pub fn set_lookup_form(form: std::sync::Arc<dyn LookupForm>) {
+    *LOOKUP_FORM.write().unwrap() = Some(form);
+}
+
+fn lookup_form() -> Option<std::sync::Arc<dyn LookupForm>> {
+    LOOKUP_FORM.read().unwrap().clone()
+}
+
 /// How long a lookup tries before giving up.
 const LOOKUP_GIVE_UP: Duration = Duration::from_secs(10);
 
@@ -182,7 +211,12 @@ impl Lookup {
                 *tries += 1;
                 *next = now + FIRST_RETRY;
                 let (device_id, nonce, challenge) = (self.device_id, self.nonce, *challenge);
-                let lookup = if self.plain {
+                let own = lookup_form().and_then(|form| {
+                    form.lookup(&self.name, device_id, nonce, challenge, !self.plain)
+                });
+                let lookup = if let Some(own) = own {
+                    own
+                } else if self.plain {
                     ToServer::Lookup {
                         device_id,
                         nonce,
@@ -302,6 +336,19 @@ impl Lookup {
 /// ask unless Settings say otherwise. A name, never an address, so the
 /// server can move without a release.
 pub const DEFAULT_RENDEZVOUS: &str = "rendezvous.tidedesk.app:47900";
+
+/// How a rendezvous service is named to people: TideDesk's own as such, any
+/// other by its name, with its port only when it is not the usual one.
+pub fn service_name(service: &str) -> String {
+    let service = service.trim();
+    let usual_port = format!(":{}", tidedesk_rendezvous_proto::DEFAULT_PORT);
+    let name = service.strip_suffix(usual_port.as_str()).unwrap_or(service);
+    if name.eq_ignore_ascii_case(DEFAULT_RENDEZVOUS.trim_end_matches(usual_port.as_str())) {
+        "TideDesk's connection service".into()
+    } else {
+        name.to_string()
+    }
+}
 
 /// Finds a rendezvous service given as `host[:port]` (IPv4, like all
 /// internet paths here).
@@ -924,6 +971,80 @@ mod tests {
         }
     }
 
+    /// Asks its own way, only of the service named "own form": the other
+    /// lookup tests, running at the same time, keep the plain question.
+    struct OwnForm;
+
+    impl LookupForm for OwnForm {
+        fn lookup(
+            &self,
+            service: &str,
+            device_id: DeviceId,
+            nonce: Nonce,
+            challenge: Challenge,
+            with_candidates: bool,
+        ) -> Option<ToServer> {
+            (service == "own form").then(|| ToServer::Extension {
+                kind: 9,
+                body: [
+                    &device_id.0[..],
+                    &nonce,
+                    &challenge,
+                    &[u8::from(with_candidates)],
+                ]
+                .concat(),
+            })
+        }
+    }
+
+    #[test]
+    fn a_program_may_ask_its_own_way_and_is_answered_as_usual() {
+        set_lookup_form(std::sync::Arc::new(OwnForm));
+        let t0 = Instant::now();
+        let id = DeviceId([1; 8]);
+        let mut l = Lookup::new("own form".into(), addr(SERVICE), id, t0);
+        let nonce = lookup_hello_nonce(&mut l, t0);
+        let challenge = FromServer::Challenge {
+            nonce,
+            challenge: [4; 16],
+            reflexive: addr(ME),
+        };
+        l.on_datagram(addr(SERVICE), &encode(&challenge), t0);
+        let body = [&id.0[..], &nonce, &[4; 16], &[1]].concat();
+        assert_eq!(
+            sent(&l.poll(t0)),
+            [(addr(SERVICE), ToServer::Extension { kind: 9, body })]
+        );
+        // An answer of a kind this viewer does not know changes nothing.
+        let unknown = FromServer::Extension {
+            kind: 9,
+            body: vec![1],
+        };
+        l.on_datagram(addr(SERVICE), &encode(&unknown), t0);
+        assert_eq!(l.outcome(), None);
+        let introduced = FromServer::Introduced {
+            nonce,
+            session: [5; 8],
+            peer: addr(HOST),
+        };
+        l.on_datagram(addr(SERVICE), &encode(&introduced), t0);
+        assert!(matches!(l.outcome(), Some(LookupOutcome::Introduced(_))));
+
+        // Another service is asked the plain way.
+        let mut plain = Lookup::new("s".into(), addr(SERVICE), id, t0);
+        let nonce = lookup_hello_nonce(&mut plain, t0);
+        let challenge = FromServer::Challenge {
+            nonce,
+            challenge: [4; 16],
+            reflexive: addr(ME),
+        };
+        plain.on_datagram(addr(SERVICE), &encode(&challenge), t0);
+        assert!(matches!(
+            sent(&plain.poll(t0))[..],
+            [(_, ToServer::LookupWithCandidates { .. })]
+        ));
+    }
+
     #[test]
     fn lookup_asks_for_a_challenge_first_then_is_introduced() {
         let t0 = Instant::now();
@@ -1160,5 +1281,25 @@ mod tests {
             peer: viewer,
         };
         assert_eq!(from_service(&mut r, &incoming, t0), Some(expected));
+    }
+
+    #[test]
+    fn services_are_named_for_people() {
+        assert_eq!(
+            service_name(DEFAULT_RENDEZVOUS),
+            "TideDesk's connection service"
+        );
+        assert_eq!(
+            service_name(" rendezvous.tidedesk.app "),
+            "TideDesk's connection service"
+        );
+        assert_eq!(
+            service_name("tidedesk.example.com:47900"),
+            "tidedesk.example.com"
+        );
+        assert_eq!(
+            service_name("tidedesk.example.com:47950"),
+            "tidedesk.example.com:47950"
+        );
     }
 }
