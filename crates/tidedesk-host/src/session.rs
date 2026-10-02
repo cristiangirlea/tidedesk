@@ -290,6 +290,11 @@ pub async fn run(conn: quinn::Connection, state: Arc<HostState>) -> Result<()> {
         return reject(&mut send, &conn, RejectReason::Busy).await;
     }
     let _session = SessionGuard(&state);
+    // What this viewer may do, on top of this host's permissions.
+    let limits = crate::limits::for_viewer(fingerprint.as_deref());
+    if limits != crate::limits::Limits::default() {
+        tracing::info!("viewer \"{client_name}\" is limited: {limits:?}");
+    }
     let admitted_by = match proof {
         _ if trusted => "trusted viewer",
         Knows::Code(_) => "access code",
@@ -390,6 +395,7 @@ pub async fn run(conn: quinn::Connection, state: Arc<HostState>) -> Result<()> {
                 state.clone(),
                 client_name.clone(),
                 saved_tx.clone(),
+                limits.files,
             ));
         }
     };
@@ -443,8 +449,8 @@ pub async fn run(conn: quinn::Connection, state: Arc<HostState>) -> Result<()> {
             }
             if sharing.update(
                 wanted.0,
-                wanted.1 && state.clipboard.load(Ordering::SeqCst),
-                wanted.2 && state.mouse.load(Ordering::SeqCst),
+                wanted.1 && limits.clipboard && state.clipboard.load(Ordering::SeqCst),
+                wanted.2 && limits.input && state.mouse.load(Ordering::SeqCst),
             ) {
                 injector.release_mouse();
                 pending_clipboard = None;
@@ -510,7 +516,11 @@ pub async fn run(conn: quinn::Connection, state: Arc<HostState>) -> Result<()> {
                 }
             };
             match msg {
-                ClientMessage::Input(ev @ InputEvent::Key { .. }) => injector.inject(ev)?,
+                ClientMessage::Input(ev @ InputEvent::Key { .. }) => {
+                    if limits.input {
+                        injector.inject(ev)?;
+                    }
+                }
                 ClientMessage::Input(_) => bail!("mouse input requires a pointer epoch"),
                 ClientMessage::SetSharing {
                     request,
@@ -524,6 +534,7 @@ pub async fn run(conn: quinn::Connection, state: Arc<HostState>) -> Result<()> {
                         bail!("invalid clipboard text");
                     }
                     if sharing.accepts_clipboard(generation)
+                        && limits.clipboard
                         && state.clipboard.load(Ordering::SeqCst)
                     {
                         pending_clipboard = if clipboard.receive(&text) {
@@ -640,6 +651,8 @@ async fn receive_file(
     state: Arc<HostState>,
     viewer: String,
     saved: tokio::sync::mpsc::UnboundedSender<ServerMessage>,
+    // This viewer may send files (its limits), on top of the host's setting.
+    allowed: bool,
 ) {
     use tidedesk_core::files;
     let header = match files::read_header(&mut stream).await {
@@ -649,7 +662,7 @@ async fn receive_file(
             return;
         }
     };
-    let result = if !state.files.load(Ordering::SeqCst) {
+    let result = if !allowed || !state.files.load(Ordering::SeqCst) {
         let _ = stream.stop(1u32.into());
         Err(anyhow::anyhow!("the host does not accept files"))
     } else {
