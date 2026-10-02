@@ -131,9 +131,8 @@ struct Shell {
     launcher: Launcher,
     viewer_settings: Editor,
     licence: LicenceBox,
-    /// What the session history is filtered by, and what its export did.
-    history_search: String,
-    history_note: Option<String>,
+    /// The History tab: its search, export and page.
+    history: tidedesk_host::HistoryView,
     /// TideDesk's icon, at the top of the sidebar.
     logo: Option<egui::TextureHandle>,
     /// The group of settings shown.
@@ -301,8 +300,7 @@ pub fn run(hidden: bool) -> Result<()> {
             held: licence::load(),
             ..LicenceBox::default()
         },
-        history_search: String::new(),
-        history_note: None,
+        history: Default::default(),
         logo: None,
         settings_group: SettingsPage::default(),
     });
@@ -682,11 +680,7 @@ impl egui_software_backend::App for Shell {
                             .color(tidedesk_ui::MUTED),
                     );
                     ui.add_space(6.0);
-                    tidedesk_host::session_history(
-                        ui,
-                        &mut self.history_search,
-                        &mut self.history_note,
-                    );
+                    self.history.ui(ui);
                 }
                 Tab::Settings => {
                     egui::ScrollArea::vertical().show(ui, |ui| self.settings_tab(ui));

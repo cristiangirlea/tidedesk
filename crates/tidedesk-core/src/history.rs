@@ -16,6 +16,8 @@ use serde::{Deserialize, Serialize};
 pub const FEATURE: &str = "session-log";
 /// Days of history everyone sees.
 pub const FREE_DAYS: u64 = 30;
+/// Sessions to a page.
+pub const PER_PAGE: usize = 25;
 
 /// One session.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -144,6 +146,38 @@ pub fn shown(records: &[Record], now: u64, full: bool) -> (Vec<&Record>, usize) 
     (recent, older.len())
 }
 
+/// One page of the history.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Page<'a> {
+    /// Newest first.
+    pub records: Vec<&'a Record>,
+    /// Which page, from 0: the one asked for, or the last when that is past
+    /// the end.
+    pub number: usize,
+    /// How many pages there are, at least 1.
+    pub pages: usize,
+}
+
+/// Page `number` (from 0) of `records`, which are oldest first as kept;
+/// the page lists the newest first.
+pub fn page<'a>(records: &[&'a Record], number: usize, per_page: usize) -> Page<'a> {
+    let per_page = per_page.max(1);
+    let pages = records.len().div_ceil(per_page).max(1);
+    let number = number.min(pages - 1);
+    let records = records
+        .iter()
+        .rev()
+        .skip(number * per_page)
+        .take(per_page)
+        .copied()
+        .collect();
+    Page {
+        records,
+        number,
+        pages,
+    }
+}
+
 /// A CSV field: quoted when it holds a comma, a quote or a line break, and
 /// never read by a spreadsheet as a formula (a viewer chooses its own name).
 fn field(text: &str) -> String {
@@ -253,6 +287,30 @@ mod tests {
         let (all, older) = shown(&records, NOW, true);
         assert_eq!((all.len(), older), (4, 0));
         assert_eq!(read_from(Path::new("no such file")), History::default());
+    }
+
+    #[test]
+    fn the_history_comes_in_pages_newest_first() {
+        let records: Vec<Record> = (0..60).map(|i| record(NOW + i * DAY)).collect();
+        let all: Vec<&Record> = records.iter().collect();
+
+        let first = page(&all, 0, PER_PAGE);
+        assert_eq!((first.number, first.pages, first.records.len()), (0, 3, 25));
+        assert_eq!(first.records[0], &records[59]);
+        assert_eq!(first.records[24], &records[35]);
+
+        let last = page(&all, 2, PER_PAGE);
+        assert_eq!((last.number, last.records.len()), (2, 10));
+        assert_eq!(last.records[9], &records[0]);
+
+        // A page past the end shows the last one (the history got shorter).
+        assert_eq!(page(&all, 9, PER_PAGE).number, 2);
+
+        // Exactly one page, and none at all: still "page 1 of 1".
+        let one = page(&all[..25], 0, PER_PAGE);
+        assert_eq!((one.pages, one.records.len()), (1, 25));
+        let empty = page(&[], 3, PER_PAGE);
+        assert_eq!((empty.number, empty.pages, empty.records.len()), (0, 1, 0));
     }
 
     #[test]
