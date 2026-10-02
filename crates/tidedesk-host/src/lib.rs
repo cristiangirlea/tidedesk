@@ -145,7 +145,8 @@ fn rendezvous_choice(
     let choice = allowed.choose(chosen);
     if let Choice::Overruled(service) = &choice {
         tracing::info!(
-            "connection service {chosen:?} not allowed by this computer's administrator: using              {service:?}"
+            "connection service {chosen:?} not allowed by this computer's administrator: using \
+             {service:?}"
         );
     }
     choice.service().map(str::to_string)

@@ -35,7 +35,8 @@ impl HostIdentity {
                 // computer: this account cannot use it. A new identity, with
                 // the old one kept aside rather than overwritten.
                 tracing::warn!(
-                    "this Windows account cannot open the saved host key: making a new identity                      (a new device ID and fingerprint); the old files are kept as *.unreadable"
+                    "this Windows account cannot open the saved host key: making a new identity \
+                     (a new device ID and fingerprint); the old files are kept as *.unreadable"
                 );
                 let _ = std::fs::rename(&sealed_path, dir.join("host-key.sealed.unreadable"));
                 let _ = std::fs::rename(&cert_path, dir.join("host-cert.der.unreadable"));
