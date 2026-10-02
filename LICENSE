@@ -1,4 +1,4 @@
-TideDesk Personal Use Source License 1.0
+TideDesk Personal Use Source License 1.1
 
 Copyright (c) 2026 Cristian Girlea. All rights reserved except as granted below.
 
@@ -33,6 +33,17 @@ TideDesk releases. Recipients receive the same permissions under this license.
 You may not incorporate the Software into a commercially distributed product
 without separate written permission.
 
+3a. Organisation-managed computers
+
+On a computer managed by an organisation, meaning one joined to a directory
+domain or an organisational identity service, or enrolled in device
+management, you may also use the Software for any lawful purpose, including
+business use: for 14 days from its first use on that computer, and after that
+for up to 8 hours of sessions in each calendar month, as counted by the
+Software on that computer. This permission applies only to that computer. It
+does not cover resale, paid support services, commercial hosting or product
+integration. Do not alter, reset or work around the count.
+
 4. Separate authorization
 
 Uses outside sections 2 and 3, including business use, internal organizational
@@ -41,6 +52,8 @@ a separate written license from the Licensor before that use begins.
 No commercial rights are granted by a donation, sponsorship, access to the
 public source repository, or payment to someone other than the Licensor.
 Commercial terms, if offered, are specified only in a separate agreement.
+A licence file signed and issued by the Licensor, together with the terms it
+refers to, is such a separate written license for the use it describes.
 
 5. Ownership, names and third-party rights
 

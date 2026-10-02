@@ -9,7 +9,7 @@ use egui::RichText;
 
 /// The terms' "Last updated" date. Accepting records it; newer terms are
 /// pointed out again.
-pub const TERMS_VERSION: &str = "2026-09-26";
+pub const TERMS_VERSION: &str = "2026-10-02";
 
 pub const LICENSE_TEXT: &str = include_str!("../../../LICENSE");
 pub const TERMS_TEXT: &str = include_str!("../../../docs/terms-of-use.md");

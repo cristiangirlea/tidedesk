@@ -330,7 +330,7 @@ impl Shell {
         }
         ui.small(
             "Free for personal, non-commercial use under the TideDesk Personal Use Source \
-             License 1.0. Business use needs separate written permission.",
+             License 1.1. Business use needs a licence.",
         );
         ui.horizontal_wrapped(|ui| {
             if ui.button("License").clicked() {

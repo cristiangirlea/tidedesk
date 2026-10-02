@@ -242,7 +242,7 @@ Android and iOS ports reuse the core and protocol unchanged.
 
 ## License
 
-[TideDesk Personal Use Source License 1.0](LICENSE). Personal, non-commercial use is
+[TideDesk Personal Use Source License 1.1](LICENSE). Personal, non-commercial use is
 free. Business use (including a company's internal IT support), resale, paid customer
 support and product integration require separate written permission. No commercial
 license is included with this source checkout.

@@ -1,6 +1,6 @@
 TideDesk @VERSION@: remote desktop for Windows x64, free for personal, non-commercial use.
 
-License: TideDesk Personal Use Source License 1.0 (see LICENSE in the ZIP). Business use requires separate written permission. Previously published AGPL releases retain their original permissions.
+License: TideDesk Personal Use Source License 1.1 (see LICENSE in the ZIP). Business use requires a licence; computers managed by an organisation have a 14-day trial and then 8 hours a month. Previously published AGPL releases retain their original permissions.
 
 Download @ZIP@ and extract it. Run tidedesk.exe on both computers.
 
