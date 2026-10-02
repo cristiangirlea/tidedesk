@@ -176,7 +176,8 @@ impl std::fmt::Display for RejectReason {
             ),
             Self::WayNotAllowed => write!(
                 f,
-                "the host's administrator does not allow coming in this way; ask for another                  (a trusted viewer, the saved password or the access code)"
+                "the host's administrator does not allow coming in this way; ask for another \
+                 (a trusted viewer, the saved password or the access code)"
             ),
             Self::IncompatibleVersion { host_version } => write!(
                 f,
@@ -320,6 +321,24 @@ mod tests {
             capture_us: 987_654_321,
         };
         assert_eq!(VideoFrameHeader::decode(&h.encode()), h);
+    }
+
+    #[test]
+    fn refusal_reasons_read_as_one_line() {
+        for reason in [
+            RejectReason::BadCode,
+            RejectReason::TooManyAttempts,
+            RejectReason::Busy,
+            RejectReason::IncompatibleVersion { host_version: 1 },
+            RejectReason::NotAccepting,
+            RejectReason::NoPassword,
+            RejectReason::BadPassword,
+            RejectReason::CompanyHoursUsed,
+            RejectReason::WayNotAllowed,
+        ] {
+            let text = reason.to_string();
+            assert!(!text.contains("  "), "{reason:?}: {text}");
+        }
     }
 
     #[test]

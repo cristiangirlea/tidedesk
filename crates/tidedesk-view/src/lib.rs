@@ -196,7 +196,8 @@ pub(crate) fn lookup_service(
         Choice::Chosen(Some(service)) => Ok(service),
         Choice::Overruled(Some(service)) => {
             tracing::info!(
-                "connection service {chosen} not allowed by this computer's administrator:                  using {service}"
+                "connection service {chosen} not allowed by this computer's administrator: \
+                 using {service}"
             );
             Ok(service)
         }
