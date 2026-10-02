@@ -51,6 +51,34 @@ mod windows_impl {
             unsafe { SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
     }
 
+    /// The screen's usable area (without the taskbar), in pixels: what the
+    /// window may take. The window's sizes are in pixels too (its software
+    /// renderer draws at one point per pixel).
+    pub fn work_area() -> Option<(f32, f32)> {
+        use windows::Win32::Foundation::RECT;
+        use windows::Win32::UI::WindowsAndMessaging::{
+            SPI_GETWORKAREA, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS, SystemParametersInfoW,
+        };
+        // Measured in real pixels, whether or not sharing has started.
+        enable_dpi_awareness();
+        let mut area = RECT::default();
+        // SAFETY: SPI_GETWORKAREA fills the RECT it is given.
+        unsafe {
+            SystemParametersInfoW(
+                SPI_GETWORKAREA,
+                0,
+                Some(&mut area as *mut RECT as *mut _),
+                SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0),
+            )
+            .ok()?;
+        }
+        let (w, h) = (
+            (area.right - area.left) as f32,
+            (area.bottom - area.top) as f32,
+        );
+        (w > 0.0 && h > 0.0).then_some((w, h))
+    }
+
     /// Shows a fatal error when there may be no console to print it to.
     pub fn error_box(title: &str, message: &str) {
         use windows::Win32::UI::WindowsAndMessaging::{MB_ICONERROR, MB_OK, MessageBoxW};
@@ -378,6 +406,9 @@ mod windows_impl {
 mod fallback {
     pub fn attach_console() {}
     pub fn enable_dpi_awareness() {}
+    pub fn work_area() -> Option<(f32, f32)> {
+        None
+    }
     pub fn error_box(_title: &str, message: &str) {
         eprintln!("error: {message}");
     }

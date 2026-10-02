@@ -78,7 +78,8 @@ try {
         'licenses/third-party/opusic-sys-0.7.5/Opus-COPYING',
         'licenses/third-party/epaint_default_fonts-0.34.3/OFL.txt',
         'licenses/third-party/epaint_default_fonts-0.34.3/UFL.txt',
-        'licenses/third-party/egui_software_backend-vendored/LICENSE-MIT'
+        'licenses/third-party/egui_software_backend-vendored/LICENSE-MIT',
+        'licenses/third-party/ibm-plex/IBM-Plex-OFL.txt'
     )) {
         if (-not $archive.GetEntry($notice)) { throw "Missing third-party notice: $notice" }
     }

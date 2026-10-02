@@ -86,5 +86,9 @@ New-Item -ItemType Directory -Path $vendored | Out-Null
 Copy-Item -LiteralPath (Join-Path $repo 'third_party/egui_software_backend/LICENSE-MIT') -Destination $vendored
 Copy-Item -LiteralPath $apacheText -Destination $vendored
 $index.Add('egui_software_backend | vendored | MIT OR Apache-2.0 | LICENSE-APACHE, LICENSE-MIT')
+$plex = Join-Path $destination 'ibm-plex'
+New-Item -ItemType Directory -Path $plex | Out-Null
+Copy-Item -LiteralPath (Join-Path $repo 'assets/fonts/IBM-Plex-OFL.txt') -Destination $plex
+$index.Add('IBM Plex Sans and Mono (fonts) | bundled | OFL-1.1 | IBM-Plex-OFL.txt')
 $index | Set-Content -LiteralPath (Join-Path $destination 'INDEX.txt') -Encoding utf8
 Write-Output "Bundled notices for $($packages.Count) locked registry packages and the vendored backend."

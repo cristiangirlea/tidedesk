@@ -31,6 +31,9 @@ pub struct ViewerInfo {
     pub connection: quinn::Connection,
     /// It copies files ([`net::extras`]).
     pub files: bool,
+    /// When it connected, and how it was let in.
+    pub since: Instant,
+    pub admitted_by: &'static str,
 }
 
 /// Registers with `service` for `code`.
@@ -307,6 +310,8 @@ pub async fn run(conn: quinn::Connection, state: Arc<HostState>) -> Result<()> {
         address: remote,
         connection: conn.clone(),
         files: net::extras(&conn),
+        since: Instant::now(),
+        admitted_by,
     });
     state.changed();
     let how = if trusted { " (trusted)" } else { "" };
