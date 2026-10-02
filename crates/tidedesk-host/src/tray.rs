@@ -19,6 +19,7 @@ pub struct Tray {
     last_tooltip: String,
     /// The window's title: shown in the menu and used to find the window.
     title: &'static str,
+    quit: MenuItem,
 }
 
 impl Tray {
@@ -38,6 +39,9 @@ impl Tray {
         );
         let disconnect = MenuItem::new("Disconnect viewer", true, None);
         let quit = MenuItem::new("Quit", true, None);
+        let may = crate::may_stop_sharing(&tidedesk_core::policy::current());
+        accept.set_enabled(may);
+        quit.set_enabled(may);
         let menu = Menu::with_items(&[
             &open,
             &PredefinedMenuItem::separator(),
@@ -79,6 +83,11 @@ impl Tray {
             if event.id == open_id {
                 platform::set_window_visible(title, true);
             } else if event.id == accept_id {
+                if !crate::may_stop_sharing(&tidedesk_core::policy::current()) {
+                    // Set by the administrator: sync puts the check back.
+                    state.changed();
+                    return;
+                }
                 // The check item has already toggled itself.
                 let now = !state.accepting.load(Ordering::SeqCst);
                 state.accepting.store(now, Ordering::SeqCst);
@@ -88,6 +97,9 @@ impl Tray {
                     v.connection.close(2u32.into(), b"disconnected by host");
                 }
             } else if event.id == quit_id {
+                if !crate::may_stop_sharing(&tidedesk_core::policy::current()) {
+                    return;
+                }
                 if let Some(v) = state.viewer.lock().unwrap().as_ref() {
                     v.connection.close(0u32.into(), b"host quit");
                 }
@@ -101,6 +113,7 @@ impl Tray {
         Ok(Self {
             icon,
             accept,
+            quit,
             last_tooltip: String::new(),
             title,
         })
@@ -108,6 +121,13 @@ impl Tray {
 
     /// Mirrors state changed elsewhere (e.g. in the window) into the tray.
     pub fn sync(&mut self, state: &HostState) {
+        // The administrator's word, read again as it may change.
+        let may = crate::may_stop_sharing(&tidedesk_core::policy::current());
+        self.accept.set_enabled(may);
+        self.quit.set_enabled(may);
+        if !may && !state.accepting.load(Ordering::SeqCst) {
+            state.accepting.store(true, Ordering::SeqCst);
+        }
         let accepting = state.accepting.load(Ordering::SeqCst);
         if self.accept.is_checked() != accepting {
             self.accept.set_checked(accepting);
