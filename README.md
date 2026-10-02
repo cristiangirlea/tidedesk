@@ -256,8 +256,10 @@ Computers managed by an organisation (joined to an Active Directory domain or to
 Entra ID, or enrolled in device management such as Intune) need a licence. TideDesk reads this
 from Windows on the computer itself and sends nothing anywhere; it never watches how it is used.
 Without a licence, such a computer has a 14-day trial, then 8 hours of sessions a month; after
-that, new sessions wait for a licence or the next month. The viewer's title shows the time left,
-and a running session is warned 10 minutes before it ends.
+that, new sessions wait for a licence or the next month. The viewer's title shows the time left;
+from 2 hours into the month a small mark shows in a corner of the viewer's picture (never on the
+shared screen), and a running session is warned 10 minutes before it ends. A viewer on such a
+computer follows the same rule for itself.
 
 A licence that includes the session log keeps one line per session in `sessions.csv`, next to
 `tidedesk.log`: when it started and ended, the viewer, its address, how it was let in (access

@@ -98,6 +98,8 @@ pub struct App {
     notice: Option<String>,
     /// The host is a company computer without a licence: its hours.
     company: Option<tidedesk_core::company::Allowance>,
+    /// This computer is one: its hours.
+    pub own_company: Option<tidedesk_core::company::Allowance>,
     pub test: TestControl,
     /// For how long the host has not answered.
     silent: Option<Duration>,
@@ -143,6 +145,7 @@ impl App {
             settings_window: None,
             notice: None,
             company: None,
+            own_company: None,
             test: TestControl::default(),
             silent: None,
             exit_message: None,
@@ -266,6 +269,13 @@ impl App {
             }
             UiEvent::Silent(silent) => self.host_silent(silent),
             UiEvent::Command(command) => self.command(command),
+            UiEvent::OwnCompany(allowance) => {
+                self.own_company = Some(allowance);
+                self.update_title();
+                if let Some(s) = &self.surface {
+                    s.window.request_redraw();
+                }
+            }
             UiEvent::Disconnected(reason) => {
                 if self.session_ended(reason) {
                     event_loop.exit();
@@ -566,7 +576,15 @@ impl App {
             // First, where it shows in a title cut short.
             self.silent
                 .map(|s| format!(" | No answer from the host for {} s", s.as_secs()))
-                .or_else(|| self.company.map(company_note))
+                .or_else(|| {
+                    // Both, when both are: each may be the one about to end.
+                    let notes = [
+                        self.company.map(|a| company_note("Host", a)),
+                        self.own_company.map(|a| company_note("This computer", a)),
+                    ];
+                    let notes: String = notes.into_iter().flatten().collect();
+                    (!notes.is_empty()).then_some(notes)
+                })
                 .unwrap_or_default(),
             self.boost_status
                 .map(|s| {
@@ -658,6 +676,9 @@ impl App {
             ServerMessage::CompanyUse(allowance) => {
                 self.company = Some(allowance);
                 self.update_title();
+                if let Some(s) = &self.surface {
+                    s.window.request_redraw();
+                }
             }
             ServerMessage::Cursor(position) => {
                 // Display only: do not release controls, send input, or warp the OS cursor.
@@ -777,6 +798,17 @@ impl App {
             self.placement,
         );
         drop(pic);
+        let marked = |a: Option<tidedesk_core::company::Allowance>| {
+            matches!(a, Some(tidedesk_core::company::Allowance::Marked { .. }))
+        };
+        if marked(self.company) || marked(self.own_company) {
+            layout::draw_mark(
+                &mut buffer,
+                size.width,
+                self.placement,
+                s.window.scale_factor(),
+            );
+        }
         if let Some(cursor) = self.host_cursor {
             layout::draw_host_cursor(
                 &mut buffer,
@@ -1012,9 +1044,9 @@ impl ApplicationHandler<UiEvent> for App {
 }
 
 /// What the title says about a host that is an unlicensed company computer.
-fn company_note(allowance: tidedesk_core::company::Allowance) -> String {
+fn company_note(who: &str, allowance: tidedesk_core::company::Allowance) -> String {
     use tidedesk_core::company::{Allowance, WARNING, hours_and_minutes};
-    let start = " | Host: company computer without a TideDesk licence";
+    let start = format!(" | {who}: company computer without a TideDesk licence");
     match allowance {
         Allowance::Trial { days_left } => format!("{start}, trial: {days_left} days left"),
         Allowance::Clear { minutes_left } | Allowance::Marked { minutes_left }
@@ -1041,6 +1073,8 @@ fn plain_reason(reason: &str) -> String {
         "the host disconnected this viewer"
     } else if says("host quit") {
         "TideDesk was closed on the host"
+    } else if says(crate::OWN_HOURS_USED) {
+        crate::OWN_HOURS_USED
     } else if says("company hours used") {
         "the host is a company computer without a TideDesk licence, and this month's hours are used"
     } else if says("host ended the session") || says("closed by peer: bye") {
@@ -1490,17 +1524,23 @@ mod tests {
         use tidedesk_core::company::Allowance;
         let start = " | Host: company computer without a TideDesk licence";
         assert_eq!(
-            company_note(Allowance::Trial { days_left: 9 }),
+            company_note("Host", Allowance::Trial { days_left: 9 }),
             format!("{start}, trial: 9 days left")
         );
         assert_eq!(
-            company_note(Allowance::Marked { minutes_left: 320 }),
+            company_note("Host", Allowance::Marked { minutes_left: 320 }),
             format!("{start}: 5 h 20 min left this month")
         );
         assert_eq!(
-            company_note(Allowance::Marked { minutes_left: 10 }),
+            company_note("Host", Allowance::Marked { minutes_left: 10 }),
             format!("{start}: this session ends in 10 min")
         );
+        assert_eq!(
+            company_note("This computer", Allowance::Used),
+            " | This computer: company computer without a TideDesk licence: this month's hours \
+             are used"
+        );
+        assert_eq!(plain_reason(crate::OWN_HOURS_USED), crate::OWN_HOURS_USED);
     }
 
     /// The picture stands still when the host has gone, as it does on a

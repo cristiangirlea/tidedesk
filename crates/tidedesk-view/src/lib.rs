@@ -22,8 +22,9 @@ use std::io::Write;
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use clap::{CommandFactory, FromArgMatches, Parser};
 use tidedesk_core::identity::{KnownHosts, PinStatus};
 use tidedesk_core::nat::signal::DEFAULT_RENDEZVOUS;
@@ -32,6 +33,10 @@ use winit::event_loop::{EventLoop, EventLoopProxy};
 
 use child::ChildLine;
 use stream::{Notify, Picture, UiEvent};
+
+/// Why this computer cannot connect, or a session ended, when it is a
+/// company computer without a licence whose hours are used.
+pub const OWN_HOURS_USED: &str = "this computer is a company computer without a TideDesk licence, and this month's hours are used";
 
 #[derive(Parser, Debug)]
 #[command(version, about = "Connect to a TideDesk host.")]
@@ -301,6 +306,11 @@ fn run(program: &str, argv: Vec<OsString>) -> Result<()> {
     } else {
         connect::Route::Direct
     };
+    // This computer may be a company computer without a licence.
+    let own_company = tidedesk_core::company::allowance();
+    if own_company == Some(tidedesk_core::company::Allowance::Used) {
+        bail!("{OWN_HOURS_USED}");
+    }
     let code = match args.code.clone() {
         Some(c) => c,
         None => prompt_code()?,
@@ -422,7 +432,27 @@ fn run(program: &str, argv: Vec<OsString>) -> Result<()> {
                     None => std::future::pending().await,
                 }
             };
+            let company = async {
+                use tidedesk_core::company::{Meter, Reading};
+                let Some(told) = own_company else {
+                    return std::future::pending::<Result<()>>().await;
+                };
+                let mut meter = Meter::new(tidedesk_core::company::load(), told, Instant::now());
+                let mut tick = tokio::time::interval(Duration::from_secs(15));
+                loop {
+                    tick.tick().await;
+                    match meter.read(Instant::now()) {
+                        Reading::Tell(allowance) => ui.notify(UiEvent::OwnCompany(allowance)),
+                        Reading::Over => {
+                            conn.close(0u32.into(), b"company hours used");
+                            return Err(anyhow!("{OWN_HOURS_USED}"));
+                        }
+                        Reading::Nothing => {}
+                    }
+                }
+            };
             let reason = tokio::select! {
+                r = company => r.err().map(|e: anyhow::Error| format!("{e:#}")),
                 r = video => r.err().map(|e| format!("{e:#}")),
                 r = audio => r.err().map(|e| format!("{e:#}")),
                 r = stream::control_writer(send, control_rx) => r.err().map(|e| format!("{e:#}")),
@@ -442,6 +472,7 @@ fn run(program: &str, argv: Vec<OsString>) -> Result<()> {
         window_placement::WindowMemory::load(&fingerprint),
         game_boost,
     );
+    app.own_company = own_company;
     if args.control {
         let conn = conn.clone();
         app.test.path = Some(Box::new(move || {
