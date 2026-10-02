@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use tidedesk_core::auth::{self, Throttle};
+use tidedesk_core::company;
 use tidedesk_core::net;
 use tidedesk_core::protocol::{self, ClientMessage, PROTOCOL_VERSION, RejectReason, ServerMessage};
 use tokio::io::AsyncWriteExt;
@@ -262,6 +263,12 @@ pub async fn run(conn: quinn::Connection, state: Arc<HostState>) -> Result<()> {
         return reject(&mut send, &conn, reason).await;
     }
     state.throttle.lock().unwrap().record_success(remote.ip());
+    // A company computer without a licence: its trial or monthly hours.
+    let company = company::allowance();
+    if company == Some(company::Allowance::Used) {
+        tracing::info!("refused {remote}: this company computer's hours for the month are used");
+        return reject(&mut send, &conn, RejectReason::CompanyHoursUsed).await;
+    }
     if state.busy.swap(true, Ordering::SeqCst) {
         return reject(&mut send, &conn, RejectReason::Busy).await;
     }
@@ -322,6 +329,11 @@ pub async fn run(conn: quinn::Connection, state: Arc<HostState>) -> Result<()> {
         },
     )
     .await?;
+    if let Some(allowance) = company {
+        protocol::write_message(&mut send, &ServerMessage::CompanyUse(allowance)).await?;
+    }
+    let mut meter = company.map(|told| company::Meter::new(company::load(), told, Instant::now()));
+    let company_over = AtomicBool::new(false);
 
     let mut video_stream = conn.open_uni().await?;
     let video_task = async {
@@ -389,6 +401,19 @@ pub async fn run(conn: quinn::Connection, state: Arc<HostState>) -> Result<()> {
                     msg
                 }
                 _ = tick.tick() => {
+                    if let Some(meter) = &mut meter {
+                        match meter.read(Instant::now()) {
+                            company::Reading::Tell(allowance) => {
+                                protocol::write_message(&mut send, &ServerMessage::CompanyUse(allowance)).await?;
+                            }
+                            company::Reading::Over => {
+                                company_over.store(true, Ordering::SeqCst);
+                                protocol::write_message(&mut send, &ServerMessage::CompanyUse(company::Allowance::Used)).await?;
+                                bail!("this company computer's hours for the month are used");
+                            }
+                            company::Reading::Nothing => {}
+                        }
+                    }
                     // Recheck permissions changed while select was waiting.
                     if (sharing.clipboard && !state.clipboard.load(Ordering::SeqCst))
                         || (sharing.mouse && !state.mouse.load(Ordering::SeqCst)) {
@@ -491,7 +516,12 @@ pub async fn run(conn: quinn::Connection, state: Arc<HostState>) -> Result<()> {
     drop(stop_video);
     injector.release_all();
     let _ = send.shutdown().await;
-    conn.close(0u32.into(), b"bye");
+    let reason: &[u8] = if company_over.load(Ordering::SeqCst) {
+        b"company hours used"
+    } else {
+        b"bye"
+    };
+    conn.close(0u32.into(), reason);
     tracing::info!("viewer \"{client_name}\" disconnected");
     result
 }

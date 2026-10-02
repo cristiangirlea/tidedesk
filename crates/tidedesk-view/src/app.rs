@@ -96,6 +96,8 @@ pub struct App {
     next_tick: Instant,
     settings_window: Option<Child>,
     notice: Option<String>,
+    /// The host is a company computer without a licence: its hours.
+    company: Option<tidedesk_core::company::Allowance>,
     pub test: TestControl,
     /// For how long the host has not answered.
     silent: Option<Duration>,
@@ -140,6 +142,7 @@ impl App {
             next_tick: Instant::now(),
             settings_window: None,
             notice: None,
+            company: None,
             test: TestControl::default(),
             silent: None,
             exit_message: None,
@@ -563,6 +566,7 @@ impl App {
             // First, where it shows in a title cut short.
             self.silent
                 .map(|s| format!(" | No answer from the host for {} s", s.as_secs()))
+                .or_else(|| self.company.map(company_note))
                 .unwrap_or_default(),
             self.boost_status
                 .map(|s| {
@@ -649,6 +653,10 @@ impl App {
             {
                 self.boost_status = Some(status);
                 self.game_boost.store(status.game_boost, Ordering::Relaxed);
+                self.update_title();
+            }
+            ServerMessage::CompanyUse(allowance) => {
+                self.company = Some(allowance);
                 self.update_title();
             }
             ServerMessage::Cursor(position) => {
@@ -1003,6 +1011,28 @@ impl ApplicationHandler<UiEvent> for App {
     }
 }
 
+/// What the title says about a host that is an unlicensed company computer.
+fn company_note(allowance: tidedesk_core::company::Allowance) -> String {
+    use tidedesk_core::company::{Allowance, WARNING, hours_and_minutes};
+    let start = " | Host: company computer without a TideDesk licence";
+    match allowance {
+        Allowance::Trial { days_left } => format!("{start}, trial: {days_left} days left"),
+        Allowance::Clear { minutes_left } | Allowance::Marked { minutes_left }
+            if u64::from(minutes_left) * 60 <= WARNING.as_secs() =>
+        {
+            format!(
+                "{start}: this session ends in {}",
+                hours_and_minutes(minutes_left)
+            )
+        }
+        Allowance::Clear { minutes_left } | Allowance::Marked { minutes_left } => format!(
+            "{start}: {} left this month",
+            hours_and_minutes(minutes_left)
+        ),
+        Allowance::Used => format!("{start}: this month's hours are used"),
+    }
+}
+
 /// Why a session ended, in words for the person at the viewer; the
 /// technical reason goes to the log.
 fn plain_reason(reason: &str) -> String {
@@ -1011,6 +1041,8 @@ fn plain_reason(reason: &str) -> String {
         "the host disconnected this viewer"
     } else if says("host quit") {
         "TideDesk was closed on the host"
+    } else if says("company hours used") {
+        "the host is a company computer without a TideDesk licence, and this month's hours are used"
     } else if says("host ended the session") || says("closed by peer: bye") {
         "the host ended the session"
     } else if says("timed out") {
@@ -1443,9 +1475,32 @@ mod tests {
                 "this computer could not show the video",
             ),
             ("something else", "the connection was lost"),
+            (
+                "connection lost: closed by peer: company hours used (code 0)",
+                "the host is a company computer without a TideDesk licence, and this month's \
+                 hours are used",
+            ),
         ] {
             assert_eq!(plain_reason(reason), plain, "{reason}");
         }
+    }
+
+    #[test]
+    fn the_title_says_when_the_host_is_an_unlicensed_company_computer() {
+        use tidedesk_core::company::Allowance;
+        let start = " | Host: company computer without a TideDesk licence";
+        assert_eq!(
+            company_note(Allowance::Trial { days_left: 9 }),
+            format!("{start}, trial: 9 days left")
+        );
+        assert_eq!(
+            company_note(Allowance::Marked { minutes_left: 320 }),
+            format!("{start}: 5 h 20 min left this month")
+        );
+        assert_eq!(
+            company_note(Allowance::Marked { minutes_left: 10 }),
+            format!("{start}: this session ends in 10 min")
+        );
     }
 
     /// The picture stands still when the host has gone, as it does on a
