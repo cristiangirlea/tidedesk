@@ -295,7 +295,7 @@ pub async fn run(conn: quinn::Connection, state: Arc<HostState>) -> Result<()> {
         Knows::Code(_) => "access code",
         Knows::Password(_) => "saved password",
     };
-    let mut record = session_log::Recorder(Some(session_log::Entry {
+    let mut record = session_log::Recorder::start(session_log::Entry {
         started: std::time::SystemTime::now(),
         ended: std::time::SystemTime::now(),
         viewer: client_name.clone(),
@@ -303,7 +303,7 @@ pub async fn run(conn: quinn::Connection, state: Arc<HostState>) -> Result<()> {
         address: remote.to_string(),
         admitted_by,
         ended_because: "the session could not start".into(),
-    }));
+    });
     *state.viewer.lock().unwrap() = Some(ViewerInfo {
         name: client_name.clone(),
         fingerprint,
