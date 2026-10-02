@@ -131,6 +131,23 @@ pub(crate) fn local_addresses(port: u16) -> Vec<Address> {
     found
 }
 
+/// Where this computer stands as an unlicensed company computer, looked
+/// up again every few seconds rather than on every frame.
+fn company_allowance() -> Option<tidedesk_core::company::Allowance> {
+    use std::sync::Mutex;
+    type Cached = Option<(Instant, Option<tidedesk_core::company::Allowance>)>;
+    static CACHE: Mutex<Cached> = Mutex::new(None);
+    let mut cache = CACHE.lock().unwrap();
+    match *cache {
+        Some((at, allowance)) if at.elapsed() < Duration::from_secs(5) => allowance,
+        _ => {
+            let allowance = tidedesk_core::company::allowance();
+            *cache = Some((Instant::now(), allowance));
+            allowance
+        }
+    }
+}
+
 fn status_dot(ui: &mut egui::Ui, color: Color32) {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(12.0, 12.0), egui::Sense::hover());
     ui.painter().circle_filled(rect.center(), 5.0, color);
@@ -356,6 +373,14 @@ impl HostApp {
         let mut accept = accepting;
         if ui.checkbox(&mut accept, "Accept new connections").changed() {
             state.accepting.store(accept, Ordering::SeqCst);
+        }
+        if let Some(allowance) = company_allowance() {
+            let name = tidedesk_core::company::management().name();
+            ui.colored_label(ui.visuals().warn_fg_color, allowance.describe(&name))
+                .on_hover_text(
+                    "Computers managed by an organisation need a TideDesk licence. Without one: \
+                 14 days of trial, then 8 hours a month. Add a licence under About.",
+                );
         }
         ui.separator();
 

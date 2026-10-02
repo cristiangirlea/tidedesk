@@ -7,6 +7,7 @@
 pub mod audio;
 pub mod auth;
 pub mod clipboard;
+pub mod company;
 pub mod dates;
 pub mod identity;
 pub mod licence;

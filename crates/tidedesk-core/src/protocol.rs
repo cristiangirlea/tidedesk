@@ -113,6 +113,9 @@ pub enum ServerMessage {
         answer: Vec<u8>,
         proof: [u8; 32],
     },
+    /// The host is a company computer without a licence: where its hours
+    /// stand. Sent only by such a host, after `Welcome` and when it changes.
+    CompanyUse(crate::company::Allowance),
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -128,6 +131,8 @@ pub enum RejectReason {
     /// The host has no saved password: use its access code.
     NoPassword,
     BadPassword,
+    /// A company computer without a licence has used this month's hours.
+    CompanyHoursUsed,
 }
 
 impl std::fmt::Display for RejectReason {
@@ -139,6 +144,11 @@ impl std::fmt::Display for RejectReason {
             Self::NotAccepting => write!(f, "host is not accepting connections right now"),
             Self::NoPassword => write!(f, "the host has no saved password; use its access code"),
             Self::BadPassword => write!(f, "wrong password"),
+            Self::CompanyHoursUsed => write!(
+                f,
+                "the host is a company computer without a TideDesk licence, and this month's \
+                 hours are used"
+            ),
             Self::IncompatibleVersion { host_version } => write!(
                 f,
                 "protocol mismatch (host speaks v{host_version}, viewer speaks v{PROTOCOL_VERSION})"
@@ -366,6 +376,14 @@ mod tests {
         assert_eq!(reason(RejectReason::NotAccepting), 4);
         assert_eq!(reason(RejectReason::NoPassword), 5);
         assert_eq!(reason(RejectReason::BadPassword), 6);
+        assert_eq!(reason(RejectReason::CompanyHoursUsed), 7);
+        let company = ServerMessage::CompanyUse(crate::company::Allowance::Used);
+        let encoded = postcard::to_stdvec(&company).unwrap();
+        assert_eq!(first(encoded.clone()), 9);
+        assert_eq!(
+            postcard::from_bytes::<ServerMessage>(&encoded).unwrap(),
+            company
+        );
     }
 
     #[tokio::test]

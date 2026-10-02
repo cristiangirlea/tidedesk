@@ -252,6 +252,13 @@ A written permission comes as a short signed text, the licence. Paste it under A
 checked on the computer itself: no account, nothing sent anywhere. An expired licence
 keeps working for 14 days.
 
+Computers managed by an organisation (joined to an Active Directory domain or to Microsoft
+Entra ID, or enrolled in device management such as Intune) need a licence. TideDesk reads this
+from Windows on the computer itself and sends nothing anywhere; it never watches how it is used.
+Without a licence, such a computer has a 14-day trial, then 8 hours of sessions a month; after
+that, new sessions wait for a licence or the next month. The viewer's title shows the time left,
+and a running session is warned 10 minutes before it ends.
+
 A licence that includes the session log keeps one line per session in `sessions.csv`, next to
 `tidedesk.log`: when it started and ended, the viewer, its address, how it was let in (access
 code, saved password or trusted viewer) and why it ended. It opens in a spreadsheet and stays on
