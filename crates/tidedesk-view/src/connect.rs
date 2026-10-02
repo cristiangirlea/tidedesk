@@ -166,22 +166,27 @@ pub fn parse_internet_host(text: &str) -> Result<SocketAddr> {
     }
 }
 
-fn symmetric_nat() -> String {
+/// Why no path opened from a network with a symmetric NAT: TideDesk guessed
+/// its ports (see `tidedesk_core::nat::punch`), and this router did not
+/// hand them out in turn.
+fn symmetric_nat_no_reply(host: impl std::fmt::Display) -> String {
     format!(
-        "this network uses a symmetric NAT (common on mobile data and carrier-grade NAT), so no \
-         direct path to the host can be opened from here. TideDesk never relays sessions: use a \
-         VPN such as Tailscale, or forward UDP port {DEFAULT_PORT} on the host's router and \
-         connect to it directly. See docs/internet-access.md."
+        "{host} did not answer. This network uses a symmetric NAT (common on mobile data and \
+         carrier-grade NAT), which gives every destination a port of its own: TideDesk tried \
+         the likely ones, but this router picks them some other way. TideDesk never relays sessions: let the host's router open its port (on the host: \
+         Settings, Network), use a VPN such as Tailscale, or forward UDP port {DEFAULT_PORT} \
+         on the host's router. See docs/internet-access.md."
     )
 }
 
 fn no_reply(host: SocketAddr, me: SocketAddr) -> String {
     format!(
         "could not open a direct path to {host}. Make sure the host has this computer's internet \
-         address ({me}) entered and Open pressed within the last two minutes. If either network \
-         uses a symmetric NAT (common on mobile data and carrier-grade NAT), a direct connection \
-         is impossible: TideDesk never relays, so use a VPN such as Tailscale or forward UDP port \
-         {DEFAULT_PORT} on the host's router. See docs/internet-access.md."
+         address ({me}) entered and Open pressed within the last two minutes. If both networks \
+         use a symmetric NAT (common on mobile data and carrier-grade NAT), a direct connection \
+         is impossible. TideDesk never relays sessions: let the host's router open its port (on the host: \
+         Settings, Network), use a VPN such as Tailscale, or forward UDP port {DEFAULT_PORT} \
+         on the host's router. See docs/internet-access.md."
     )
 }
 
@@ -383,9 +388,7 @@ async fn through_service(
         }
         LookupOutcome::Unreachable(reason) => bail!("{reason}"),
     };
-    if introduction.nat == NatKind::Symmetric {
-        bail!(symmetric_nat());
-    }
+    // A symmetric NAT here is tried anyway: the host guesses its ports.
     let peer = introduction.peer;
     // Opening the seal derives a key from the code, which takes a while:
     // off the runtime's threads, so the search of this network goes on.
@@ -429,11 +432,15 @@ async fn through_service(
         Err(_) if introduction.reflexive.ip() == peer.ip() => {
             bail!(same_network_no_reply(device_id, peer.ip(), &local))
         }
+        Err(_) if introduction.nat == NatKind::Symmetric => {
+            bail!(symmetric_nat_no_reply(device_id))
+        }
         Err(_) => bail!(
-            "{device_id} did not answer at {peer}. If either network uses a symmetric NAT \
+            "{device_id} did not answer at {peer}. If both networks use a symmetric NAT \
              (common on mobile data and carrier-grade NAT), a direct connection is \
-             impossible: TideDesk never relays, so use a VPN such as Tailscale or forward \
-             UDP port {DEFAULT_PORT} on the host's router. See docs/internet-access.md."
+             impossible. TideDesk never relays sessions: let the host's router open its port (on the host: \
+             Settings, Network), use a VPN such as Tailscale, or forward UDP port {DEFAULT_PORT} \
+             on the host's router. See docs/internet-access.md."
         ),
     };
     progress(Progress::PathOpen(path.clone()));
@@ -547,9 +554,7 @@ impl Dialer {
                 public.addr.ip()
             );
         }
-        if public.nat == NatKind::Symmetric {
-            bail!(symmetric_nat());
-        }
+        // A symmetric NAT here is tried anyway: the host guesses its ports.
         progress(Progress::ViewerAddress(public.addr));
         progress(Progress::Status(format!(
             "Waiting for the host to open a path to {}…",
@@ -561,6 +566,9 @@ impl Dialer {
                 Ok(path) => {
                     progress(Progress::PathOpen(path.clone()));
                     path.peer
+                }
+                Err(PunchError::NoReply) if public.nat == NatKind::Symmetric => {
+                    bail!(symmetric_nat_no_reply(host_addr))
                 }
                 Err(PunchError::NoReply) => bail!(no_reply(host_addr, public.addr)),
                 Err(PunchError::Stopped) => bail!("stopped opening a path to {host_addr}"),

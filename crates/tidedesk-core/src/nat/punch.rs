@@ -40,6 +40,16 @@ pub const KEEPALIVE_MAX: Duration = Duration::from_secs(180);
 /// answers from, such as a mistyped one.
 pub const MAX_WINDOW: Duration = Duration::from_secs(180);
 
+/// After this long without an answer, punches also guess ports above the
+/// peer's: see [`Exchange`].
+pub const GUESS_AFTER: Duration = Duration::from_secs(1);
+/// How long guessing lasts.
+pub const GUESS_FOR: Duration = Duration::from_secs(10);
+/// How many ports above the peer's are guessed.
+pub const GUESSED_PORTS: u16 = 16;
+/// Guessed ports punched per round.
+pub const GUESSES_PER_ROUND: usize = 4;
+
 const VERSION: u8 = 1;
 
 pub type SessionId = [u8; 8];
@@ -142,7 +152,16 @@ pub enum State {
 ///
 /// Packets are accepted from the peer's IP address on any port: routers may
 /// use another port towards us than the one the peer learnt from STUN, and
-/// punches then follow the port that answered. With a `session`, packets of
+/// punches then follow the port that answered.
+///
+/// A router that gives every destination a new port ("symmetric NAT") sends
+/// the peer's packets to us from a port nobody told us, and a router on our
+/// side that only lets in what it has sent to drops them. So, while nothing
+/// has been heard, punches also go to the [`GUESSED_PORTS`] ports above the
+/// given one, [`GUESSES_PER_ROUND`] a round, from [`GUESS_AFTER`] for
+/// [`GUESS_FOR`]: such routers mostly hand out ports in turn. That is a few
+/// hundred small packets at most, and stops as soon as the peer answers. Two
+/// such routers, one on each side, still cannot be punched through. With a `session`, packets of
 /// other sessions are ignored. Without one, every session is answered and
 /// punches carry the latest, so the other side can retry with a new one.
 ///
@@ -160,6 +179,15 @@ pub struct Exchange {
     until: Instant,
     /// Keepalives are over.
     finished: bool,
+    /// The address we were given, which guesses count up from.
+    given: SocketAddr,
+    started: Instant,
+    /// The peer has been heard from, so its port is known.
+    heard: bool,
+    /// Guessed addresses still to punch this round.
+    guesses: Vec<SocketAddr>,
+    /// The next port above the given one to guess, 1 to [`GUESSED_PORTS`].
+    next_guess: u16,
 }
 
 impl Exchange {
@@ -179,12 +207,34 @@ impl Exchange {
             next_send: now,
             until: now + window.min(MAX_WINDOW),
             finished: false,
+            given: peer,
+            started: now,
+            heard: false,
+            guesses: Vec::new(),
+            next_guess: 1,
         }
     }
 
     /// The punch due at `now`, if any.
     pub fn poll(&mut self, now: Instant) -> Option<(SocketAddr, [u8; PUNCH_LEN])> {
-        if !self.active(now) || now < self.next_send {
+        if !self.active(now) {
+            return None;
+        }
+        let punch = Packet {
+            kind: Kind::Punch,
+            session: self.session.unwrap_or_default(),
+            token: self.token,
+            observed: None,
+        }
+        .encode();
+        // The rest of this round's guesses, unless the peer was heard.
+        if let Some(guess) = self.guesses.pop() {
+            if !self.heard {
+                return Some((guess, punch));
+            }
+            self.guesses.clear();
+        }
+        if now < self.next_send {
             return None;
         }
         self.next_send = now
@@ -192,13 +242,20 @@ impl Exchange {
                 State::Open(_) => KEEPALIVE_INTERVAL,
                 _ => PUNCH_INTERVAL,
             };
-        let punch = Packet {
-            kind: Kind::Punch,
-            session: self.session.unwrap_or_default(),
-            token: self.token,
-            observed: None,
-        };
-        Some((self.peer, punch.encode()))
+        let guessing = self.state == State::Punching
+            && !self.heard
+            && now >= self.started + GUESS_AFTER
+            && now < self.started + GUESS_AFTER + GUESS_FOR;
+        if guessing {
+            for _ in 0..GUESSES_PER_ROUND {
+                let port = u32::from(self.given.port()) + u32::from(self.next_guess);
+                if let Ok(port) = u16::try_from(port) {
+                    self.guesses.push(SocketAddr::new(self.given.ip(), port));
+                }
+                self.next_guess = self.next_guess % GUESSED_PORTS + 1;
+            }
+        }
+        Some((self.peer, punch))
     }
 
     /// Handles a datagram from the socket; returns the ack to send, if any.
@@ -219,8 +276,14 @@ impl Exchange {
         if packet.kind == Kind::Ack && packet.token != self.token {
             return None;
         }
+        // Our own punch, come back through a guessed port or a router.
+        if packet.kind == Kind::Punch && packet.token == self.token {
+            return None;
+        }
         // From here on the packet is the peer's: follow its port and session.
         self.peer = from;
+        self.heard = true;
+        self.guesses.clear();
         if known {
             self.session = Some(packet.session);
         }
@@ -257,6 +320,10 @@ impl Exchange {
     pub fn next_deadline(&self) -> Option<Instant> {
         if self.finished || self.state == State::Expired {
             return None;
+        }
+        // Guesses still due go out at once.
+        if !self.guesses.is_empty() {
+            return Some(self.started);
         }
         Some(self.next_send.min(self.until))
     }
@@ -485,19 +552,292 @@ mod tests {
     fn exchange_times_out_without_peer() {
         let t0 = Instant::now();
         let mut viewer = Exchange::new(addr(HOST), Some([1; 8]), Duration::from_secs(2), t0);
-        let mut sent = 0;
+        let (mut punches, mut guesses) = (0, 0);
         while let Some(at) = viewer.next_deadline() {
             assert!(
                 at <= t0 + Duration::from_secs(2),
                 "no work after the window"
             );
-            sent += usize::from(viewer.poll(at).is_some());
+            if let Some((to, _)) = viewer.poll(at) {
+                if to == addr(HOST) {
+                    punches += 1;
+                } else {
+                    guesses += 1;
+                }
+            }
         }
-        assert_eq!(sent, 10, "one punch every 200 ms");
+        assert_eq!(punches, 10, "one punch every 200 ms");
+        assert_eq!(
+            guesses,
+            5 * GUESSES_PER_ROUND,
+            "guesses from the first second on"
+        );
         assert_eq!(viewer.state(), &State::Expired);
 
         let late = packet(Kind::Punch, [1; 8], [5; 8]);
         let later = t0 + Duration::from_secs(3);
         assert_eq!(viewer.on_datagram(addr(HOST), &late, later), None);
+    }
+
+    /// Every packet an exchange sends until `end`, with when.
+    fn sent_until(exchange: &mut Exchange, end: Instant) -> Vec<(Instant, SocketAddr)> {
+        let mut sent = Vec::new();
+        let mut clock = exchange.started;
+        while let Some(at) = exchange.next_deadline() {
+            let at = at.max(clock);
+            clock = at;
+            if at >= end {
+                break;
+            }
+            if let Some((to, _)) = exchange.poll(at) {
+                sent.push((at, to));
+            }
+        }
+        sent
+    }
+
+    #[test]
+    fn unanswered_punches_also_guess_the_next_ports_for_a_while() {
+        let t0 = Instant::now();
+        let mut viewer = Exchange::new(addr(HOST), Some([1; 8]), MAX_WINDOW, t0);
+        let sent = sent_until(&mut viewer, t0 + Duration::from_secs(20));
+        let guessed: Vec<_> = sent.iter().filter(|(_, to)| *to != addr(HOST)).collect();
+        // Only after the first second, only for GUESS_FOR, only above the port.
+        assert!(guessed.iter().all(|(at, _)| *at >= t0 + GUESS_AFTER));
+        assert!(
+            guessed
+                .iter()
+                .all(|(at, _)| *at < t0 + GUESS_AFTER + GUESS_FOR)
+        );
+        assert!(guessed.iter().all(|(_, to)| {
+            to.ip() == addr(HOST).ip()
+                && to.port() > addr(HOST).port()
+                && to.port() <= addr(HOST).port() + GUESSED_PORTS
+        }));
+        let rounds = (GUESS_FOR.as_millis() / PUNCH_INTERVAL.as_millis()) as usize;
+        assert_eq!(
+            guessed.len(),
+            rounds * GUESSES_PER_ROUND,
+            "a bounded number"
+        );
+        // Every guessed port is tried, again and again.
+        let ports: std::collections::HashSet<u16> =
+            guessed.iter().map(|(_, to)| to.port()).collect();
+        assert_eq!(ports.len(), usize::from(GUESSED_PORTS));
+    }
+
+    #[test]
+    fn an_exchange_ignores_its_own_punches_coming_back() {
+        // A guessed port can be this computer's own, as on the loopback, or a
+        // router can loop a packet back: a punch with our token is ours.
+        let t0 = Instant::now();
+        let mut viewer = Exchange::new(addr("127.0.0.1:50000"), Some([1; 8]), MAX_WINDOW, t0);
+        let (_, own) = viewer.poll(t0).unwrap();
+        assert_eq!(viewer.on_datagram(addr("127.0.0.1:50003"), &own, t0), None);
+        assert_eq!(viewer.state(), &State::Punching);
+        let sent = sent_until(&mut viewer, t0 + Duration::from_secs(2));
+        assert!(
+            sent.iter().any(|(_, to)| *to != addr("127.0.0.1:50000")),
+            "still guessing: nothing was heard"
+        );
+    }
+
+    #[test]
+    fn guessing_stops_once_the_peer_is_heard() {
+        let t0 = Instant::now();
+        let mut viewer = Exchange::new(addr(HOST), Some([1; 8]), MAX_WINDOW, t0);
+        let real = addr("198.51.100.20:47807");
+        let punch = packet(Kind::Punch, [1; 8], [3; 8]);
+        assert!(
+            viewer
+                .on_datagram(real, &punch, t0 + Duration::from_millis(1500))
+                .is_some()
+        );
+        let sent = sent_until(&mut viewer, t0 + Duration::from_secs(5));
+        assert!(
+            sent.iter()
+                .filter(|(at, _)| *at > t0 + Duration::from_millis(1500))
+                .all(|(_, to)| *to == real)
+        );
+    }
+
+    /// A home router in the simulation below: how it maps this computer's
+    /// packets out, and which packets it lets in.
+    struct Router {
+        ip: std::net::IpAddr,
+        /// A new port per destination ("symmetric NAT"), handed out in turn
+        /// from `next`; otherwise always `next`.
+        symmetric: bool,
+        /// A symmetric router that picks each new port at random instead.
+        random: bool,
+        next: u16,
+        ports: std::collections::HashMap<SocketAddr, u16>,
+        /// Port-restricted filtering: only from where it has sent to.
+        sent_to: std::collections::HashSet<(u16, SocketAddr)>,
+    }
+
+    impl Router {
+        fn new(ip: &str, symmetric: bool, first_port: u16) -> Self {
+            Self {
+                ip: ip.parse().unwrap(),
+                symmetric,
+                random: false,
+                next: first_port,
+                ports: Default::default(),
+                sent_to: Default::default(),
+            }
+        }
+
+        /// The address a packet to `to` leaves from.
+        fn out(&mut self, to: SocketAddr) -> SocketAddr {
+            let port = if self.symmetric {
+                let (next, random) = (&mut self.next, self.random);
+                *self.ports.entry(to).or_insert_with(|| {
+                    let port = *next;
+                    // A fixed-seed scramble: far from the last port, but
+                    // the same in every run.
+                    *next = if random {
+                        (port.wrapping_mul(40_503).wrapping_add(12_345) | 1024).max(1024)
+                    } else {
+                        port + 1
+                    };
+                    port
+                })
+            } else {
+                self.next
+            };
+            self.sent_to.insert((port, to));
+            SocketAddr::new(self.ip, port)
+        }
+
+        fn lets_in(&self, from: SocketAddr, port: u16) -> bool {
+            self.sent_to.contains(&(port, from))
+        }
+    }
+
+    /// Runs two exchanges behind two routers for `limit` of simulated time.
+    fn simulate(
+        a: &mut Exchange,
+        router_a: &mut Router,
+        b: &mut Exchange,
+        router_b: &mut Router,
+        limit: Duration,
+    ) {
+        let t0 = Instant::now();
+        let mut now = t0;
+        while now < t0 + limit {
+            for side in 0..2 {
+                let (from, router_from, to, router_to) = if side == 0 {
+                    (&mut *a, &mut *router_a, &mut *b, &mut *router_b)
+                } else {
+                    (&mut *b, &mut *router_b, &mut *a, &mut *router_a)
+                };
+                while let Some((target, packet)) = from.poll(now) {
+                    let source = router_from.out(target);
+                    if target.ip() != router_to.ip || !router_to.lets_in(source, target.port()) {
+                        continue;
+                    }
+                    if let Some((back, ack)) = to.on_datagram(source, &packet, now) {
+                        let source_back = router_to.out(back);
+                        if back.ip() == router_from.ip
+                            && router_from.lets_in(source_back, back.port())
+                        {
+                            from.on_datagram(source_back, &ack, now);
+                        }
+                    }
+                }
+            }
+            now += Duration::from_millis(50);
+        }
+    }
+
+    const SERVICE: &str = "192.0.2.1:47900";
+
+    #[test]
+    fn a_symmetric_router_on_one_side_is_punched_through() {
+        // The host's router gave the connection service port 50000; the
+        // viewer's next packet leaves from 50001.
+        let mut host_router = Router::new("198.51.100.20", true, 50000);
+        let introduced_host = host_router.out(addr(SERVICE));
+        let mut viewer_router = Router::new("203.0.113.5", false, 40000);
+        let introduced_viewer = viewer_router.out(addr(SERVICE));
+
+        let mut host = Exchange::new(introduced_viewer, None, MAX_WINDOW, Instant::now());
+        let mut viewer = Exchange::new(introduced_host, Some([1; 8]), MAX_WINDOW, Instant::now());
+        simulate(
+            &mut viewer,
+            &mut viewer_router,
+            &mut host,
+            &mut host_router,
+            Duration::from_secs(15),
+        );
+        match viewer.state() {
+            State::Open(path) => assert_eq!(path.peer, addr("198.51.100.20:50001")),
+            other => panic!("the viewer did not get through: {other:?}"),
+        }
+        assert!(matches!(host.state(), State::Open(_)));
+    }
+
+    #[test]
+    fn routers_that_pick_ports_at_random_still_cannot_be_punched_through() {
+        // Symmetric on both sides, picking at random: nothing to guess.
+        let mut host_router = Router::new("198.51.100.20", true, 50000);
+        host_router.random = true;
+        let introduced_host = host_router.out(addr(SERVICE));
+        let mut viewer_router = Router::new("203.0.113.5", true, 40000);
+        viewer_router.random = true;
+        let introduced_viewer = viewer_router.out(addr(SERVICE));
+
+        let mut host = Exchange::new(
+            introduced_viewer,
+            None,
+            Duration::from_secs(15),
+            Instant::now(),
+        );
+        let mut viewer = Exchange::new(
+            introduced_host,
+            Some([1; 8]),
+            Duration::from_secs(15),
+            Instant::now(),
+        );
+        simulate(
+            &mut viewer,
+            &mut viewer_router,
+            &mut host,
+            &mut host_router,
+            Duration::from_secs(16),
+        );
+        assert_eq!(
+            viewer.state(),
+            &State::Expired,
+            "this needs IPv6, port mapping or a VPN"
+        );
+
+        // The same on one side only, when the other only lets in what it sent to.
+        let mut host_router = Router::new("198.51.100.20", true, 50000);
+        host_router.random = true;
+        let introduced_host = host_router.out(addr(SERVICE));
+        let mut viewer_router = Router::new("203.0.113.5", false, 40000);
+        let introduced_viewer = viewer_router.out(addr(SERVICE));
+        let mut host = Exchange::new(
+            introduced_viewer,
+            None,
+            Duration::from_secs(15),
+            Instant::now(),
+        );
+        let mut viewer = Exchange::new(
+            introduced_host,
+            Some([1; 8]),
+            Duration::from_secs(15),
+            Instant::now(),
+        );
+        simulate(
+            &mut viewer,
+            &mut viewer_router,
+            &mut host,
+            &mut host_router,
+            Duration::from_secs(16),
+        );
+        assert_eq!(viewer.state(), &State::Expired);
     }
 }

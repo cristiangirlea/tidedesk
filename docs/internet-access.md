@@ -71,7 +71,15 @@ network the ID works even without the service or the internet (see below).
    fingerprint, and a host that does not match it is refused.
 
 From a terminal: `tidedesk view TD-1A2B-3C4D-5E6F-7A8B --code …`. The same limits
-apply: no symmetric NAT, IPv4 only.
+apply: IPv4 only, and not between two symmetric NATs.
+
+**Symmetric NATs** (common on mobile data and carrier-grade NAT) give every destination a port
+of their own, so the address the connection service saw is not the one the other computer
+must use. When punching gets no answer, TideDesk also tries the 16 ports above it for ten
+seconds (a few hundred small packets at most), since most such routers hand ports out in turn.
+That gets through when one side has such a router and the other does not. It does not when both
+do, or when the router picks its ports at random: let the host's router open its port (below),
+or use a VPN.
 
 **The router opens the port by itself where it can.** While a host is reachable by device
 ID, it asks its router to forward its UDP port: over PCP, the older NAT-PMP (both on the

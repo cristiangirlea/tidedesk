@@ -56,13 +56,19 @@ impl ExpectedViewer {
             ),
             PathState::NoReply => format!(
                 "No reply from {}. Check the address, and connect from the viewer within two \
-                 minutes of pressing Open. If either network uses a symmetric NAT, a direct \
-                 connection is impossible: use a VPN or port forwarding instead.",
+                 minutes of pressing Open. If both networks use a symmetric NAT, a direct \
+                 connection is impossible: let the router open TideDesk's port (Settings, \
+                 Network), or use a VPN or port forwarding instead.",
                 self.typed
             ),
         }
     }
 }
+
+/// What a symmetric NAT on the host's network means for viewers elsewhere.
+pub const SYMMETRIC_NOTE: &str = "This network uses a symmetric NAT: viewers on other networks \
+     get through only when their router allows TideDesk to guess its ports. Letting the router \
+     open TideDesk's port (Settings, Network), a VPN or port forwarding always works.";
 
 /// The line under the device ID in the host window; `service` is the one it
 /// registers with.
@@ -71,15 +77,15 @@ pub fn describe_rendezvous(status: &RendezvousStatus, service: Option<&str>) -> 
     let name = service.map_or_else(|| "the connection service".into(), service_name);
     match status {
         RendezvousStatus::Off => {
-            "Turned off under Settings, Internet: viewers on other networks cannot connect              with this ID."
+            "Turned off under Settings, Internet: viewers on other networks cannot connect \
+             with this ID."
                 .into()
         }
         RendezvousStatus::Connecting => format!("Connecting to {name}…"),
         RendezvousStatus::Registered {
             nat: NatKind::Symmetric,
             ..
-        } => "Registered, but this network uses a symmetric NAT: viewers on other networks               cannot reach it directly. A VPN or port forwarding still works."
-            .into(),
+        } => format!("Registered. {SYMMETRIC_NOTE}"),
         RendezvousStatus::Registered { .. } if own => {
             "Viewers on other networks can connect with this ID.".into()
         }
