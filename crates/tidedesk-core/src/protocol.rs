@@ -85,6 +85,11 @@ pub enum ClientMessage {
         name: String,
         error: Option<String>,
     },
+    /// A chat message to the host ([`crate::chat`]). Sent only when both copy
+    /// files and chat ([`crate::net::extras`]).
+    Chat {
+        text: String,
+    },
 }
 
 /// Host → viewer control messages.
@@ -127,6 +132,11 @@ pub enum ServerMessage {
     FileSaved {
         name: String,
         error: Option<String>,
+    },
+    /// A chat message to the viewer ([`crate::chat`]). Sent only when both copy
+    /// files and chat ([`crate::net::extras`]).
+    Chat {
+        text: String,
     },
 }
 
@@ -373,6 +383,8 @@ mod tests {
             error: None,
         };
         assert_eq!(first(postcard::to_stdvec(&saved).unwrap()), 11);
+        let chat = ClientMessage::Chat { text: "hi".into() };
+        assert_eq!(first(postcard::to_stdvec(&chat).unwrap()), 12);
 
         let streaming = ServerMessage::Streaming(crate::streaming::StreamingStatus::requested(
             1, false, 30, 8_000_000,
@@ -406,6 +418,8 @@ mod tests {
             error: None,
         };
         assert_eq!(first(postcard::to_stdvec(&saved).unwrap()), 10);
+        let chat = ServerMessage::Chat { text: "hi".into() };
+        assert_eq!(first(postcard::to_stdvec(&chat).unwrap()), 11);
     }
 
     #[tokio::test]

@@ -6,6 +6,7 @@
 
 pub mod audio;
 pub mod auth;
+pub mod chat;
 pub mod clipboard;
 pub mod company;
 pub mod dates;

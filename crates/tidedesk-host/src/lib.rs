@@ -270,6 +270,8 @@ pub fn start(options: &StartOptions) -> Result<Started> {
         files: AtomicBool::new(config.allow_files),
         files_note: Mutex::new(None),
         outgoing: Mutex::new(None),
+        chat: Mutex::new(Vec::new()),
+        chat_out: Mutex::new(None),
         accepting: AtomicBool::new(true),
         throttle: Mutex::new(auth::Throttle::default()),
         busy: AtomicBool::new(false),

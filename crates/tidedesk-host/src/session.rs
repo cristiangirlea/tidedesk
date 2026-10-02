@@ -63,6 +63,10 @@ pub struct HostState {
     pub files: AtomicBool,
     /// The last file received or sent, for the window to say.
     pub files_note: Mutex<Option<String>>,
+    /// The chat with the viewer: (written at the viewer, text).
+    pub chat: Mutex<Vec<(bool, String)>>,
+    /// Chat messages to send, while a viewer that chats is connected.
+    pub chat_out: Mutex<Option<tokio::sync::mpsc::UnboundedSender<String>>>,
     /// Files to send to the viewer, while one that copies files is connected.
     pub outgoing: Mutex<Option<tokio::sync::mpsc::UnboundedSender<std::path::PathBuf>>>,
     pub accepting: AtomicBool,
@@ -117,6 +121,7 @@ impl Drop for SessionGuard<'_> {
     fn drop(&mut self) {
         *self.0.viewer.lock().unwrap() = None;
         *self.0.outgoing.lock().unwrap() = None;
+        *self.0.chat_out.lock().unwrap() = None;
         self.0.busy.store(false, Ordering::SeqCst);
         if self.0.new_code_after_session.load(Ordering::SeqCst)
             && let Err(e) = self.0.renew_code(true)
@@ -345,6 +350,13 @@ pub async fn run(conn: quinn::Connection, state: Arc<HostState>) -> Result<()> {
     let mut meter = company.map(|told| company::Meter::new(company::load(), told, Instant::now()));
     let company_over = AtomicBool::new(false);
 
+    // Chat, when the viewer chats too.
+    let (chat_tx, mut chat_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    if net::extras(&conn) {
+        state.chat.lock().unwrap().clear();
+        *state.chat_out.lock().unwrap() = Some(chat_tx);
+    }
+
     // Files the host picked for the viewer, one at a time.
     let (outgoing_tx, mut outgoing_rx) = tokio::sync::mpsc::unbounded_channel();
     if net::extras(&conn) {
@@ -446,6 +458,9 @@ pub async fn run(conn: quinn::Connection, state: Arc<HostState>) -> Result<()> {
                     while let Ok(saved) = saved_rx.try_recv() {
                         protocol::write_message(&mut send, &saved).await?;
                     }
+                    while let Ok(text) = chat_rx.try_recv() {
+                        protocol::write_message(&mut send, &ServerMessage::Chat { text }).await?;
+                    }
                     if let Some(meter) = &mut meter {
                         match meter.read(Instant::now()) {
                             company::Reading::Tell(allowance) => {
@@ -541,6 +556,12 @@ pub async fn run(conn: quinn::Connection, state: Arc<HostState>) -> Result<()> {
                     bail!("duplicate Hello")
                 }
                 ClientMessage::PasswordProof { .. } => bail!("password proof after the handshake"),
+                ClientMessage::Chat { text } => {
+                    if let Some(text) = tidedesk_core::chat::clean(&text) {
+                        state.chat.lock().unwrap().push((true, text));
+                        state.changed();
+                    }
+                }
                 ClientMessage::FileSaved { name, error } => {
                     *state.files_note.lock().unwrap() = Some(match error {
                         None => format!("The viewer saved {name} in Downloads\\TideDesk."),

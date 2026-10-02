@@ -38,6 +38,8 @@ pub enum UiEvent {
     OwnCompany(tidedesk_core::company::Allowance),
     /// Something for the title to say.
     Notice(String),
+    /// Written in the chat window, to send to the host.
+    ChatWritten(String),
     Disconnected(String),
 }
 

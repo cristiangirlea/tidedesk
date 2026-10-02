@@ -166,6 +166,14 @@ See [clipboard and mouse controls](docs/interaction-controls.md). **Both compute
 need the same protocol build**: this development branch uses protocol v3 and cannot
 connect to the earlier v1/v2 alphas.
 
+### Chat
+
+Press **Ctrl+Alt+T** in the viewer (changeable in Viewer Settings) to open a small chat window
+next to the session; it also opens by itself when the host writes. On the host, the Share tab has
+a **Chat with the viewer** section while the viewer is connected; nothing pops up on the host's
+screen. Messages are plain text, up to 1000 characters, sent directly between the two computers.
+Both need a release that chats.
+
 ### Files
 
 Drop files on the viewer's window to copy them to the host: each lands in `Downloads\TideDesk`

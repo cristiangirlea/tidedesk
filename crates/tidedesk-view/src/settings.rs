@@ -73,6 +73,7 @@ pub struct ViewerSettings {
     pub mouse_shortcut: Shortcut,
     pub game_boost_shortcut: Shortcut,
     pub settings_shortcut: Shortcut,
+    pub chat_shortcut: Shortcut,
     /// `host[:port]` of the rendezvous service used to connect by device ID;
     /// empty means TideDesk's own.
     pub rendezvous_server: String,
@@ -89,6 +90,7 @@ impl Default for ViewerSettings {
             mouse_shortcut: Shortcut::default_for("KeyM"),
             game_boost_shortcut: Shortcut::default_for("KeyG"),
             settings_shortcut: Shortcut::default_for("KeyS"),
+            chat_shortcut: Shortcut::default_for("KeyT"),
             rendezvous_server: String::new(),
         }
     }
@@ -129,6 +131,22 @@ impl ViewerSettings {
                 })
                 .unwrap();
         }
+        // A shortcut added later must not take one already chosen.
+        if document.get("chat_shortcut").is_none() {
+            config.chat_shortcut = ["KeyT", "KeyH", "F10"]
+                .into_iter()
+                .map(Shortcut::default_for)
+                .find(|s| {
+                    ![
+                        &config.clipboard_shortcut,
+                        &config.mouse_shortcut,
+                        &config.game_boost_shortcut,
+                        &config.settings_shortcut,
+                    ]
+                    .contains(&s)
+                })
+                .unwrap();
+        }
         config.validate()?;
         Ok(config)
     }
@@ -139,6 +157,7 @@ impl ViewerSettings {
             &self.mouse_shortcut,
             &self.game_boost_shortcut,
             &self.settings_shortcut,
+            &self.chat_shortcut,
         ];
         if shortcuts.iter().any(|s| !s.valid()) {
             bail!("Shortcuts need Ctrl or Alt plus a letter or F1-F12.");
@@ -272,6 +291,7 @@ impl Editor {
             mouse_shortcut,
             game_boost_shortcut,
             settings_shortcut,
+            chat_shortcut,
             rendezvous_server
         );
         base
@@ -337,6 +357,7 @@ impl Editor {
         shortcut_ui(ui, "Mouse", &mut self.config.mouse_shortcut);
         shortcut_ui(ui, "Game Boost", &mut self.config.game_boost_shortcut);
         shortcut_ui(ui, "Settings", &mut self.config.settings_shortcut);
+        shortcut_ui(ui, "Chat", &mut self.config.chat_shortcut);
         ui.small("Settings opens these settings during a session.");
         ui.separator();
         // The problems are drawn above: show a change on the next frame.
@@ -421,6 +442,23 @@ mod tests {
             assert_eq!(parse_near(bad), None, "{bad}");
         }
         assert_eq!(centred_on([3200.0, 1080.0]), [2925.0, 785.0]);
+    }
+
+    /// Settings from before the chat keep their shortcuts; the chat takes
+    /// the first free one.
+    #[test]
+    fn the_chat_shortcut_does_not_take_one_already_chosen() {
+        let fresh = ViewerSettings::parse("mouse = true").unwrap();
+        assert_eq!(fresh.chat_shortcut, Shortcut::default_for("KeyT"));
+        let taken = "[mouse_shortcut]
+ctrl = true
+alt = true
+shift = false
+key = \"KeyT\"
+";
+        let older = ViewerSettings::parse(taken).unwrap();
+        assert_eq!(older.mouse_shortcut, Shortcut::default_for("KeyT"));
+        assert_eq!(older.chat_shortcut, Shortcut::default_for("KeyH"));
     }
 
     #[test]

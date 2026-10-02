@@ -103,6 +103,13 @@ pub struct App {
     pub own_company: Option<tidedesk_core::company::Allowance>,
     /// Files dropped on the window go here, when the host copies files.
     pub files: Option<UnboundedSender<PathBuf>>,
+    /// The host chats too.
+    pub chats: bool,
+    /// The chat window, while open, and the conversation so far.
+    chat: Option<ChatWindow>,
+    chat_lines: Vec<tidedesk_core::chat::Line>,
+    /// For threads that tell the window something.
+    pub notify: Option<Arc<dyn crate::stream::Notify>>,
     pub test: TestControl,
     /// For how long the host has not answered.
     silent: Option<Duration>,
@@ -150,6 +157,10 @@ impl App {
             company: None,
             own_company: None,
             files: None,
+            chats: false,
+            chat: None,
+            chat_lines: Vec::new(),
+            notify: None,
             test: TestControl::default(),
             silent: None,
             exit_message: None,
@@ -240,11 +251,17 @@ impl App {
                 .settings
                 .game_boost_shortcut
                 .matches(self.modifiers, physical);
-            if clipboard || mouse || settings || boost {
+            let chat = self
+                .settings
+                .chat_shortcut
+                .matches(self.modifiers, physical);
+            if clipboard || mouse || settings || boost || chat {
                 self.release_keys();
                 self.suppressed_keys.insert(scancode);
                 if boost {
                     self.toggle_boost();
+                } else if chat {
+                    self.open_chat();
                 } else if settings {
                     self.open_settings();
                 } else {
@@ -273,6 +290,13 @@ impl App {
             }
             UiEvent::Silent(silent) => self.host_silent(silent),
             UiEvent::Command(command) => self.command(command),
+            UiEvent::ChatWritten(text) => {
+                if let Some(text) = tidedesk_core::chat::clean(&text) {
+                    self.chat_lines
+                        .push(tidedesk_core::chat::Line::Mine(text.clone()));
+                    let _ = self.control.send(ClientMessage::Chat { text });
+                }
+            }
             UiEvent::Notice(notice) => {
                 self.notice = Some(notice);
                 self.update_title();
@@ -568,6 +592,7 @@ impl App {
         self.release_keys();
         self.release_mouse();
         tracing::warn!("session ended: {reason}");
+        self.chat_show(tidedesk_core::chat::Line::Ended(plain_reason(&reason)));
         self.ended = Some(plain_reason(&reason));
         self.exit_message = Some(reason);
         self.update_title();
@@ -645,6 +670,44 @@ impl App {
         self.configure();
     }
 
+    /// Opens the chat window, with the conversation so far; a window that is
+    /// open stays as it is.
+    fn open_chat(&mut self) {
+        if !self.chats {
+            self.notice = Some("The host's TideDesk cannot chat: update it".into());
+            self.update_title();
+            return;
+        }
+        if self.chat.as_mut().is_some_and(ChatWindow::open) {
+            return;
+        }
+        match ChatWindow::start(&format!("Chat | {}", self.title), self.notify.clone()) {
+            Ok(mut window) => {
+                for line in &self.chat_lines {
+                    window.write(line);
+                }
+                self.chat = Some(window);
+            }
+            Err(e) => {
+                self.notice = Some(format!("Cannot open the chat: {e}"));
+                self.update_title();
+            }
+        }
+    }
+
+    /// Keeps a chat line, and shows it: in the open window, or by opening
+    /// one when the host writes.
+    fn chat_show(&mut self, line: tidedesk_core::chat::Line) {
+        let theirs = matches!(line, tidedesk_core::chat::Line::Theirs(_));
+        self.chat_lines.push(line.clone());
+        let open = self.chat.as_mut().is_some_and(ChatWindow::open);
+        match &mut self.chat {
+            Some(window) if open => window.write(&line),
+            _ if theirs => self.open_chat(),
+            _ => {}
+        }
+    }
+
     fn open_settings(&mut self) {
         if self
             .settings_window
@@ -695,6 +758,11 @@ impl App {
                 self.boost_status = Some(status);
                 self.game_boost.store(status.game_boost, Ordering::Relaxed);
                 self.update_title();
+            }
+            ServerMessage::Chat { text } => {
+                if let Some(text) = tidedesk_core::chat::clean(&text) {
+                    self.chat_show(tidedesk_core::chat::Line::Theirs(text));
+                }
             }
             ServerMessage::FileSaved { name, error } => {
                 self.notice = Some(match error {
@@ -1088,6 +1156,67 @@ impl ApplicationHandler<UiEvent> for App {
             }
         }
         event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_tick));
+    }
+}
+
+/// The chat window's process: lines go to its standard input, and what is
+/// written there comes back from its standard output as
+/// [`UiEvent::ChatWritten`].
+struct ChatWindow {
+    child: Child,
+    input: std::process::ChildStdin,
+}
+
+impl ChatWindow {
+    fn start(title: &str, notify: Option<Arc<dyn crate::stream::Notify>>) -> std::io::Result<Self> {
+        let exe = std::env::current_exe()?;
+        let mut command = Command::new(exe);
+        command
+            .args(crate::self_prefix())
+            .arg("--chat")
+            .arg(title)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            command.creation_flags(0x0800_0000);
+        }
+        let mut child = command.spawn()?;
+        let input = child.stdin.take().expect("piped");
+        let output = child.stdout.take().expect("piped");
+        std::thread::Builder::new()
+            .name("chat window".into())
+            .spawn(move || {
+                use std::io::BufRead;
+                for line in std::io::BufReader::new(output)
+                    .lines()
+                    .map_while(Result::ok)
+                {
+                    if let (Some(tidedesk_core::chat::Line::Mine(text)), Some(notify)) =
+                        (tidedesk_core::chat::Line::decode(&line), &notify)
+                    {
+                        notify.notify(UiEvent::ChatWritten(text));
+                    }
+                }
+            })?;
+        Ok(Self { child, input })
+    }
+
+    fn open(&mut self) -> bool {
+        matches!(self.child.try_wait(), Ok(None))
+    }
+
+    fn write(&mut self, line: &tidedesk_core::chat::Line) {
+        use std::io::Write;
+        let _ = writeln!(self.input, "{}", line.encode()).and_then(|_| self.input.flush());
+    }
+}
+
+impl Drop for ChatWindow {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
     }
 }
 
