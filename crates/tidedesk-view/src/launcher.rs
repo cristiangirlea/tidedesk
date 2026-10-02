@@ -125,6 +125,9 @@ pub struct Launcher {
     inbox: Arc<Mutex<Vec<Update>>>,
     show_settings: bool,
     settings_editor: crate::settings::Editor,
+    /// The connection service saved in Viewer Settings, as it was when the
+    /// window opened; empty for TideDesk's own.
+    service: String,
 }
 
 pub fn run() -> Result<()> {
@@ -148,6 +151,15 @@ fn load_recent() -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// The line under a device ID typed to connect to: which service finds it.
+fn found_through(saved_service: &str) -> String {
+    let service = crate::rendezvous_service(None, Some(saved_service));
+    format!(
+        "Device ID: found through {}.",
+        tidedesk_core::nat::signal::service_name(&service)
+    )
+}
+
 impl Launcher {
     /// The connect side of a window: quick connect, saved computers and the
     /// steps of a session being opened.
@@ -169,6 +181,9 @@ impl Launcher {
             inbox: Arc::default(),
             show_settings: false,
             settings_editor: crate::settings::Editor::default(),
+            service: crate::settings::ViewerSettings::load()
+                .map(|s| s.rendezvous_server)
+                .unwrap_or_default(),
         }
     }
 
@@ -619,10 +634,7 @@ impl Launcher {
                     });
                 });
                 if connect::parse_device_id(&self.address).is_some() {
-                    ui.small(
-                        RichText::new("Device ID: found through TideDesk's connection service.")
-                            .color(look::MUTED),
-                    );
+                    ui.small(RichText::new(found_through(&self.service)).color(look::MUTED));
                 }
                 ui.horizontal_wrapped(|ui| {
                     ui.checkbox(&mut self.sound, "Play sound from the remote computer");
@@ -1037,6 +1049,9 @@ mod tests {
             inbox: Arc::default(),
             show_settings: false,
             settings_editor: crate::settings::Editor::default(),
+            service: crate::settings::ViewerSettings::load()
+                .map(|s| s.rendezvous_server)
+                .unwrap_or_default(),
         }
     }
 
@@ -1142,5 +1157,17 @@ mod tests {
         assert!(address_problem("my-pc", true).is_some());
         assert!(address_problem("192.168.1.5:47800", true).is_some());
         assert_eq!(address_problem("203.0.113.5:40000", true), None);
+    }
+
+    #[test]
+    fn a_device_id_says_which_service_finds_it() {
+        assert_eq!(
+            super::found_through(""),
+            "Device ID: found through TideDesk's connection service."
+        );
+        assert_eq!(
+            super::found_through("tidedesk.example.com:47900"),
+            "Device ID: found through tidedesk.example.com."
+        );
     }
 }

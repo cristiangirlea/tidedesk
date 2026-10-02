@@ -303,6 +303,19 @@ impl Lookup {
 /// server can move without a release.
 pub const DEFAULT_RENDEZVOUS: &str = "rendezvous.tidedesk.app:47900";
 
+/// How a rendezvous service is named to people: TideDesk's own as such, any
+/// other by its name, with its port only when it is not the usual one.
+pub fn service_name(service: &str) -> String {
+    let service = service.trim();
+    let usual_port = format!(":{}", tidedesk_rendezvous_proto::DEFAULT_PORT);
+    let name = service.strip_suffix(usual_port.as_str()).unwrap_or(service);
+    if name.eq_ignore_ascii_case(DEFAULT_RENDEZVOUS.trim_end_matches(usual_port.as_str())) {
+        "TideDesk's connection service".into()
+    } else {
+        name.to_string()
+    }
+}
+
 /// Finds a rendezvous service given as `host[:port]` (IPv4, like all
 /// internet paths here).
 pub async fn resolve_service(name: &str) -> Option<SocketAddr> {
@@ -1160,5 +1173,25 @@ mod tests {
             peer: viewer,
         };
         assert_eq!(from_service(&mut r, &incoming, t0), Some(expected));
+    }
+
+    #[test]
+    fn services_are_named_for_people() {
+        assert_eq!(
+            service_name(DEFAULT_RENDEZVOUS),
+            "TideDesk's connection service"
+        );
+        assert_eq!(
+            service_name(" rendezvous.tidedesk.app "),
+            "TideDesk's connection service"
+        );
+        assert_eq!(
+            service_name("tidedesk.example.com:47900"),
+            "tidedesk.example.com"
+        );
+        assert_eq!(
+            service_name("tidedesk.example.com:47950"),
+            "tidedesk.example.com:47950"
+        );
     }
 }
