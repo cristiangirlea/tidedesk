@@ -7,7 +7,9 @@
 pub mod audio;
 pub mod auth;
 pub mod clipboard;
+pub mod dates;
 pub mod identity;
+pub mod licence;
 pub mod logs;
 pub mod nat;
 pub mod net;

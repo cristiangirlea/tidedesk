@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use anyhow::{Result, anyhow};
 use egui::RichText;
 use egui_software_backend::{SoftwareBackend, SoftwareBackendAppConfiguration};
+use tidedesk_core::licence::{self, Licence, Standing};
 use tidedesk_host::{HostApp, StartOptions, Started};
 use tidedesk_view::launcher::Launcher;
 use tidedesk_view::settings::Editor;
@@ -87,6 +88,36 @@ struct Shell {
     reading: Option<Reading>,
     launcher: Launcher,
     viewer_settings: Editor,
+    licence: LicenceBox,
+}
+
+/// The licence part of About: the licence this computer holds, and a box to
+/// paste one in.
+#[derive(Default)]
+struct LicenceBox {
+    held: Option<Licence>,
+    pasted: String,
+    /// What became of the last licence pasted: what was added, or why not.
+    outcome: Option<Result<String, String>>,
+}
+
+/// What About says about a licence on `today`.
+fn licence_line(licence: &Licence, today: &str) -> String {
+    let (name, edition) = (&licence.licensee, &licence.edition);
+    let expires = licence.expires.as_deref().unwrap_or_default();
+    match licence.standing(today) {
+        Standing::Active if licence.expires.is_none() => {
+            format!("Licensed to {name}: {edition}.")
+        }
+        Standing::Active => format!("Licensed to {name}: {edition}, until {expires}."),
+        Standing::Grace { until } => format!(
+            "Licensed to {name}: {edition}. It expired on {expires} and keeps working until \
+             {until}: renew it before then."
+        ),
+        Standing::Expired => {
+            format!("The {edition} licence for {name} expired on {expires}. Renew it to go on.")
+        }
+    }
 }
 
 /// Starts sharing, in the tray when `hidden`. Also says whether the window
@@ -161,6 +192,10 @@ pub fn run(hidden: bool) -> Result<()> {
         reading: None,
         launcher: Launcher::new(),
         viewer_settings: Editor::default(),
+        licence: LicenceBox {
+            held: licence::load(),
+            ..LicenceBox::default()
+        },
     });
     egui_software_backend::run_app_with_software_backend(config, move |ctx| {
         let mut shell = shell.take().expect("the window is created once");
@@ -285,6 +320,14 @@ impl Shell {
             tidedesk_host::open_link(RELEASES_URL);
         }
         ui.add_space(8.0);
+        if let Some(held) = &self.licence.held {
+            let today = tidedesk_core::dates::today();
+            let line = licence_line(held, &today);
+            match held.standing(&today) {
+                Standing::Active => ui.label(RichText::new(line).strong()),
+                _ => ui.colored_label(ui.visuals().warn_fg_color, line),
+            };
+        }
         ui.small(
             "Free for personal, non-commercial use under the TideDesk Personal Use Source \
              License 1.0. Business use needs separate written permission.",
@@ -305,6 +348,53 @@ impl Shell {
                 tidedesk_host::open_link(&notices.to_string_lossy());
             }
         });
+        ui.add_space(8.0);
+        self.licence_box(ui);
+    }
+
+    fn licence_box(&mut self, ui: &mut egui::Ui) {
+        let title = if self.licence.held.is_some() {
+            "Replace the licence"
+        } else {
+            "Add a licence"
+        };
+        egui::CollapsingHeader::new(title)
+            .id_salt("licence")
+            .show(ui, |ui| {
+                ui.small("Paste the licence from your email, from its BEGIN line to its END line.");
+                let edited = ui
+                    .add(
+                        egui::TextEdit::multiline(&mut self.licence.pasted)
+                            .desired_rows(6)
+                            .desired_width(f32::INFINITY)
+                            .code_editor(),
+                    )
+                    .changed();
+                if edited {
+                    self.licence.outcome = None;
+                }
+                let pasted = !self.licence.pasted.trim().is_empty();
+                if ui.add_enabled(pasted, egui::Button::new("Add")).clicked() {
+                    self.licence.outcome = Some(match licence::add(&self.licence.pasted) {
+                        Ok(added) => {
+                            let line = licence_line(&added, &tidedesk_core::dates::today());
+                            self.licence.held = Some(added);
+                            self.licence.pasted.clear();
+                            Ok(format!("Licence added. {line}"))
+                        }
+                        Err(e) => Err(format!("{e:#}")),
+                    });
+                }
+                match &self.licence.outcome {
+                    Some(Ok(added)) => {
+                        ui.label(added);
+                    }
+                    Some(Err(why)) => {
+                        ui.colored_label(ui.visuals().error_fg_color, why);
+                    }
+                    None => {}
+                }
+            });
     }
 
     fn reading_window(&mut self, ctx: &egui::Context) {
@@ -382,7 +472,7 @@ impl egui_software_backend::App for Shell {
 
 #[cfg(test)]
 mod tests {
-    use super::Tab;
+    use super::{Licence, Tab, licence_line};
 
     #[test]
     fn the_window_opens_on_sharing_and_names_its_tabs() {
@@ -396,6 +486,40 @@ mod tests {
                 "Settings",
                 "About"
             ]
+        );
+    }
+
+    #[test]
+    fn about_says_what_a_licence_allows_and_until_when() {
+        let licence = Licence {
+            licensee: "Ana Pop".into(),
+            email: "ana@example.com".into(),
+            edition: "Pro".into(),
+            features: vec!["work".into()],
+            seats: 1,
+            issued: "2026-10-02".into(),
+            expires: Some("2027-10-02".into()),
+        };
+        assert_eq!(
+            licence_line(&licence, "2027-10-02"),
+            "Licensed to Ana Pop: Pro, until 2027-10-02."
+        );
+        assert_eq!(
+            licence_line(&licence, "2027-10-05"),
+            "Licensed to Ana Pop: Pro. It expired on 2027-10-02 and keeps working until \
+             2027-10-16: renew it before then."
+        );
+        assert_eq!(
+            licence_line(&licence, "2027-10-17"),
+            "The Pro licence for Ana Pop expired on 2027-10-02. Renew it to go on."
+        );
+        let forever = Licence {
+            expires: None,
+            ..licence
+        };
+        assert_eq!(
+            licence_line(&forever, "2099-01-01"),
+            "Licensed to Ana Pop: Pro."
         );
     }
 }

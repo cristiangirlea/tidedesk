@@ -20,6 +20,7 @@ ring.workspace = true
 rustls.workspace = true
 serde.workspace = true
 spake2.workspace = true
+toml = "1"
 tidedesk-rendezvous-proto.workspace = true
 tokio.workspace = true
 tracing.workspace = true

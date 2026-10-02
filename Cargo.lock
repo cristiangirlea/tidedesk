@@ -3740,6 +3740,7 @@ dependencies = [
  "spake2",
  "tidedesk-rendezvous-proto",
  "tokio",
+ "toml 1.1.6+spec-1.1.0",
  "tracing",
  "windows",
 ]
