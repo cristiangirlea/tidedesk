@@ -18,27 +18,60 @@ pub struct HostIdentity {
 
 impl HostIdentity {
     /// Loads the identity from `dir`, generating and saving one on first run.
+    /// The private key is kept sealed for this Windows account
+    /// (`host-key.sealed`, see [`crate::secret`]); a key saved plain by an
+    /// earlier release (`host-key.der`) is sealed in place, keeping the
+    /// identity. Where secrets cannot be sealed, the key stays a plain file.
     pub fn load_or_create(dir: &Path) -> Result<Self> {
         let cert_path = dir.join("host-cert.der");
-        let key_path = dir.join("host-key.der");
-        if cert_path.exists() && key_path.exists() {
-            let cert = std::fs::read(&cert_path).context("reading host certificate")?;
-            let key = std::fs::read(&key_path).context("reading host key")?;
-            return Ok(Self {
-                cert: CertificateDer::from(cert),
-                key: PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key)),
-            });
+        let sealed_path = dir.join("host-key.sealed");
+        let plain_path = dir.join("host-key.der");
+        if let Ok(cert) = std::fs::read(&cert_path) {
+            if let Ok(sealed) = std::fs::read(&sealed_path) {
+                if let Some(key) = crate::secret::unprotect(&sealed) {
+                    return Ok(Self::from_der(cert, key));
+                }
+                // Sealed for another Windows account, or copied from another
+                // computer: this account cannot use it. A new identity, with
+                // the old one kept aside rather than overwritten.
+                tracing::warn!(
+                    "this Windows account cannot open the saved host key: making a new identity                      (a new device ID and fingerprint); the old files are kept as *.unreadable"
+                );
+                let _ = std::fs::rename(&sealed_path, dir.join("host-key.sealed.unreadable"));
+                let _ = std::fs::rename(&cert_path, dir.join("host-cert.der.unreadable"));
+            } else if let Ok(key) = std::fs::read(&plain_path) {
+                match crate::secret::protect(&key) {
+                    Ok(sealed) => match std::fs::write(&sealed_path, sealed) {
+                        Ok(()) => {
+                            if let Err(e) = std::fs::remove_file(&plain_path) {
+                                tracing::warn!("could not remove the plain host key: {e}");
+                            }
+                        }
+                        Err(e) => tracing::warn!("could not seal the host key: {e}"),
+                    },
+                    // Nothing to seal it with here: it stays as it was.
+                    Err(e) => tracing::debug!("host key stays plain: {e:#}"),
+                }
+                return Ok(Self::from_der(cert, key));
+            }
         }
         let generated = rcgen::generate_simple_self_signed(vec!["tidedesk-host".to_string()])
             .context("generating host certificate")?;
         let cert = generated.cert.der().to_vec();
         let key = generated.signing_key.serialize_der();
+        match crate::secret::protect(&key) {
+            Ok(sealed) => std::fs::write(&sealed_path, sealed).context("saving host key")?,
+            Err(_) => std::fs::write(&plain_path, &key).context("saving host key")?,
+        }
         std::fs::write(&cert_path, &cert).context("saving host certificate")?;
-        std::fs::write(&key_path, &key).context("saving host key")?;
-        Ok(Self {
+        Ok(Self::from_der(cert, key))
+    }
+
+    fn from_der(cert: Vec<u8>, key: Vec<u8>) -> Self {
+        Self {
             cert: CertificateDer::from(cert),
             key: PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key)),
-        })
+        }
     }
 
     pub fn fingerprint(&self) -> String {
@@ -329,5 +362,63 @@ mod tests {
             kh.check("10.0.0.2:47800", "FFFF"),
             PinStatus::Mismatch { .. }
         ));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_new_host_key_is_kept_sealed_and_loads_again() {
+        let dir = temp_dir("host-sealed");
+        let first = HostIdentity::load_or_create(&dir).unwrap();
+        assert!(dir.join("host-key.sealed").exists());
+        assert!(!dir.join("host-key.der").exists(), "never written plain");
+        let sealed = std::fs::read(dir.join("host-key.sealed")).unwrap();
+        assert!(
+            !sealed
+                .windows(16)
+                .any(|w| first.pkcs8().windows(16).any(|k| k == w)),
+            "the key cannot be read from the file"
+        );
+        let again = HostIdentity::load_or_create(&dir).unwrap();
+        assert_eq!(again.fingerprint(), first.fingerprint());
+        assert_eq!(again.pkcs8(), first.pkcs8());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_plain_host_key_from_before_is_sealed_keeping_the_identity() {
+        let dir = temp_dir("host-plain");
+        let generated = rcgen::generate_simple_self_signed(vec!["tidedesk-host".into()]).unwrap();
+        std::fs::write(dir.join("host-cert.der"), generated.cert.der()).unwrap();
+        std::fs::write(
+            dir.join("host-key.der"),
+            generated.signing_key.serialize_der(),
+        )
+        .unwrap();
+        let expected = fingerprint(generated.cert.der());
+
+        let loaded = HostIdentity::load_or_create(&dir).unwrap();
+        assert_eq!(loaded.fingerprint(), expected, "the same identity");
+        assert!(dir.join("host-key.sealed").exists());
+        assert!(!dir.join("host-key.der").exists(), "the plain key is gone");
+        let again = HostIdentity::load_or_create(&dir).unwrap();
+        assert_eq!(again.fingerprint(), expected);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_key_this_account_cannot_open_makes_a_new_identity_and_keeps_the_old() {
+        let dir = temp_dir("host-unreadable");
+        let first = HostIdentity::load_or_create(&dir).unwrap();
+        std::fs::write(dir.join("host-key.sealed"), b"sealed for someone else").unwrap();
+        let second = HostIdentity::load_or_create(&dir).unwrap();
+        assert_ne!(second.fingerprint(), first.fingerprint());
+        assert!(dir.join("host-key.sealed.unreadable").exists());
+        assert!(dir.join("host-cert.der.unreadable").exists());
+        let again = HostIdentity::load_or_create(&dir).unwrap();
+        assert_eq!(
+            again.fingerprint(),
+            second.fingerprint(),
+            "and keeps the new one"
+        );
     }
 }
