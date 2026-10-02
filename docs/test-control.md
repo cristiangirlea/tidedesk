@@ -29,6 +29,7 @@ left corner, whatever the window's size and place.
 | `wheel LINES` | Turns the wheel up, or down with a negative number, by 100 lines at most. | `ok wheel -3` |
 | `key SCANCODE [down\|up]` | Presses the key and lets go, or one of the two. | `ok key E04D` |
 | `type TEXT` | Types the text, all that follows on the line. | `ok type 11 characters` |
+| `send FILE` | Sends the file to the host, as dropping it on the window does; the path is all that follows on the line. The title then says when the host saved it. | `ok send a.txt` |
 | `quit` | Ends the session and the viewer. | `ok quit` |
 
 **Crops** are the picture's own pixels, as the viewer decoded them, not what the

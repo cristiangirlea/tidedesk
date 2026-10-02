@@ -104,7 +104,7 @@ virtual-device drivers are outside this milestone and must not delay it.
   emulation and ordinary file transfer; do not automatically forward storage
   devices or security keys.
 - Linux and mobile clients; macOS support.
-- File transfer, session recording and multiple viewers.
+- Files from the host to the viewer, folders, session recording and multiple viewers.
 - Team administration, shared device lists and ticketing integration.
 - Windows service mode and secure-desktop support, subject to security review.
 

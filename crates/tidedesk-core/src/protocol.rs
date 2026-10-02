@@ -116,6 +116,12 @@ pub enum ServerMessage {
     /// The host is a company computer without a licence: where its hours
     /// stand. Sent only by such a host, after `Welcome` and when it changes.
     CompanyUse(crate::company::Allowance),
+    /// A file from the viewer was saved under `name`, or why not. Sent only
+    /// to a viewer that copies files ([`crate::net::extras`]).
+    FileSaved {
+        name: String,
+        error: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -384,6 +390,11 @@ mod tests {
             postcard::from_bytes::<ServerMessage>(&encoded).unwrap(),
             company
         );
+        let saved = ServerMessage::FileSaved {
+            name: "a.txt".into(),
+            error: None,
+        };
+        assert_eq!(first(postcard::to_stdvec(&saved).unwrap()), 10);
     }
 
     #[tokio::test]

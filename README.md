@@ -166,6 +166,14 @@ See [clipboard and mouse controls](docs/interaction-controls.md). **Both compute
 need the same protocol build**: this development branch uses protocol v3 and cannot
 connect to the earlier v1/v2 alphas.
 
+### Files
+
+Drop files on the viewer's window to copy them to the host: each lands in `Downloads\TideDesk`
+of the user signed in there, and the viewer's title says when it is saved. Files go directly
+between the two computers, below the picture, input and sound in priority, and never through a
+server. The host can refuse them: **Allow files from the viewer** in its settings. Both computers
+need a release that copies files; folders are not sent yet.
+
 ### Game Boost (experimental, v0.1.0-alpha.3)
 
 Open Viewer **Settings** and press **Game Boost**, or toggle it during a session
@@ -202,7 +210,8 @@ host answers directly. See
 - An amber arrow shows the host pointer position even with mouse control off;
   the viewer's independent local pointer is a crosshair. Native host cursor shapes
   (such as text-selection and resize cursors) are not yet mirrored.
-- Clipboard sharing is text-only, up to 48 KiB; images and file transfer are not supported.
+- Clipboard sharing is text-only, up to 48 KiB; images are not supported. Files go from the viewer to
+  the host only, one by one, without folders.
 - Shortcuts the viewer's Windows handles itself (Alt+Tab, Win key) stay local.
 
 ## Building from source

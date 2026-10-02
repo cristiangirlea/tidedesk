@@ -92,6 +92,10 @@ pub enum Command {
     Type {
         text: String,
     },
+    /// Sends a file to the host, as dropping it on the window does.
+    Send {
+        path: PathBuf,
+    },
     Quit,
 }
 
@@ -156,6 +160,15 @@ fn scale(word: Option<&String>) -> Result<Scale, String> {
 /// Reads a command from a line of text; an error that says what is wrong
 /// with it.
 pub fn parse(line: &str) -> Result<Command, String> {
+    // A path is taken as it is, spaces and all.
+    if let Some(path) = line.trim_start().strip_prefix("send ") {
+        let path = path.trim();
+        return if path.is_empty() {
+            Err("send FILE".into())
+        } else {
+            Ok(Command::Send { path: path.into() })
+        };
+    }
     // What is typed is taken as it is, spaces and all.
     if let Some(text) = line.trim_start().strip_prefix("type") {
         return match text.strip_prefix(char::is_whitespace) {
@@ -546,6 +559,17 @@ mod tests {
         // The whole of it as it is, and a part of it enlarged, are not.
         assert!(crop(&large, area(0, 0, 3840, 2160), Scale::Times(1)).is_ok());
         assert!(crop(&large, area(100, 100, 640, 360), Scale::Times(8)).is_ok());
+    }
+
+    #[test]
+    fn a_file_to_send_keeps_its_spaces() {
+        assert_eq!(
+            parse(r"send C:\My files\a b.txt "),
+            Ok(Command::Send {
+                path: PathBuf::from(r"C:\My files\a b.txt")
+            })
+        );
+        assert!(parse("send ").is_err());
     }
 
     #[test]

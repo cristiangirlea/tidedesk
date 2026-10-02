@@ -22,6 +22,8 @@ pub struct HostConfig {
     pub share_audio: bool,
     pub allow_clipboard: bool,
     pub allow_mouse: bool,
+    /// Save files the viewer sends, in Downloads\TideDesk.
+    pub allow_files: bool,
     /// UDP port; takes effect on the next start.
     pub port: u16,
     /// Show the host window's button in the taskbar. Off: tray icon only.
@@ -54,6 +56,7 @@ impl Default for HostConfig {
             share_audio: true,
             allow_clipboard: false,
             allow_mouse: true,
+            allow_files: true,
             port: DEFAULT_PORT,
             show_in_taskbar: false,
             start_in_tray: false,

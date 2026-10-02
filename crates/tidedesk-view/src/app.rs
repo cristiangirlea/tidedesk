@@ -2,6 +2,7 @@
 
 use std::collections::HashSet;
 use std::num::NonZeroU32;
+use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -100,6 +101,8 @@ pub struct App {
     company: Option<tidedesk_core::company::Allowance>,
     /// This computer is one: its hours.
     pub own_company: Option<tidedesk_core::company::Allowance>,
+    /// Files dropped on the window go here, when the host copies files.
+    pub files: Option<UnboundedSender<PathBuf>>,
     pub test: TestControl,
     /// For how long the host has not answered.
     silent: Option<Duration>,
@@ -146,6 +149,7 @@ impl App {
             notice: None,
             company: None,
             own_company: None,
+            files: None,
             test: TestControl::default(),
             silent: None,
             exit_message: None,
@@ -269,6 +273,10 @@ impl App {
             }
             UiEvent::Silent(silent) => self.host_silent(silent),
             UiEvent::Command(command) => self.command(command),
+            UiEvent::Notice(notice) => {
+                self.notice = Some(notice);
+                self.update_title();
+            }
             UiEvent::OwnCompany(allowance) => {
                 self.own_company = Some(allowance);
                 self.update_title();
@@ -372,6 +380,21 @@ impl App {
                     None => "",
                 };
                 return Ok(Some(format!("key {scancode:X}{which}")));
+            }
+            control::Command::Send { path } => {
+                if !path.is_file() {
+                    return Err(format!("no file {}", path.display()));
+                }
+                if self.files.is_none() {
+                    return Err("the host does not copy files".into());
+                }
+                let name = path
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned();
+                self.drop_file(path);
+                return Ok(Some(format!("send {name}")));
             }
             control::Command::Type { text } => {
                 let mut keys = Vec::new();
@@ -673,6 +696,13 @@ impl App {
                 self.game_boost.store(status.game_boost, Ordering::Relaxed);
                 self.update_title();
             }
+            ServerMessage::FileSaved { name, error } => {
+                self.notice = Some(match error {
+                    None => format!("{name} saved on the host in Downloads\\TideDesk"),
+                    Some(why) => format!("{name} was not saved on the host: {why}"),
+                });
+                self.update_title();
+            }
             ServerMessage::CompanyUse(allowance) => {
                 self.company = Some(allowance);
                 self.update_title();
@@ -759,6 +789,23 @@ impl App {
             }
             _ => {}
         }
+    }
+
+    /// A file dropped on the window: sent to the host, which saves it.
+    fn drop_file(&mut self, path: PathBuf) {
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        self.notice = Some(match &self.files {
+            None => "The host's TideDesk cannot receive files: update it".into(),
+            Some(_) if path.is_dir() => format!("{name} is a folder: folders cannot be sent yet"),
+            Some(files) => {
+                let _ = files.send(path);
+                format!("Sending {name} to the host...")
+            }
+        });
+        self.update_title();
     }
 
     fn release_keys(&mut self) {
@@ -874,6 +921,7 @@ impl ApplicationHandler<UiEvent> for App {
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::DroppedFile(path) => self.drop_file(path),
             WindowEvent::RedrawRequested => {
                 // Several NewPicture events can collapse into one redraw; a
                 // resize or expose needs a redraw even with no new picture.

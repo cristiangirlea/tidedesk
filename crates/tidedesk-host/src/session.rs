@@ -57,6 +57,10 @@ pub struct HostState {
     pub audio: AtomicBool,
     pub clipboard: AtomicBool,
     pub mouse: AtomicBool,
+    /// Save files the viewer sends.
+    pub files: AtomicBool,
+    /// The last file received, for the window to say.
+    pub files_note: Mutex<Option<String>>,
     pub accepting: AtomicBool,
     pub throttle: Mutex<Throttle>,
     pub busy: AtomicBool,
@@ -335,6 +339,26 @@ pub async fn run(conn: quinn::Connection, state: Arc<HostState>) -> Result<()> {
     let mut meter = company.map(|told| company::Meter::new(company::load(), told, Instant::now()));
     let company_over = AtomicBool::new(false);
 
+    // Files from a viewer that copies them, each on its own stream.
+    let (saved_tx, mut saved_rx) = tokio::sync::mpsc::unbounded_channel::<ServerMessage>();
+    let files_task = async {
+        if !net::extras(&conn) {
+            return std::future::pending::<Result<()>>().await;
+        }
+        loop {
+            let Ok(stream) = conn.accept_uni().await else {
+                // The connection is over: another task says why.
+                return std::future::pending().await;
+            };
+            tokio::spawn(receive_file(
+                stream,
+                state.clone(),
+                client_name.clone(),
+                saved_tx.clone(),
+            ));
+        }
+    };
+
     let mut video_stream = conn.open_uni().await?;
     let video_task = async {
         while let Some(frame) = frame_rx.recv().await {
@@ -401,6 +425,9 @@ pub async fn run(conn: quinn::Connection, state: Arc<HostState>) -> Result<()> {
                     msg
                 }
                 _ = tick.tick() => {
+                    while let Ok(saved) = saved_rx.try_recv() {
+                        protocol::write_message(&mut send, &saved).await?;
+                    }
                     if let Some(meter) = &mut meter {
                         match meter.read(Instant::now()) {
                             company::Reading::Tell(allowance) => {
@@ -507,6 +534,7 @@ pub async fn run(conn: quinn::Connection, state: Arc<HostState>) -> Result<()> {
         r = audio_task => r.context("audio"),
         r = control_task => r.context("control stream"),
         r = reader_task => r.context("control reader"),
+        r = files_task => r.context("files"),
         e = conn.closed() => { tracing::debug!("connection closed: {e}"); Ok(()) }
     };
     record.ended_because(match &result {
@@ -524,6 +552,55 @@ pub async fn run(conn: quinn::Connection, state: Arc<HostState>) -> Result<()> {
     conn.close(0u32.into(), reason);
     tracing::info!("viewer \"{client_name}\" disconnected");
     result
+}
+
+/// Saves one file from the viewer in Downloads\TideDesk, and tells the
+/// viewer where it went or why not.
+async fn receive_file(
+    mut stream: quinn::RecvStream,
+    state: Arc<HostState>,
+    viewer: String,
+    saved: tokio::sync::mpsc::UnboundedSender<ServerMessage>,
+) {
+    use tidedesk_core::files;
+    let header = match files::read_header(&mut stream).await {
+        Ok(header) => header,
+        Err(e) => {
+            tracing::warn!("a file from \"{viewer}\" could not be read: {e:#}");
+            return;
+        }
+    };
+    let result = if !state.files.load(Ordering::SeqCst) {
+        let _ = stream.stop(1u32.into());
+        Err(anyhow::anyhow!("the host does not accept files"))
+    } else {
+        match files::downloads() {
+            Ok(dir) => files::save(&mut stream, &header, &dir).await,
+            Err(e) => Err(e),
+        }
+    };
+    let message = match result {
+        Ok(path) => {
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            tracing::info!("received {name} from \"{viewer}\"");
+            *state.files_note.lock().unwrap() = Some(format!(
+                "Received {name} from {viewer}, in Downloads\\TideDesk."
+            ));
+            state.changed();
+            ServerMessage::FileSaved { name, error: None }
+        }
+        Err(e) => {
+            tracing::warn!("a file from \"{viewer}\" was not saved: {e:#}");
+            ServerMessage::FileSaved {
+                name: header.name,
+                error: Some(format!("{e:#}")),
+            }
+        }
+    };
+    let _ = saved.send(message);
 }
 
 struct StopOnDrop<'a>(&'a AtomicBool);

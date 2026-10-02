@@ -421,6 +421,9 @@ impl HostApp {
                 }
             });
         }
+        if let Some(note) = state.files_note.lock().unwrap().as_ref() {
+            ui.small(note);
+        }
         ui.separator();
 
         ui.label("Access code");
@@ -680,6 +683,10 @@ impl HostApp {
         ui.label(RichText::new("Live session permissions").strong());
         ui.checkbox(&mut cfg.allow_clipboard, "Allow text clipboard sharing");
         ui.checkbox(&mut cfg.allow_mouse, "Allow viewer mouse control");
+        ui.checkbox(&mut cfg.allow_files, "Allow files from the viewer")
+            .on_hover_text(
+                "Files dropped on the viewer's window are saved in Downloads\\TideDesk.",
+            );
         ui.small("Applies immediately. Clipboard also needs to be enabled in Viewer Settings.");
         ui.add_space(8.0);
         if crate::session_log::on()
@@ -761,6 +768,7 @@ impl HostApp {
             state.audio.store(cfg.share_audio, Ordering::SeqCst);
             state.clipboard.store(cfg.allow_clipboard, Ordering::SeqCst);
             state.mouse.store(cfg.allow_mouse, Ordering::SeqCst);
+            state.files.store(cfg.allow_files, Ordering::SeqCst);
             if cfg.show_in_taskbar != before.show_in_taskbar {
                 platform::set_taskbar_button(title, cfg.show_in_taskbar);
             }
