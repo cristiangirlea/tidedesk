@@ -1,0 +1,16 @@
+[package]
+name = "tidedesk-signed"
+description = "TideDesk's signed text blocks (licences and the like) and calendar dates: small, with no platform code, so any TideDesk program can check them."
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+ring.workspace = true
+serde.workspace = true
+toml = "1"
