@@ -175,6 +175,11 @@ pub(crate) fn registration_credentials(
 pub use gui::{HostApp, HostInfo, session_history};
 pub use platform::{attach_console, error_box, open_link};
 
+/// The screen's usable area in pixels, when Windows says it.
+pub fn work_area() -> Option<(f32, f32)> {
+    platform::work_area()
+}
+
 /// The window icon, for the one program's window.
 pub fn window_icon() -> Arc<egui::IconData> {
     icon::egui_icon()

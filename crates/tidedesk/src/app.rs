@@ -53,6 +53,40 @@ impl Tab {
     }
 }
 
+/// The window's size from the screen it opens on: a share of it within
+/// limits, so it is neither cramped on a laptop nor huge on a big monitor,
+/// and never stretched past the largest.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct WindowSize {
+    start: [f32; 2],
+    min: [f32; 2],
+    max: [f32; 2],
+}
+
+impl WindowSize {
+    const SMALLEST: [f32; 2] = [720.0, 520.0];
+    const LARGEST: [f32; 2] = [1200.0, 900.0];
+
+    /// `screen`: the usable area in pixels, when known.
+    fn for_screen(screen: Option<(f32, f32)>) -> Self {
+        let Some((width, height)) = screen else {
+            return WindowSize {
+                start: [880.0, 660.0],
+                min: Self::SMALLEST,
+                max: Self::LARGEST,
+            };
+        };
+        // Never larger than the screen, never smaller than what fits on it.
+        let max = [Self::LARGEST[0].min(width), Self::LARGEST[1].min(height)];
+        let min = [Self::SMALLEST[0].min(max[0]), Self::SMALLEST[1].min(max[1])];
+        let start = [
+            (width * 0.6).clamp(min[0], max[0]),
+            (height * 0.75).clamp(min[1], max[1]),
+        ];
+        WindowSize { start, min, max }
+    }
+}
+
 /// Sharing this computer, once started.
 struct Sharing {
     /// The sharing side, or why it could not start (its port in use, say):
@@ -188,12 +222,20 @@ pub fn run(hidden: bool) -> Result<()> {
             (Some(sharing), start_hidden, taskbar)
         }
     };
+    let screen = tidedesk_host::work_area();
+    let size = WindowSize::for_screen(screen);
+    tracing::info!(
+        "window {:?} for the screen's usable area {screen:?}",
+        size.start
+    );
     let mut config = SoftwareBackendAppConfiguration::new();
     config.viewport_builder = egui::ViewportBuilder::default()
         .with_title(WINDOW_TITLE)
         .with_icon(tidedesk_host::window_icon())
-        .with_inner_size([880.0, 660.0])
-        .with_min_inner_size([720.0, 520.0])
+        .with_inner_size(size.start)
+        .with_min_inner_size(size.min)
+        .with_max_inner_size(size.max)
+        .with_maximize_button(false)
         .with_taskbar(show_in_taskbar)
         .with_visible(!start_hidden);
     let mut shell = Some(Shell {
@@ -567,6 +609,24 @@ mod tests {
             labels,
             ["This computer", "Connect", "History", "Settings", "About"]
         );
+    }
+
+    #[test]
+    fn the_window_fits_the_screen_within_limits() {
+        use super::WindowSize;
+        // A 1366x768 laptop (about 1366x728 usable): fits, at the smallest height.
+        let laptop = WindowSize::for_screen(Some((1366.0, 728.0)));
+        assert!((laptop.start[0] - 819.6).abs() < 0.01 && (laptop.start[1] - 546.0).abs() < 0.01);
+        assert_eq!(laptop.max, [1200.0, 728.0]);
+        // A 2560x1440 monitor at 100 %: a share of it, capped.
+        let big = WindowSize::for_screen(Some((2560.0, 1400.0)));
+        assert_eq!(big.start, [1200.0, 900.0]);
+        assert_eq!(big.max, [1200.0, 900.0]);
+        // A tiny screen: the window still fits on it.
+        let tiny = WindowSize::for_screen(Some((640.0, 480.0)));
+        assert!(tiny.start[0] <= 640.0 && tiny.start[1] <= 480.0);
+        assert!(tiny.min[0] <= tiny.max[0] && tiny.min[1] <= tiny.max[1]);
+        assert_eq!(WindowSize::for_screen(None).start, [880.0, 660.0]);
     }
 
     #[test]
