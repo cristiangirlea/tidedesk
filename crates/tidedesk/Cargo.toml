@@ -27,3 +27,6 @@ egui_software_backend = "0.0.3"
 
 [build-dependencies]
 embed-resource = "3.0.11"
+
+[dev-dependencies]
+png = { version = "0.18.1", default-features = false }
