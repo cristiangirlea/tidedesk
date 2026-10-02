@@ -3706,6 +3706,7 @@ dependencies = [
  "egui",
  "egui_software_backend",
  "embed-resource",
+ "png",
  "tidedesk-core",
  "tidedesk-host",
  "tidedesk-ui",
