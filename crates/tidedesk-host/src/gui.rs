@@ -284,9 +284,7 @@ fn invite(device_id: &str, code: &str) -> String {
 }
 
 fn copy_button(ui: &mut egui::Ui, text: &str) {
-    if ui.small_button("Copy").clicked() {
-        ui.ctx().copy_text(text.to_string());
-    }
+    tidedesk_ui::copy(ui, "Copy", text, false);
 }
 
 pub fn run(info: HostInfo) -> Result<()> {
@@ -556,8 +554,15 @@ impl HostApp {
                     ui.vertical(|ui| {
                         ui.label(look::label(&v.name).size(17.0));
                         ui.label(
-                            RichText::new(format!("from {}", v.address.ip())).color(look::MUTED),
+                            RichText::new(format!(
+                                "from {} · connected {} · let in by {}",
+                                v.address.ip(),
+                                look::since(v.since.elapsed().as_secs()),
+                                v.admitted_by
+                            ))
+                            .color(look::MUTED),
                         );
+                        ui.ctx().request_repaint_after(Duration::from_secs(30));
                     });
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let disconnect = egui::Button::new(
@@ -645,13 +650,8 @@ impl HostApp {
                         .color(look::TEXT),
                 );
                 ui.horizontal(|ui| {
-                    if ui
-                        .add(look::primary("Copy invite"))
-                        .on_hover_text("Copies the device ID and the access code together.")
-                        .clicked()
-                    {
-                        ui.ctx().copy_text(invite(&device_id, &code));
-                    }
+                    look::copy(ui, "Copy invite", &invite(&device_id, &code), true)
+                        .on_hover_text("Copies the device ID and the access code together.");
                     copy_button(ui, &code);
                     if ui.button("New code").clicked()
                         && let Err(e) = state.renew_code(false)
@@ -852,37 +852,36 @@ impl HostApp {
 
     /// The chat with the viewer: what was written, and a box to write.
     fn chat(&mut self, ui: &mut egui::Ui, state: &HostState) {
-        egui::CollapsingHeader::new("Chat with the viewer")
-            .default_open(true)
-            .show(ui, |ui| {
-                egui::ScrollArea::vertical()
-                    .max_height(140.0)
-                    .stick_to_bottom(true)
-                    .show(ui, |ui| {
-                        for (theirs, text) in state.chat.lock().unwrap().iter() {
-                            let who = if *theirs { "Viewer" } else { "You" };
-                            ui.label(RichText::new(who).small().strong());
-                            ui.label(text);
-                        }
-                    });
-                ui.horizontal(|ui| {
-                    let edit = ui.add(
-                        egui::TextEdit::singleline(&mut self.chat_draft)
-                            .char_limit(tidedesk_core::chat::MAX_CHARS)
-                            .hint_text("Write to the viewer"),
-                    );
-                    let enter = edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                    if (enter || ui.button("Send").clicked())
-                        && let Some(text) = tidedesk_core::chat::clean(&self.chat_draft)
-                        && let Some(out) = state.chat_out.lock().unwrap().as_ref()
-                        && out.send(text.clone()).is_ok()
-                    {
-                        state.chat.lock().unwrap().push((false, text));
-                        self.chat_draft.clear();
-                        edit.request_focus();
+        tidedesk_ui::card().show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(RichText::new("Chat").color(tidedesk_ui::MUTED));
+            egui::ScrollArea::vertical()
+                .id_salt("chat")
+                .max_height(180.0)
+                .stick_to_bottom(true)
+                .show(ui, |ui| {
+                    for (theirs, text) in state.chat.lock().unwrap().iter() {
+                        tidedesk_ui::bubble(ui, !*theirs, text);
                     }
                 });
+            ui.horizontal(|ui| {
+                let edit = ui.add(
+                    egui::TextEdit::singleline(&mut self.chat_draft)
+                        .char_limit(tidedesk_core::chat::MAX_CHARS)
+                        .hint_text("Write to the viewer"),
+                );
+                let enter = edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                if (enter || ui.add(tidedesk_ui::primary("Send")).clicked())
+                    && let Some(text) = tidedesk_core::chat::clean(&self.chat_draft)
+                    && let Some(out) = state.chat_out.lock().unwrap().as_ref()
+                    && out.send(text.clone()).is_ok()
+                {
+                    state.chat.lock().unwrap().push((false, text));
+                    self.chat_draft.clear();
+                    edit.request_focus();
+                }
             });
+        });
     }
 
     /// The sharing settings; changes apply at once and are saved.

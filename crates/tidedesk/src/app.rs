@@ -443,19 +443,14 @@ impl Shell {
                 });
                 ui.add_space(14.0);
                 for tab in Tab::ALL {
-                    let selected = self.tab == tab;
-                    let text = egui::RichText::new(tab.label())
-                        .size(15.0)
-                        .color(if selected { look::TEXT } else { look::MUTED });
-                    let item = egui::Button::new(text)
-                        .fill(if selected {
-                            look::SELECTED
-                        } else {
-                            look::SIDEBAR
-                        })
-                        .stroke(egui::Stroke::NONE)
-                        .min_size(egui::vec2(ui.available_width(), 38.0));
-                    if ui.add(item).clicked() {
+                    let icon = match tab {
+                        Tab::Share => look::Icon::Computer,
+                        Tab::Connect => look::Icon::Connect,
+                        Tab::History => look::Icon::History,
+                        Tab::Settings => look::Icon::Settings,
+                        Tab::About => look::Icon::About,
+                    };
+                    if look::nav_item(ui, icon, tab.label(), self.tab == tab).clicked() {
                         self.tab = tab;
                     }
                 }
