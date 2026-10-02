@@ -42,6 +42,9 @@ pub struct HostConfig {
     /// Answer viewers on the local network that look for this computer's
     /// device ID, so they find it without the service or the internet.
     pub lan_discovery: bool,
+    /// Ask the router (PCP, NAT-PMP) to forward the UDP port while this
+    /// computer is reachable by device ID from other networks.
+    pub port_mapping: bool,
     /// A new access code once a session ends.
     pub new_code_after_session: bool,
 }
@@ -65,6 +68,7 @@ impl Default for HostConfig {
             rendezvous: true,
             rendezvous_server: String::new(),
             lan_discovery: true,
+            port_mapping: true,
             new_code_after_session: true,
         }
     }
@@ -132,6 +136,12 @@ impl HostConfig {
     /// The rendezvous service to register with: the configured one, else
     /// TideDesk's own (not saved, so a later version can change it); none
     /// when turned off.
+    /// Whether to ask the router to forward the port: only while viewers on
+    /// other networks can find this computer by its device ID.
+    pub fn maps_port(&self) -> bool {
+        self.port_mapping && self.rendezvous_service().is_some()
+    }
+
     pub fn rendezvous_service(&self) -> Option<&str> {
         if !self.rendezvous {
             return None;
@@ -219,6 +229,20 @@ mod tests {
         // A host.toml from before the setting existed keeps its named service.
         let old: HostConfig = toml::from_str("rendezvous_server = \"rv.example.org\"").unwrap();
         assert_eq!(old.rendezvous_service(), Some("rv.example.org"));
+    }
+
+    #[test]
+    fn port_mapping_is_on_by_default_and_follows_the_device_id() {
+        assert!(HostConfig::default().maps_port());
+        let old: HostConfig = toml::from_str("fps = 30\nport = 47800").unwrap();
+        assert!(old.port_mapping, "a host.toml from before the setting");
+        let off: HostConfig = toml::from_str("port_mapping = false").unwrap();
+        assert!(!off.maps_port());
+        let unregistered: HostConfig = toml::from_str("rendezvous = false").unwrap();
+        assert!(
+            !unregistered.maps_port(),
+            "only useful while viewers on other networks can find this computer"
+        );
     }
 
     #[test]

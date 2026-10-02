@@ -73,6 +73,18 @@ network the ID works even without the service or the internet (see below).
 From a terminal: `tidedesk view TD-1A2B-3C4D-5E6F-7A8B --code …`. The same limits
 apply: no symmetric NAT, IPv4 only.
 
+**The router opens the port by itself where it can.** While a host is reachable by device
+ID, it asks its router to forward its UDP port, over PCP or the older NAT-PMP (the router's
+UDP port 5351):
+- it renews the request every hour and asks the router to close the port when TideDesk quits
+  (after a crash or a power cut, the router forgets it within two hours);
+- where the router agrees, viewers whose own network defeats hole punching still get in;
+- Settings, Network shows whether the router opened it.
+
+Like port forwarding, this exposes the host directly to the internet (see section 4). Untick
+**Ask the router to open TideDesk's port** to stop asking (`port_mapping = false` in
+`host.toml`). Routers that speak only UPnP are not asked yet.
+
 To use another service, name it as `rendezvous_server` in the host's `host.toml` (or
 `--rendezvous host:port`) and in the viewer's `viewer.toml` (or `--rendezvous`); to
 register with none, untick the option in Host Settings (`--no-rendezvous` when headless). A viewer only
@@ -129,6 +141,9 @@ If you run your own [WireGuard](https://www.wireguard.com) VPN (for example on y
 connect the viewer to the VPN and use the host's VPN address, exactly as above.
 
 ## 4. Port forwarding
+
+Routers that speak PCP or NAT-PMP do this by themselves while the host is reachable by device
+ID (see above). On other routers:
 
 Forward **UDP** port `47800` on your router to the host computer, then connect to your public
 IP address or dynamic-DNS name. With a forwarded port, "Over the internet" also works
