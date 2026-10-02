@@ -11,6 +11,7 @@ pub mod clipboard;
 pub mod company;
 pub mod dates;
 pub mod files;
+pub mod history;
 pub mod identity;
 pub mod licence;
 pub mod logs;
