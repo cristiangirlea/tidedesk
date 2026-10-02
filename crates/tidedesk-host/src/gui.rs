@@ -137,17 +137,25 @@ pub(crate) fn local_addresses(port: u16) -> Vec<Address> {
 
 /// Where this computer stands as an unlicensed company computer, looked
 /// up again every few seconds rather than on every frame.
-type CompanyCache = Option<(Instant, Option<tidedesk_core::company::Allowance>)>;
+type CompanyCache = Option<(Instant, Option<String>)>;
 static COMPANY_CACHE: std::sync::Mutex<CompanyCache> = std::sync::Mutex::new(None);
 
-fn company_allowance() -> Option<tidedesk_core::company::Allowance> {
+/// What the Share tab says about this computer as a company computer: its
+/// hours, or the notice while they do not apply yet.
+fn company_line() -> Option<String> {
+    use tidedesk_core::company;
     let mut cache = COMPANY_CACHE.lock().unwrap();
-    match *cache {
-        Some((at, allowance)) if at.elapsed() < Duration::from_secs(5) => allowance,
+    match &*cache {
+        Some((at, line)) if at.elapsed() < Duration::from_secs(5) => line.clone(),
         _ => {
-            let allowance = tidedesk_core::company::allowance();
-            *cache = Some((Instant::now(), allowance));
-            allowance
+            let name = company::management().name();
+            let line = match company::allowance() {
+                Some(allowance) => Some(allowance.describe(&name)),
+                None if company::needs_licence() => Some(company::notice(&name)),
+                None => None,
+            };
+            *cache = Some((Instant::now(), line.clone()));
+            line
         }
     }
 }
@@ -380,16 +388,13 @@ impl HostApp {
         if ui.checkbox(&mut accept, "Accept new connections").changed() {
             state.accepting.store(accept, Ordering::SeqCst);
         }
-        if let Some(allowance) = company_allowance() {
+        if let Some(line) = company_line() {
             let management = tidedesk_core::company::management();
-            ui.colored_label(
-                ui.visuals().warn_fg_color,
-                allowance.describe(&management.name()),
-            )
-            .on_hover_text(
-                "Computers managed by an organisation need a TideDesk licence. Without one: \
+            ui.colored_label(ui.visuals().warn_fg_color, line)
+                .on_hover_text(
+                    "Computers managed by an organisation need a TideDesk licence. Without one: \
                  14 days of trial, then 8 hours a month. Add a licence under About.",
-            );
+                );
             if management.may_declare() && !self.declaring {
                 self.declaring = ui
                     .small_button("This computer is mine…")
