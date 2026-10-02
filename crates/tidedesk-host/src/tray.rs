@@ -23,7 +23,12 @@ pub struct Tray {
 
 impl Tray {
     /// Must be called on the UI thread once its event loop is running.
-    pub fn new(state: Arc<HostState>, title: &'static str) -> Result<Self> {
+    /// `before_quit` runs when Quit is chosen, just before the process ends.
+    pub fn new(
+        state: Arc<HostState>,
+        title: &'static str,
+        before_quit: impl Fn() + Send + Sync + 'static,
+    ) -> Result<Self> {
         let open = MenuItem::new(format!("Open {title}"), true, None);
         let accept = CheckMenuItem::new(
             "Accept new connections",
@@ -88,6 +93,7 @@ impl Tray {
                 }
                 // Let the close frame leave before the process ends.
                 std::thread::sleep(std::time::Duration::from_millis(150));
+                before_quit();
                 std::process::exit(0);
             }
         }));

@@ -9,6 +9,7 @@
 pub mod agent;
 pub mod candidates;
 pub mod lan;
+pub mod portmap;
 pub mod punch;
 pub mod signal;
 pub mod socket;

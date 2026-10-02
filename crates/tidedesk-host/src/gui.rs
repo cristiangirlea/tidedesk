@@ -412,7 +412,10 @@ impl HostApp {
     pub fn attach(&mut self, ctx: egui::Context) {
         let state = self.info.state.clone();
         *state.on_change.lock().unwrap() = Some(Box::new(move || ctx.request_repaint()));
-        match Tray::new(state, self.title) {
+        // Quitting ends the process: the router's port is closed first.
+        let agent = self.info.agent.clone();
+        let before_quit = move || agent.close_port_before_exit(Duration::from_secs(1));
+        match Tray::new(state, self.title, before_quit) {
             Ok(tray) => self.tray = Some(tray),
             Err(e) => tracing::warn!("no tray icon: {e:#}"),
         }
@@ -1104,6 +1107,22 @@ impl HostApp {
                 "Registers this computer's device ID and public address with TideDesk's \
              connection service, which introduces viewers and never carries a session.",
             );
+            ui.add_enabled_ui(cfg.rendezvous, |ui| {
+                ui.checkbox(
+                    &mut cfg.port_mapping,
+                    "Ask the router to open TideDesk's port",
+                )
+                .on_hover_text(format!(
+                    "Asks your router (PCP or NAT-PMP) to forward UDP port {} to this \
+                         computer while it is reachable from other networks, so viewers \
+                         whose networks block hole punching still get in. Only this port, \
+                         and it is closed again when TideDesk stops.",
+                    self.info.port
+                ));
+            });
+            if cfg.maps_port() {
+                ui.small(self.info.agent.mapping().to_string());
+            }
             ui.checkbox(
                 &mut cfg.discover_public_address,
                 "Look up this computer's internet address (STUN)",
@@ -1149,6 +1168,13 @@ impl HostApp {
                         self.info.agent.stop_rendezvous();
                         *state.registration.lock().unwrap() = None;
                     }
+                }
+            }
+            if cfg.maps_port() != before.maps_port() {
+                if cfg.maps_port() {
+                    self.info.agent.start_port_mapping(self.info.port);
+                } else {
+                    self.info.agent.stop_port_mapping();
                 }
             }
             if cfg.lan_discovery != before.lan_discovery {

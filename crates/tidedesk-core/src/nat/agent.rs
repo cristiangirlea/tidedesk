@@ -15,6 +15,7 @@ use tokio::task::JoinHandle;
 
 use super::DeviceId;
 use super::lan::{self, Search};
+use super::portmap::{self, MappingStatus};
 use super::punch::{Exchange, Punched, SessionId, State};
 use super::signal::{
     Credentials, Event, Lookup, LookupOutcome, Registration, RendezvousStatus, resolve_service,
@@ -87,6 +88,8 @@ impl std::error::Error for PunchError {}
 pub struct AgentStatus {
     pub public: PublicStatus,
     pub rendezvous: RendezvousStatus,
+    /// Whether the router forwards this computer's port.
+    pub mapping: MappingStatus,
 }
 
 pub struct Agent {
@@ -95,6 +98,13 @@ pub struct Agent {
     refresh: Mutex<Option<JoinHandle<()>>>,
     rendezvous: Mutex<Option<JoinHandle<()>>>,
     lan: Mutex<Option<JoinHandle<()>>>,
+    mapping: Mutex<Option<PortMapping>>,
+}
+
+/// The task keeping the router's port open, and how to tell it to close it.
+struct PortMapping {
+    task: JoinHandle<()>,
+    stop: watch::Sender<()>,
 }
 
 /// What a task working for the agent needs; cheap to clone into one.
@@ -130,6 +140,7 @@ impl Agent {
         let status = watch::Sender::new(AgentStatus {
             public: PublicStatus::Disabled,
             rendezvous: RendezvousStatus::Off,
+            mapping: MappingStatus::Off,
         });
         Ok(Arc::new(Self {
             link: Link {
@@ -143,6 +154,7 @@ impl Agent {
             refresh: Mutex::new(None),
             rendezvous: Mutex::new(None),
             lan: Mutex::new(None),
+            mapping: Mutex::new(None),
         }))
     }
 
@@ -236,6 +248,56 @@ impl Agent {
         if let Some(earlier) = self.rendezvous.lock().unwrap().replace(task) {
             earlier.abort();
         }
+    }
+
+    /// Asks this network's router to forward `port` to this computer, and
+    /// keeps asking while it runs (see [`portmap`]), replacing any earlier
+    /// request once that one has closed its port.
+    pub fn start_port_mapping(&self, port: u16) {
+        let earlier = self.mapping.lock().unwrap().take();
+        let (stop, stopped) = watch::channel(());
+        let status = self.link.status.clone();
+        let report = move |mapping: MappingStatus| {
+            status.send_if_modified(|s| {
+                let changed = s.mapping != mapping;
+                s.mapping = mapping;
+                changed
+            });
+        };
+        let task = self.link.runtime.spawn(async move {
+            // A late "close" from the earlier task would undo this "open".
+            if let Some(earlier) = earlier {
+                let _ = earlier.stop.send(());
+                let _ = earlier.task.await;
+            }
+            portmap::keep_on_this_network(port, report, stopped).await;
+        });
+        *self.mapping.lock().unwrap() = Some(PortMapping { task, stop });
+    }
+
+    /// Asks the router to close the port again; the status turns off once
+    /// it has answered, or not.
+    pub fn stop_port_mapping(&self) {
+        if let Some(mapping) = self.mapping.lock().unwrap().take() {
+            let _ = mapping.stop.send(());
+        }
+    }
+
+    /// Like [`Agent::stop_port_mapping`], and waits up to `within` for the
+    /// router to close the port: for quitting, which ends the process.
+    pub fn close_port_before_exit(&self, within: Duration) {
+        let Some(mapping) = self.mapping.lock().unwrap().take() else {
+            return;
+        };
+        let _ = mapping.stop.send(());
+        let deadline = Instant::now() + within;
+        while !mapping.task.is_finished() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    pub fn mapping(&self) -> MappingStatus {
+        self.link.status.borrow().mapping.clone()
     }
 
     /// Ends the registration; the service forgets this host within a minute.
@@ -365,6 +427,8 @@ impl Drop for Agent {
         for exchange in self.link.exchanges.lock().unwrap().values() {
             exchange.abort();
         }
+        // Not aborted: it closes the router's port while the runtime lasts.
+        self.stop_port_mapping();
     }
 }
 
@@ -689,6 +753,57 @@ mod tests {
         let local = socket.local_addr().unwrap();
         let endpoint = net::client_endpoint_on(socket.clone()).unwrap();
         (Agent::spawn(socket, tap).unwrap(), endpoint, local)
+    }
+
+    /// Waits until the agent's status passes `wanted`, for at most 20 s.
+    async fn status_until(
+        status: &mut watch::Receiver<AgentStatus>,
+        wanted: impl Fn(&AgentStatus) -> bool,
+    ) -> AgentStatus {
+        tokio::time::timeout(Duration::from_secs(20), status.wait_for(|s| wanted(s)))
+            .await
+            .expect("in time")
+            .expect("the agent runs")
+            .clone()
+    }
+
+    /// The agent opens a port on this network's real router and closes it
+    /// when told; prints nothing that names the network.
+    #[tokio::test]
+    #[ignore = "asks the real router"]
+    async fn the_agent_opens_and_closes_a_port_on_this_networks_router() {
+        let (socket, tap) = SharedSocket::bind("0.0.0.0:0".parse().unwrap()).unwrap();
+        let port = socket.local_addr().unwrap().port();
+        let agent = Agent::spawn(socket, tap).unwrap();
+        let mut status = agent.status();
+        agent.start_port_mapping(port);
+        let opened = status_until(&mut status, |s| {
+            !matches!(s.mapping, MappingStatus::Off | MappingStatus::Asking)
+        })
+        .await
+        .mapping;
+        match &opened {
+            MappingStatus::Open { method, external } => {
+                println!(
+                    "open over {method}, same port outside: {}",
+                    external.port() == port
+                )
+            }
+            other => panic!("not opened: {other:?}"),
+        }
+        // As quitting does: on a thread that may block.
+        let quitting = agent.clone();
+        tokio::task::spawn_blocking(move || {
+            quitting.close_port_before_exit(Duration::from_secs(1))
+        })
+        .await
+        .unwrap();
+        assert_eq!(
+            agent.mapping(),
+            MappingStatus::Off,
+            "closed before quitting goes on"
+        );
+        println!("closed again");
     }
 
     /// A STUN server on loopback that answers each Binding Request with the

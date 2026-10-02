@@ -320,6 +320,9 @@ pub fn start(options: &StartOptions) -> Result<Started> {
             agent.start_rendezvous(service.to_string(), sealed);
         }));
     }
+    if config.port_mapping && rendezvous.is_some() {
+        agent.start_port_mapping(listen.port());
+    }
     // Needs no service: viewers on this network ask the network itself.
     if config.lan_discovery {
         agent.start_lan_discovery(identity.device_id());
