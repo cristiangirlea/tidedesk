@@ -865,12 +865,6 @@ impl HostApp {
             PublicStatus::Unavailable(reason) => {
                 ui.small(format!("Unavailable: {reason}"));
             }
-            PublicStatus::Ready(public) if public.nat == NatKind::Symmetric => {
-                ui.small(
-                    "Unavailable: this network uses a symmetric NAT, so direct internet \
-                     connections will not work from here. A VPN or port forwarding still works.",
-                );
-            }
             PublicStatus::Ready(public) => {
                 let text = public.addr.to_string();
                 ui.horizontal(|ui| {
@@ -878,6 +872,9 @@ impl HostApp {
                     copy_button(ui, &text);
                 });
                 ui.small(RichText::new(format!("via {}, NAT: {}", public.via, public.nat)).weak());
+                if public.nat == NatKind::Symmetric {
+                    ui.small(internet::SYMMETRIC_NOTE);
+                }
                 ui.small(
                     "A viewer on another network connects to this address with \
                      \"Over the internet\" ticked, once you open a path to it below.",
