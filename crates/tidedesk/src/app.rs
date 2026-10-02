@@ -14,6 +14,7 @@ use tidedesk_host::{HostApp, StartOptions, Started};
 use tidedesk_view::launcher::Launcher;
 use tidedesk_view::settings::Editor;
 
+use crate::Page;
 use crate::terms::{self, Block, Consent};
 
 /// Also the name tray and taskbar handling find the window by.
@@ -23,6 +24,14 @@ const RELEASES_URL: &str = "https://github.com/cristiangirlea/tidedesk/releases"
 const PRIVACY_URL: &str =
     "https://github.com/cristiangirlea/tidedesk/blob/main/docs/code-signing-policy.md#privacy";
 
+/// The pages another program added (see [`crate::Extensions`]).
+#[derive(Default)]
+pub struct Added {
+    pub pages: Vec<Box<dyn Page>>,
+    pub settings: Vec<Box<dyn Page>>,
+    pub about: Option<Box<dyn Page>>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Tab {
     #[default]
@@ -30,24 +39,29 @@ pub enum Tab {
     Connect,
     History,
     Settings,
+    /// An added page, by its place in [`Added::pages`].
+    Extra(usize),
     About,
 }
 
 impl Tab {
-    pub const ALL: [Tab; 5] = [
-        Tab::Share,
-        Tab::Connect,
-        Tab::History,
-        Tab::Settings,
-        Tab::About,
-    ];
+    /// The sidebar's sections, with `extra` added pages before About.
+    pub fn all(extra: usize) -> Vec<Tab> {
+        [Tab::Share, Tab::Connect, Tab::History, Tab::Settings]
+            .into_iter()
+            .chain((0..extra).map(Tab::Extra))
+            .chain([Tab::About])
+            .collect()
+    }
 
+    /// TideDesk's own sections' names; an added page names itself.
     pub fn label(self) -> &'static str {
         match self {
             Tab::Share => "This computer",
             Tab::Connect => "Connect",
             Tab::History => "History",
             Tab::Settings => "Settings",
+            Tab::Extra(_) => "",
             Tab::About => "About",
         }
     }
@@ -137,9 +151,12 @@ struct Shell {
     logo: Option<egui::TextureHandle>,
     /// The group of settings shown.
     settings_group: SettingsPage,
+    /// Pages another program added.
+    added: Added,
 }
 
-/// The groups on the Settings page, each from the host or the viewer.
+/// The groups on the Settings page, each from the host or the viewer, then
+/// any added ones.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 enum SettingsPage {
     #[default]
@@ -149,18 +166,27 @@ enum SettingsPage {
     Shortcuts,
     Network,
     StartUp,
+    /// An added group, by its place in [`Added::settings`].
+    Extra(usize),
 }
 
 impl SettingsPage {
-    const ALL: [SettingsPage; 6] = [
-        SettingsPage::Sharing,
-        SettingsPage::Permissions,
-        SettingsPage::Viewing,
-        SettingsPage::Shortcuts,
-        SettingsPage::Network,
-        SettingsPage::StartUp,
-    ];
+    /// The groups, with `extra` added ones at the end.
+    fn all(extra: usize) -> Vec<SettingsPage> {
+        [
+            SettingsPage::Sharing,
+            SettingsPage::Permissions,
+            SettingsPage::Viewing,
+            SettingsPage::Shortcuts,
+            SettingsPage::Network,
+            SettingsPage::StartUp,
+        ]
+        .into_iter()
+        .chain((0..extra).map(SettingsPage::Extra))
+        .collect()
+    }
 
+    /// TideDesk's own groups' names; an added group names itself.
     fn label(self) -> &'static str {
         match self {
             SettingsPage::Sharing => "Sharing",
@@ -169,6 +195,7 @@ impl SettingsPage {
             SettingsPage::Shortcuts => "Shortcuts",
             SettingsPage::Network => "Network",
             SettingsPage::StartUp => "Start-up",
+            SettingsPage::Extra(_) => "",
         }
     }
 
@@ -183,6 +210,7 @@ impl SettingsPage {
             SettingsPage::Shortcuts => "Keys that work while a session's window is focused.",
             SettingsPage::Network => "How viewers find and reach this computer.",
             SettingsPage::StartUp => "The window, the tray, and starting with Windows.",
+            SettingsPage::Extra(_) => "",
         }
     }
 }
@@ -281,8 +309,9 @@ fn third_party_notices() -> Option<PathBuf> {
     index.is_file().then_some(index)
 }
 
-/// Opens the window, hidden in the tray when `hidden` or the settings say so.
-pub fn run(hidden: bool) -> Result<()> {
+/// Opens the window, hidden in the tray when `hidden` or the settings say so,
+/// with the `added` pages.
+pub fn run(hidden: bool, added: Added) -> Result<()> {
     tidedesk_view::set_self_prefix(&["view"]);
     let config_dir = tidedesk_core::paths::config_dir().ok();
     let consent = config_dir.as_deref().map_or(Consent::New, terms::load);
@@ -311,7 +340,7 @@ pub fn run(hidden: bool) -> Result<()> {
         .with_maximize_button(false)
         .with_taskbar(show_in_taskbar)
         .with_visible(!start_hidden);
-    let mut shell = Some(Shell::new(sharing, consent, config_dir));
+    let mut shell = Some(Shell::new(sharing, consent, config_dir, added));
     egui_software_backend::run_app_with_software_backend(config, move |ctx| {
         let mut shell = shell.take().expect("the window is created once");
         shell.attach(&ctx);
@@ -321,7 +350,12 @@ pub fn run(hidden: bool) -> Result<()> {
 }
 
 impl Shell {
-    fn new(sharing: Option<Sharing>, consent: Consent, config_dir: Option<PathBuf>) -> Self {
+    fn new(
+        sharing: Option<Sharing>,
+        consent: Consent,
+        config_dir: Option<PathBuf>,
+        added: Added,
+    ) -> Self {
         Shell {
             tab: Tab::default(),
             sharing,
@@ -338,6 +372,27 @@ impl Shell {
             history: Default::default(),
             logo: None,
             settings_group: SettingsPage::default(),
+            added,
+        }
+    }
+
+    /// A section's name in the sidebar.
+    fn tab_label(&self, tab: Tab) -> &str {
+        match tab {
+            Tab::Extra(i) => self.added.pages.get(i).map_or("", |p| p.label()),
+            tab => tab.label(),
+        }
+    }
+
+    /// A Settings group's name and what it is about.
+    fn group_text(&self, page: SettingsPage) -> (&str, &str) {
+        match page {
+            SettingsPage::Extra(i) => self
+                .added
+                .settings
+                .get(i)
+                .map_or(("", ""), |p| (p.label(), p.about())),
+            page => (page.label(), page.about()),
         }
     }
 
@@ -457,9 +512,9 @@ impl Shell {
         ui.horizontal_top(|ui| {
             ui.vertical(|ui| {
                 ui.set_width(160.0);
-                for page in SettingsPage::ALL {
+                for page in SettingsPage::all(self.added.settings.len()) {
                     let selected = self.settings_group == page;
-                    let text = RichText::new(page.label()).color(if selected {
+                    let text = RichText::new(self.group_text(page).0).color(if selected {
                         look::TEXT
                     } else {
                         look::MUTED
@@ -477,15 +532,26 @@ impl Shell {
                 ui.vertical(|ui| {
                     ui.set_width(ui.available_width());
                     let page = self.settings_group;
-                    ui.label(look::label(page.label()).size(17.0));
-                    ui.label(RichText::new(page.about()).color(look::MUTED));
+                    let (label, about) = self.group_text(page);
+                    ui.label(look::label(label).size(17.0));
+                    if !about.is_empty() {
+                        ui.label(RichText::new(about).color(look::MUTED));
+                    }
                     ui.add_space(6.0);
+                    if let SettingsPage::Extra(i) = page {
+                        if let Some(added) = self.added.settings.get_mut(i) {
+                            added.ui(ui);
+                        }
+                        return;
+                    }
                     let host_group = match page {
                         SettingsPage::Sharing => Some(SettingsGroup::Sharing),
                         SettingsPage::Permissions => Some(SettingsGroup::Permissions),
                         SettingsPage::Network => Some(SettingsGroup::Network),
                         SettingsPage::StartUp => Some(SettingsGroup::StartUp),
-                        SettingsPage::Viewing | SettingsPage::Shortcuts => None,
+                        SettingsPage::Viewing
+                        | SettingsPage::Shortcuts
+                        | SettingsPage::Extra(_) => None,
                     };
                     match host_group {
                         Some(group) => match self.host() {
@@ -593,6 +659,14 @@ impl Shell {
             ui.add_space(4.0);
             self.licence_box(ui);
         });
+        if let Some(added) = &mut self.added.about {
+            ui.add_space(8.0);
+            look::card().show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.label(look::label(added.label()).size(16.0));
+                added.ui(ui);
+            });
+        }
         ui.add_space(8.0);
         ui.horizontal_wrapped(|ui| {
             ui.spacing_mut().item_spacing.x = 18.0;
@@ -679,15 +753,17 @@ impl Shell {
                     ui.label(look::label("TideDesk").size(17.0));
                 });
                 ui.add_space(14.0);
-                for tab in Tab::ALL {
+                for tab in Tab::all(self.added.pages.len()) {
                     let icon = match tab {
                         Tab::Share => look::Icon::Computer,
                         Tab::Connect => look::Icon::Connect,
                         Tab::History => look::Icon::History,
                         Tab::Settings => look::Icon::Settings,
+                        Tab::Extra(_) => look::Icon::Page,
                         Tab::About => look::Icon::About,
                     };
-                    if look::nav_item(ui, icon, tab.label(), self.tab == tab).clicked() {
+                    let label = self.tab_label(tab).to_owned();
+                    if look::nav_item(ui, icon, &label, self.tab == tab).clicked() {
                         self.tab = tab;
                     }
                 }
@@ -775,6 +851,13 @@ impl Shell {
                 Tab::Settings => {
                     egui::ScrollArea::vertical().show(ui, |ui| self.settings_tab(ui));
                 }
+                Tab::Extra(i) => {
+                    if let Some(page) = self.added.pages.get_mut(i) {
+                        ui.label(tidedesk_ui::title(page.label()));
+                        ui.add_space(6.0);
+                        egui::ScrollArea::vertical().show(ui, |ui| page.ui(ui));
+                    }
+                }
                 Tab::About => {
                     egui::ScrollArea::vertical().show(ui, |ui| self.about(ui));
                 }
@@ -811,10 +894,11 @@ mod tests {
             Some(sharing),
             super::terms::Consent::Accepted,
             tidedesk_core::paths::config_dir().ok(),
+            super::Added::default(),
         );
         shell.attach(&ctx);
         let mut renderer = EguiSoftwareRender::new(ColorFieldOrder::Rgba);
-        for tab in Tab::ALL {
+        for tab in Tab::all(0) {
             shell.tab = tab;
             let mut pixels = vec![[0u8; 4]; width * height];
             // A few frames, for the fonts and the layout to settle.
@@ -838,7 +922,7 @@ mod tests {
             for pixel in &mut pixels {
                 pixel[3] = 255;
             }
-            let name = tab.label().to_lowercase().replace(' ', "-");
+            let name = shell.tab_label(tab).to_lowercase().replace(' ', "-");
             let file = std::fs::File::create(dir.join(format!("{name}.png"))).unwrap();
             let mut png =
                 png::Encoder::new(std::io::BufWriter::new(file), width as u32, height as u32);
@@ -852,11 +936,104 @@ mod tests {
     #[test]
     fn the_window_opens_on_sharing_and_names_its_tabs() {
         assert_eq!(Tab::default(), Tab::Share);
-        let labels: Vec<_> = Tab::ALL.iter().map(|t| t.label()).collect();
+        let labels: Vec<_> = Tab::all(0).iter().map(|t| t.label()).collect();
         assert_eq!(
             labels,
             ["This computer", "Connect", "History", "Settings", "About"]
         );
+    }
+
+    /// A page another program adds, counting how often it is drawn.
+    struct Counted {
+        label: &'static str,
+        drawn: std::rc::Rc<std::cell::Cell<u32>>,
+    }
+
+    impl crate::Page for Counted {
+        fn label(&self) -> &str {
+            self.label
+        }
+        fn about(&self) -> &str {
+            "An added page."
+        }
+        fn ui(&mut self, ui: &mut egui::Ui) {
+            self.drawn.set(self.drawn.get() + 1);
+            ui.label("added");
+        }
+    }
+
+    #[test]
+    fn added_pages_take_their_places_and_are_drawn_when_chosen() {
+        use super::{Added, SettingsPage, Shell};
+        use std::cell::Cell;
+        use std::rc::Rc;
+        let (page, group, about) = (
+            Rc::new(Cell::new(0)),
+            Rc::new(Cell::new(0)),
+            Rc::new(Cell::new(0)),
+        );
+        let counted = |label, drawn: &Rc<Cell<u32>>| -> Box<dyn crate::Page> {
+            Box::new(Counted {
+                label,
+                drawn: drawn.clone(),
+            })
+        };
+        let added = Added {
+            pages: vec![counted("Extra", &page)],
+            settings: vec![counted("Extra group", &group)],
+            about: Some(counted("Extra about", &about)),
+        };
+        let mut shell = Shell::new(None, super::terms::Consent::Accepted, None, added);
+
+        let tabs = Tab::all(shell.added.pages.len());
+        let labels: Vec<_> = tabs.iter().map(|&t| shell.tab_label(t)).collect();
+        assert_eq!(
+            labels,
+            [
+                "This computer",
+                "Connect",
+                "History",
+                "Settings",
+                "Extra",
+                "About"
+            ]
+        );
+        let groups = SettingsPage::all(shell.added.settings.len());
+        assert_eq!(groups.len(), 7);
+        assert_eq!(
+            shell.group_text(groups[6]),
+            ("Extra group", "An added page.")
+        );
+
+        // The window's own look and fonts, as when it opens.
+        let ctx = egui::Context::default();
+        shell.attach(&ctx);
+        let frame = |shell: &mut Shell| {
+            let input = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(1100.0, 760.0),
+                )),
+                ..Default::default()
+            };
+            let _ = ctx.run_ui(input, |ui| shell.draw(ui));
+        };
+        frame(&mut shell);
+        assert_eq!(
+            (page.get(), group.get(), about.get()),
+            (0, 0, 0),
+            "nothing added is drawn on the first page"
+        );
+        shell.tab = Tab::Extra(0);
+        frame(&mut shell);
+        assert!(page.get() > 0, "the added page");
+        shell.tab = Tab::Settings;
+        shell.settings_group = SettingsPage::Extra(0);
+        frame(&mut shell);
+        assert!(group.get() > 0, "the added settings group");
+        shell.tab = Tab::About;
+        frame(&mut shell);
+        assert!(about.get() > 0, "the added part of About");
     }
 
     #[test]
