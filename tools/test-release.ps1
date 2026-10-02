@@ -84,7 +84,7 @@ try {
     $sourceLicense = Get-FileHash -LiteralPath (Join-Path $repo 'LICENSE') -Algorithm SHA256
     $packedLicense = Get-FileHash -LiteralPath (Join-Path $extract 'LICENSE') -Algorithm SHA256
     if ($sourceLicense.Hash -cne $packedLicense.Hash) { throw 'Archive license differs from source.' }
-    if ($readme -notmatch 'TideDesk Personal Use Source License 1.0' -or
+    if ($readme -notmatch 'TideDesk Personal Use Source License 1.1' -or
         $readme -match 'Licensed under GNU AGPL') {
         throw 'README has stale license terms.'
     }
@@ -110,7 +110,7 @@ try {
             throw 'Release text must link the terms of use.'
         }
     }
-    if ($releaseNotes -notmatch 'Business use requires separate written permission' -or
+    if ($releaseNotes -notmatch 'Business use requires' -or
         $releaseNotes -match 'free, open-source') {
         throw 'Release notes have stale license terms.'
     }

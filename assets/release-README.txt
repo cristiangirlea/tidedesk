@@ -75,7 +75,7 @@ from its tray menu, close the viewer, then delete the extracted folder.
 Optional: remove %APPDATA%\TideDesk to erase saved settings, computers and identities.
 Remove any Windows Firewall exception you created for TideDesk.
 
-Licensed under the TideDesk Personal Use Source License 1.0 (see LICENSE).
+Licensed under the TideDesk Personal Use Source License 1.1 (see LICENSE).
 Business use, resale and paid customer support require separate written permission.
 Earlier AGPL releases retain their original permissions; these terms are not retroactive.
 Source for this version: https://github.com/cristiangirlea/tidedesk/tree/v@VERSION@

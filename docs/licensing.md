@@ -1,7 +1,7 @@
 # Licensing
 
 The current development source is offered under the TideDesk Personal Use Source
-License 1.0 in the root LICENSE file. This is a custom source-available license,
+License 1.1 in the root LICENSE file. This is a custom source-available license,
 not AGPL and not an OSI-approved open-source license.
 
 ## Summary
@@ -9,7 +9,12 @@ not AGPL and not an OSI-approved open-source license.
 - Individuals may run, inspect, compile and modify it for personal,
   non-commercial purposes, including unpaid help to family and friends.
 - Business use, including internal organizational IT support, requires separate
-  written permission. So do resale, paid customer support and product integration.
+  written permission: a licence file issued by the Licensor, or another agreement.
+  So do resale, paid customer support and product integration.
+- On a computer managed by an organisation (joined to a domain or an organisational
+  identity service, or enrolled in device management), any lawful use, including
+  business use, is allowed for 14 days from first use on that computer and then for
+  up to 8 hours of sessions a month, as TideDesk counts them there (section 3a).
 - Copies may be shared without payment for personal use, with license notices
   intact and modifications clearly identified.
 - The LICENSE text is authoritative. No paid feature, subscription, commercial
@@ -30,6 +35,10 @@ source were published under GNU AGPL-3.0-only. Those grants remain in place.
 The former license is preserved in licenses/AGPL-3.0-only.txt and the release tags.
 This change does not revoke rights to copies or source already offered under AGPL,
 nor prevent continued use or development of those versions under AGPL.
+
+Releases up to v0.1.0-alpha.11 were offered under version 1.0 of the TideDesk
+Personal Use Source License; version 1.1 adds section 3a and says that a signed
+licence file is a separate written license.
 
 Check the license included with the particular release you download, rather than
 assuming that the license on the development branch applies to every release.
@@ -56,5 +65,6 @@ The license grants no rights in third-party patents (LICENSE, section 5).
 ## Roadmap
 
 The roadmap records intentions, not a contractual promise or a delivery schedule.
-There is no implemented Personal/Pro feature switch, payment system or activation
-service in this change.
+TideDesk checks licence files offline (About, **Add a licence**); there is no
+account, activation service or usage reporting. A payment system is not part of the
+source.
