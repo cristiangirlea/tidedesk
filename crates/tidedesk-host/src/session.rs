@@ -292,7 +292,7 @@ pub async fn run(conn: quinn::Connection, state: Arc<HostState>) -> Result<()> {
         Knows::Code(_) => "access code",
         Knows::Password(_) => "saved password",
     };
-    let mut record = session_log::Recorder(session_log::on().then(|| session_log::Entry {
+    let mut record = session_log::Recorder(Some(session_log::Entry {
         started: std::time::SystemTime::now(),
         ended: std::time::SystemTime::now(),
         viewer: client_name.clone(),
@@ -586,7 +586,7 @@ pub async fn run(conn: quinn::Connection, state: Arc<HostState>) -> Result<()> {
     };
     record.ended_because(match &result {
         Ok(()) => "the connection closed".into(),
-        Err(e) => format!("{e:#}"),
+        Err(e) => plain_reason(&format!("{e:#}")),
     });
     drop(stop_video);
     injector.release_all();
@@ -677,9 +677,53 @@ async fn receive_file(
     let _ = saved.send(message);
 }
 
+/// Why a session ended, in words for the session history; the technical
+/// reason goes to the log.
+fn plain_reason(reason: &str) -> String {
+    let says = |text: &str| reason.contains(text);
+    if says("viewer closed") {
+        "the viewer left"
+    } else if says("disconnected by host") {
+        "disconnected here"
+    } else if says("host quit") {
+        "TideDesk was closed here"
+    } else if says("company hours used") || says("hours for the month are used") {
+        "this month's hours were used"
+    } else if says("timed out") {
+        "no answer from the viewer"
+    } else {
+        return reason.to_string();
+    }
+    .into()
+}
+
 struct StopOnDrop<'a>(&'a AtomicBool);
 impl Drop for StopOnDrop<'_> {
     fn drop(&mut self) {
         self.0.store(true, Ordering::Relaxed);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn the_history_says_why_in_plain_words() {
+        for (reason, plain) in [
+            (
+                "control reader: connection lost: closed by peer: viewer closed (code 0)",
+                "the viewer left",
+            ),
+            (
+                "control stream: connection lost: closed: disconnected by host (code 2)",
+                "disconnected here",
+            ),
+            (
+                "video stream: connection lost: timed out",
+                "no answer from the viewer",
+            ),
+            ("something else", "something else"),
+        ] {
+            assert_eq!(super::plain_reason(reason), plain, "{reason}");
+        }
     }
 }

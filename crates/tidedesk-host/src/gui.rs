@@ -86,6 +86,9 @@ pub struct HostApp {
     declaring: bool,
     /// A chat message being written.
     chat_draft: String,
+    /// What the session history is filtered by, and what its export did.
+    history_search: String,
+    history_note: Option<String>,
 }
 
 pub(crate) struct Address {
@@ -160,6 +163,121 @@ fn company_line() -> Option<String> {
     }
 }
 
+/// The session history, read again every few seconds rather than on
+/// every frame.
+fn cached_history() -> Arc<tidedesk_core::history::History> {
+    type Cached = Option<(Instant, Arc<tidedesk_core::history::History>)>;
+    static CACHE: std::sync::Mutex<Cached> = std::sync::Mutex::new(None);
+    let mut cache = CACHE.lock().unwrap();
+    match &*cache {
+        Some((at, history)) if at.elapsed() < Duration::from_secs(5) => history.clone(),
+        _ => {
+            let history = Arc::new(tidedesk_core::history::read());
+            *cache = Some((Instant::now(), history.clone()));
+            history
+        }
+    }
+}
+
+/// Who connected to this computer: the last 30 days for everyone, the full
+/// history with search and export with a licence that includes it.
+fn session_history(ui: &mut egui::Ui, search: &mut String, note: &mut Option<String>) {
+    use tidedesk_core::history;
+    ui.label(RichText::new("Session history").strong());
+    let full = crate::session_log::full();
+    let past = cached_history();
+    if past.changed {
+        ui.colored_label(
+            ERROR_RED,
+            "The history was changed outside TideDesk: sessions may be missing or altered.",
+        );
+    }
+    let now = crate::session_log::secs(std::time::SystemTime::now());
+    let (mut shown, older) = history::shown(&past.records, now, full);
+    if full {
+        ui.horizontal(|ui| {
+            ui.add(egui::TextEdit::singleline(search).hint_text("Search"));
+            if ui.button("Export CSV").clicked() {
+                *note = Some(export_history(&past.records));
+            }
+        });
+        let wanted = search.trim().to_lowercase();
+        if !wanted.is_empty() {
+            shown.retain(|r| {
+                [&r.viewer, &r.address, &r.admitted_by, &r.ended_because]
+                    .iter()
+                    .any(|t| t.to_lowercase().contains(&wanted))
+            });
+        }
+        if let Some(note) = note {
+            ui.small(note.as_str());
+        }
+    } else {
+        ui.small(format!(
+            "The last {} days. Recorded on this computer only, sealed for this Windows account.",
+            history::FREE_DAYS
+        ));
+    }
+    if shown.is_empty() {
+        ui.small("No sessions yet.");
+    } else {
+        egui::ScrollArea::vertical()
+            .id_salt("history")
+            .max_height(220.0)
+            .show(ui, |ui| {
+                egui::Grid::new("history-grid")
+                    .striped(true)
+                    .spacing([10.0, 4.0])
+                    .show(ui, |ui| {
+                        for title in [
+                            "Started (UTC)",
+                            "Min",
+                            "Viewer",
+                            "From",
+                            "Let in by",
+                            "Ended",
+                        ] {
+                            ui.label(RichText::new(title).small().strong());
+                        }
+                        ui.end_row();
+                        for record in shown.iter().rev() {
+                            ui.small(tidedesk_core::dates::time(record.started));
+                            ui.small(record.minutes().to_string());
+                            ui.small(&record.viewer);
+                            ui.small(&record.address);
+                            ui.small(&record.admitted_by);
+                            ui.small(&record.ended_because);
+                            ui.end_row();
+                        }
+                    });
+            });
+    }
+    if older > 0 {
+        ui.small(format!(
+            "{older} older sessions are kept. The full history, search and export come with \
+             TideDesk Solo or the session history add-on (About, Add a licence)."
+        ));
+    }
+}
+
+/// Writes the history to `Downloads\TideDesk\sessions-DATE.csv`: what to say.
+fn export_history(records: &[tidedesk_core::history::Record]) -> String {
+    let saved = tidedesk_core::files::downloads().and_then(|dir| {
+        let path = dir.join(format!("sessions-{}.csv", tidedesk_core::dates::today()));
+        std::fs::write(&path, tidedesk_core::history::csv(records))?;
+        Ok(path)
+    });
+    match saved {
+        Ok(path) => {
+            if let Some(dir) = path.parent() {
+                platform::open_link(&dir.to_string_lossy());
+            }
+            format!("Saved {}.", path.display())
+        }
+        Err(e) => format!("Could not export: {e:#}"),
+    }
+}
+
 fn status_dot(ui: &mut egui::Ui, color: Color32) {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(12.0, 12.0), egui::Sense::hover());
     ui.painter().circle_filled(rect.center(), 5.0, color);
@@ -210,6 +328,8 @@ impl HostApp {
             autostart: platform::autostart_enabled(),
             declaring: false,
             chat_draft: String::new(),
+            history_search: String::new(),
+            history_note: None,
             tray: None,
             window_hooked: false,
         }
@@ -752,19 +872,8 @@ impl HostApp {
             );
         ui.small("Applies immediately. Clipboard also needs to be enabled in Viewer Settings.");
         ui.add_space(8.0);
-        if crate::session_log::on()
-            && let Ok(log) = crate::session_log::path()
-        {
-            ui.label(RichText::new("Session log").strong());
-            ui.small(format!(
-                "Every session is recorded in {}: who, from where, when, and why it ended.",
-                log.display()
-            ));
-            if log.exists() && ui.button("Open the session log").clicked() {
-                platform::open_link(&log.to_string_lossy());
-            }
-            ui.add_space(8.0);
-        }
+        session_history(ui, &mut self.history_search, &mut self.history_note);
+        ui.add_space(8.0);
 
         ui.label(RichText::new("Window").strong());
         ui.checkbox(&mut cfg.show_in_taskbar, "Show in the taskbar")

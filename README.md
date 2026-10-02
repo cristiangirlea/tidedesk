@@ -285,10 +285,12 @@ A home lab that runs its own domain (no Entra ID, no device management) can pres
 computer is mine** on the Share tab: the declaration is saved with the Windows user and the date,
 shown on the Share tab and in About, and can be withdrawn.
 
-A licence that includes the session log keeps one line per session in `sessions.csv`, next to
-`tidedesk.log`: when it started and ended, the viewer, its address, how it was let in (access
-code, saved password or trusted viewer) and why it ended. It opens in a spreadsheet and stays on
-the computer.
+Every host keeps a **session history**, shown in Settings: when each session started and ended,
+the viewer, its address, how it was let in (access code, saved password or trusted viewer) and
+why it ended. It stays on the computer, sealed for the Windows account, and each entry is chained
+to the one before, so a changed or removed entry shows. Everyone sees the last 30 days; older
+sessions are kept, and a licence that includes the session history shows all of them, with
+search and a CSV export.
 
 The new terms apply only to versions supplied under them, not retroactively to earlier
 AGPL releases. Third-party components retain their own licenses and notices.
