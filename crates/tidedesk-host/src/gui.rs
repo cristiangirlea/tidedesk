@@ -84,6 +84,8 @@ pub struct HostApp {
     window_hooked: bool,
     /// Confirming that this domain computer is personal.
     declaring: bool,
+    /// A chat message being written.
+    chat_draft: String,
 }
 
 pub(crate) struct Address {
@@ -199,6 +201,7 @@ impl HostApp {
             settings_error: None,
             autostart: platform::autostart_enabled(),
             declaring: false,
+            chat_draft: String::new(),
             tray: None,
             window_hooked: false,
         }
@@ -441,6 +444,9 @@ impl HostApp {
         if let Some(note) = state.files_note.lock().unwrap().as_ref() {
             ui.small(note);
         }
+        if viewer.as_ref().is_some_and(|v| v.files) {
+            self.chat(ui, &state);
+        }
         ui.separator();
 
         ui.label("Access code");
@@ -636,6 +642,41 @@ impl HostApp {
                  from the viewer within two minutes.",
             );
         }
+    }
+
+    /// The chat with the viewer: what was written, and a box to write.
+    fn chat(&mut self, ui: &mut egui::Ui, state: &HostState) {
+        egui::CollapsingHeader::new("Chat with the viewer")
+            .default_open(true)
+            .show(ui, |ui| {
+                egui::ScrollArea::vertical()
+                    .max_height(140.0)
+                    .stick_to_bottom(true)
+                    .show(ui, |ui| {
+                        for (theirs, text) in state.chat.lock().unwrap().iter() {
+                            let who = if *theirs { "Viewer" } else { "You" };
+                            ui.label(RichText::new(who).small().strong());
+                            ui.label(text);
+                        }
+                    });
+                ui.horizontal(|ui| {
+                    let edit = ui.add(
+                        egui::TextEdit::singleline(&mut self.chat_draft)
+                            .char_limit(tidedesk_core::chat::MAX_CHARS)
+                            .hint_text("Write to the viewer"),
+                    );
+                    let enter = edit.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                    if (enter || ui.button("Send").clicked())
+                        && let Some(text) = tidedesk_core::chat::clean(&self.chat_draft)
+                        && let Some(out) = state.chat_out.lock().unwrap().as_ref()
+                        && out.send(text.clone()).is_ok()
+                    {
+                        state.chat.lock().unwrap().push((false, text));
+                        self.chat_draft.clear();
+                        edit.request_focus();
+                    }
+                });
+            });
     }
 
     /// The sharing settings; changes apply at once and are saved.

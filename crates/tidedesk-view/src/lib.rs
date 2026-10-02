@@ -3,6 +3,7 @@
 //! Runs as `tidedesk view …` inside the one program.
 
 mod app;
+mod chat_window;
 mod child;
 mod computers;
 mod connect;
@@ -97,6 +98,9 @@ struct Args {
     /// With --settings: the centre to open the window on, `x,y` in points.
     #[arg(long, hide = true, requires = "settings")]
     settings_near: Option<String>,
+    /// A session's chat window, fed on standard input.
+    #[arg(long, hide = true)]
+    chat: Option<String>,
     /// Host to connect to: name or IP, optionally with :port. Omit to open the
     /// connect window.
     host: Option<String>,
@@ -302,6 +306,9 @@ fn run(program: &str, argv: Vec<OsString>) -> Result<()> {
     let args = Args::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
     if args.settings {
         return settings::run(args.settings_near.as_deref().and_then(settings::parse_near));
+    }
+    if let Some(title) = &args.chat {
+        return chat_window::run(title);
     }
     // Shown to every host, which may trust it.
     let identity = paths::config_dir()
@@ -527,6 +534,8 @@ fn run(program: &str, argv: Vec<OsString>) -> Result<()> {
         game_boost,
     );
     app.own_company = own_company;
+    app.notify = Some(ui.clone());
+    app.chats = tidedesk_core::net::extras(&conn);
     if tidedesk_core::net::extras(&conn) {
         let (files_tx, mut files_rx) = tokio::sync::mpsc::unbounded_channel::<std::path::PathBuf>();
         app.files = Some(files_tx);
