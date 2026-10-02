@@ -6,6 +6,8 @@ param(
     [Parameter(Mandatory)][string]$Publisher,
     [Parameter(Mandatory)][string]$PublisherDisplayName,
     [string]$BinaryDirectory = 'target/release',
+    # The Cargo workspace the program was built from, for its dependencies' notices.
+    [string]$DependencyWorkspace,
     [string]$OutputDirectory = 'target/store',
     [string]$MakeAppx
 )
@@ -63,7 +65,7 @@ foreach ($file in @('tidedesk.exe')) {
 }
 Copy-Item -LiteralPath (Join-Path $repo 'LICENSE') -Destination $stage
 Copy-Item -LiteralPath (Join-Path $repo 'licenses') -Destination $stage -Recurse
-& (Join-Path $repo 'tools/package-third-party-notices.ps1') -StageDirectory $stage
+& (Join-Path $repo 'tools/package-third-party-notices.ps1') -StageDirectory $stage -Workspace $DependencyWorkspace
 [xml]$manifest = Get-Content -LiteralPath (Join-Path $repo 'packaging/msix/AppxManifest.xml') -Raw
 $manifest.Package.Identity.SetAttribute('Name', $IdentityName)
 $manifest.Package.Identity.SetAttribute('Publisher', $Publisher)
