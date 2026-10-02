@@ -81,7 +81,21 @@ fn main() {
     let argv: Vec<OsString> = std::env::args_os().collect();
     match dispatch(&argv) {
         (Mode::App { hidden }, _) => {
-            tracing_subscriber::fmt().with_target(false).init();
+            // The window's TideDesk has no terminal: it writes to its log file
+            // what it would print, and shows nothing more on screen.
+            let log = tidedesk_core::logs::path().and_then(|p| tidedesk_core::logs::open(&p));
+            let subscriber = tracing_subscriber::fmt().with_target(false);
+            match log {
+                Ok(file) => {
+                    use tracing_subscriber::fmt::writer::MakeWriterExt;
+                    let file = std::sync::Mutex::new(file);
+                    subscriber
+                        .with_ansi(false)
+                        .with_writer(std::io::stderr.and(file))
+                        .init();
+                }
+                Err(_) => subscriber.init(),
+            }
             if let Err(e) = app::run(hidden) {
                 tidedesk_host::error_box(app::WINDOW_TITLE, &format!("{e:#}"));
                 std::process::exit(1);

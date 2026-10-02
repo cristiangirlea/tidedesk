@@ -100,6 +100,8 @@ pub struct App {
     /// For how long the host has not answered.
     silent: Option<Duration>,
     pub exit_message: Option<String>,
+    /// Why the session ended, in plain words, once it has.
+    ended: Option<String>,
 }
 
 impl App {
@@ -141,6 +143,7 @@ impl App {
             test: TestControl::default(),
             silent: None,
             exit_message: None,
+            ended: None,
         }
     }
 
@@ -188,7 +191,7 @@ impl App {
             repeat,
             ..
         } = key;
-        if !self.focused {
+        if !self.focused || self.ended.is_some() {
             return;
         }
         let Some(scancode) = crate::keys::scancode(physical, key.logical) else {
@@ -261,11 +264,9 @@ impl App {
             UiEvent::Silent(silent) => self.host_silent(silent),
             UiEvent::Command(command) => self.command(command),
             UiEvent::Disconnected(reason) => {
-                self.game_boost.store(false, Ordering::Relaxed);
-                self.release_keys();
-                self.release_mouse();
-                self.exit_message = Some(reason);
-                event_loop.exit();
+                if self.session_ended(reason) {
+                    event_loop.exit();
+                }
             }
         }
     }
@@ -442,7 +443,7 @@ impl App {
 
     /// A mouse button pressed or let go of where the viewer's pointer is.
     fn button(&mut self, button: MouseButton, pressed: bool) {
-        if !self.focused || !self.mouse_enabled() {
+        if !self.focused || !self.mouse_enabled() || self.ended.is_some() {
             return;
         }
         let event = InputEvent::MouseButton { button, pressed };
@@ -522,6 +523,21 @@ impl App {
         self.update_title();
     }
 
+    /// The session is over: the window stays, with the last picture, and its
+    /// title says why. No dialog: TideDesk may be on a screen others see. A
+    /// session under test control ends as it always did. Whether the viewer
+    /// should exit now.
+    fn session_ended(&mut self, reason: String) -> bool {
+        self.game_boost.store(false, Ordering::Relaxed);
+        self.release_keys();
+        self.release_mouse();
+        tracing::warn!("session ended: {reason}");
+        self.ended = Some(plain_reason(&reason));
+        self.exit_message = Some(reason);
+        self.update_title();
+        self.test.path.is_some()
+    }
+
     fn update_title(&self) {
         if let Some(surface) = &self.surface {
             surface.window.set_title(&self.window_title());
@@ -529,6 +545,9 @@ impl App {
     }
 
     fn window_title(&self) -> String {
+        if let Some(why) = &self.ended {
+            return format!("{} | Session ended: {why}", self.title);
+        }
         let status = |wanted: bool, enabled: bool| {
             if !wanted {
                 "off"
@@ -984,6 +1003,26 @@ impl ApplicationHandler<UiEvent> for App {
     }
 }
 
+/// Why a session ended, in words for the person at the viewer; the
+/// technical reason goes to the log.
+fn plain_reason(reason: &str) -> String {
+    let says = |text: &str| reason.contains(text);
+    if says("disconnected by host") {
+        "the host disconnected this viewer"
+    } else if says("host quit") {
+        "TideDesk was closed on the host"
+    } else if says("host ended the session") || says("closed by peer: bye") {
+        "the host ended the session"
+    } else if says("timed out") {
+        "no answer from the host"
+    } else if says("video decoder") {
+        "this computer could not show the video"
+    } else {
+        "the connection was lost"
+    }
+    .into()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1352,6 +1391,61 @@ mod tests {
             assert_eq!(rx.try_recv().unwrap(), ClientMessage::Input(key));
         }
         assert!(rx.try_recv().is_err());
+    }
+
+    /// A session that ends keeps its window and says why in the title, in
+    /// plain words; one under test control ends as before.
+    #[test]
+    fn a_session_that_ends_keeps_its_window_and_says_why() {
+        let (mut app, mut rx) = app();
+        assert!(!app.session_ended("connection lost: closed by peer: bye (code 0)".into()));
+        assert_eq!(
+            app.window_title(),
+            "test | Session ended: the host ended the session"
+        );
+        assert_eq!(
+            app.exit_message.as_deref(),
+            Some("connection lost: closed by peer: bye (code 0)"),
+            "the technical reason is kept for the log"
+        );
+        // Nothing goes to a host that is not there any more.
+        let _ = sent(&mut rx);
+        app.key(typed("a", true));
+        assert!(rx.try_recv().is_err());
+
+        let (mut controlled, _rx) = super::tests::app();
+        controlled.test.path = Some(Box::new(String::new));
+        assert!(controlled.session_ended("timed out".into()));
+    }
+
+    #[test]
+    fn why_a_session_ended_in_plain_words() {
+        for (reason, plain) in [
+            (
+                "connection lost: closed by peer: bye (code 0)",
+                "the host ended the session",
+            ),
+            ("host ended the session", "the host ended the session"),
+            (
+                "connection lost: closed by peer: disconnected by host (code 2)",
+                "the host disconnected this viewer",
+            ),
+            (
+                "connection lost: closed by peer: host quit (code 0)",
+                "TideDesk was closed on the host",
+            ),
+            (
+                "reading video stream: connection lost: timed out",
+                "no answer from the host",
+            ),
+            (
+                "cannot start video decoder: no decoder",
+                "this computer could not show the video",
+            ),
+            ("something else", "the connection was lost"),
+        ] {
+            assert_eq!(plain_reason(reason), plain, "{reason}");
+        }
     }
 
     /// The picture stands still when the host has gone, as it does on a

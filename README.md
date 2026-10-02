@@ -67,6 +67,10 @@ The first time, TideDesk asks you to accept its [terms of use](docs/terms-of-use
 include the rules for its connection service, and the license; nothing is shared before that.
 The About tab shows both at any time, with the version.
 
+When a session ends, the viewer's window stays open with the last picture and its title says
+why; nothing appears on the host's screen. TideDesk also writes it, with anything else that went
+wrong, to `tidedesk.log` in `%APPDATA%\TideDesk`.
+
 **On the computer you want to reach**, run `tidedesk`. The **Share this computer** tab shows
 the **access code**, this computer's addresses and its **device ID**; TideDesk also sits in the
 notification area (tray). Closing the window keeps it sharing there; quit from the tray menu.
