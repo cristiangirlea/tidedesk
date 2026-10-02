@@ -37,6 +37,13 @@ impl Management {
         self.domain.is_some() || self.entra.is_some() || self.device_management
     }
 
+    /// Only a plain domain may be declared personal (a home lab): real
+    /// company computers are almost always joined to Entra ID or enrolled in
+    /// device management as well.
+    pub fn may_declare(&self) -> bool {
+        self.domain.is_some() && self.entra.is_none() && !self.device_management
+    }
+
     /// The organisation's name, for messages.
     pub fn name(&self) -> String {
         [&self.domain, &self.entra]
@@ -110,6 +117,81 @@ fn read() -> Management {
 #[cfg(not(windows))]
 fn read() -> Management {
     Management::default()
+}
+
+/// What someone confirms when declaring their domain computer personal.
+pub const DECLARATION: &str = "This computer and its domain are mine, and I use TideDesk on it for \
+personal, non-commercial purposes. A false declaration breaks the TideDesk license.";
+
+/// A home lab's declaration that its domain computer is personal: who made
+/// it, when, and for which domain.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Declaration {
+    pub user: String,
+    pub date: String,
+    pub domain: String,
+}
+
+impl Declaration {
+    /// Whether it still holds for a computer managed as `management`: made
+    /// for the domain it is joined to, and nothing else manages it.
+    pub fn holds(&self, management: &Management) -> bool {
+        management.may_declare() && management.domain.as_deref() == Some(self.domain.as_str())
+    }
+
+    pub fn describe(&self) -> String {
+        format!(
+            "Declared personal by {} on {} (domain {}).",
+            self.user, self.date, self.domain
+        )
+    }
+}
+
+fn declaration_path() -> Result<PathBuf> {
+    Ok(crate::paths::config_dir()?.join("personal-declaration.toml"))
+}
+
+/// This computer's declaration, if it still holds.
+pub fn declaration() -> Option<Declaration> {
+    let text = std::fs::read_to_string(declaration_path().ok()?).ok()?;
+    let declaration: Declaration = toml::from_str(&text).ok()?;
+    declaration.holds(management()).then_some(declaration)
+}
+
+/// Declares this domain computer personal, by the Windows user signed in.
+pub fn declare() -> Result<Declaration> {
+    let management = management();
+    let Some(domain) = management
+        .domain
+        .clone()
+        .filter(|_| management.may_declare())
+    else {
+        anyhow::bail!(
+            "only a computer on its own domain, without device management, can be declared personal"
+        );
+    };
+    let declaration = Declaration {
+        user: std::env::var("USERNAME").unwrap_or_else(|_| "unknown".into()),
+        date: crate::dates::today(),
+        domain,
+    };
+    let path = declaration_path()?;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).context("making the settings folder")?;
+    }
+    let text = toml::to_string(&declaration).context("writing the declaration")?;
+    std::fs::write(&path, text).with_context(|| format!("saving {}", path.display()))?;
+    Ok(declaration)
+}
+
+/// Withdraws this computer's declaration.
+pub fn withdraw() -> Result<()> {
+    match std::fs::remove_file(declaration_path()?) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+            Err(e).context("removing the declaration")
+        }
+        _ => Ok(()),
+    }
 }
 
 /// Where an unlicensed company computer stands.
@@ -238,7 +320,7 @@ pub fn save(usage: &Usage) -> Result<()> {
 /// Where this computer stands today: `None` when no limit applies (not
 /// managed, or licensed for work). Starts the trial on the first call.
 pub fn allowance() -> Option<Allowance> {
-    if !management().managed() || crate::licence::allows("work") {
+    if !management().managed() || crate::licence::allows("work") || declaration().is_some() {
         return None;
     }
     let today = crate::dates::today();
@@ -467,6 +549,34 @@ mod tests {
         assert_eq!(
             Allowance::Trial { days_left: 9 }.describe("CORP"),
             "Company computer (CORP) without a TideDesk licence: trial, 9 days left."
+        );
+        // A home lab's own domain may be declared; a company's cannot.
+        assert!(corp.may_declare());
+        let declared = Declaration {
+            user: "ana".into(),
+            date: "2026-10-02".into(),
+            domain: "CORP".into(),
+        };
+        assert!(declared.holds(&corp));
+        let other = Management {
+            domain: Some("HOME".into()),
+            ..Management::default()
+        };
+        assert!(!declared.holds(&other), "another domain");
+        let enrolled = Management {
+            device_management: true,
+            ..corp.clone()
+        };
+        assert!(!enrolled.may_declare() && !declared.holds(&enrolled));
+        let entra = Management {
+            entra: Some("Contoso".into()),
+            ..corp.clone()
+        };
+        assert!(!entra.may_declare() && !declared.holds(&entra));
+        assert!(!intune.may_declare());
+        assert_eq!(
+            declared.describe(),
+            "Declared personal by ana on 2026-10-02 (domain CORP)."
         );
         // Reading Windows' records works on any computer.
         let _ = management();

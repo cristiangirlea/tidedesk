@@ -82,6 +82,8 @@ pub struct HostApp {
     autostart: bool,
     tray: Option<Tray>,
     window_hooked: bool,
+    /// Confirming that this domain computer is personal.
+    declaring: bool,
 }
 
 pub(crate) struct Address {
@@ -133,11 +135,11 @@ pub(crate) fn local_addresses(port: u16) -> Vec<Address> {
 
 /// Where this computer stands as an unlicensed company computer, looked
 /// up again every few seconds rather than on every frame.
+type CompanyCache = Option<(Instant, Option<tidedesk_core::company::Allowance>)>;
+static COMPANY_CACHE: std::sync::Mutex<CompanyCache> = std::sync::Mutex::new(None);
+
 fn company_allowance() -> Option<tidedesk_core::company::Allowance> {
-    use std::sync::Mutex;
-    type Cached = Option<(Instant, Option<tidedesk_core::company::Allowance>)>;
-    static CACHE: Mutex<Cached> = Mutex::new(None);
-    let mut cache = CACHE.lock().unwrap();
+    let mut cache = COMPANY_CACHE.lock().unwrap();
     match *cache {
         Some((at, allowance)) if at.elapsed() < Duration::from_secs(5) => allowance,
         _ => {
@@ -196,6 +198,7 @@ impl HostApp {
             notice: None,
             settings_error: None,
             autostart: platform::autostart_enabled(),
+            declaring: false,
             tray: None,
             window_hooked: false,
         }
@@ -375,12 +378,48 @@ impl HostApp {
             state.accepting.store(accept, Ordering::SeqCst);
         }
         if let Some(allowance) = company_allowance() {
-            let name = tidedesk_core::company::management().name();
-            ui.colored_label(ui.visuals().warn_fg_color, allowance.describe(&name))
-                .on_hover_text(
-                    "Computers managed by an organisation need a TideDesk licence. Without one: \
+            let management = tidedesk_core::company::management();
+            ui.colored_label(
+                ui.visuals().warn_fg_color,
+                allowance.describe(&management.name()),
+            )
+            .on_hover_text(
+                "Computers managed by an organisation need a TideDesk licence. Without one: \
                  14 days of trial, then 8 hours a month. Add a licence under About.",
-                );
+            );
+            if management.may_declare() && !self.declaring {
+                self.declaring = ui
+                    .small_button("This computer is mine…")
+                    .on_hover_text("For a home lab that runs its own domain.")
+                    .clicked();
+            }
+        }
+        if self.declaring {
+            ui.label(tidedesk_core::company::DECLARATION);
+            ui.horizontal(|ui| {
+                if ui.button("I declare this").clicked() {
+                    if let Err(e) = tidedesk_core::company::declare() {
+                        self.notice = Some(format!("{e:#}"));
+                    }
+                    *COMPANY_CACHE.lock().unwrap() = None;
+                    self.declaring = false;
+                }
+                if ui.button("Cancel").clicked() {
+                    self.declaring = false;
+                }
+            });
+        } else if tidedesk_core::company::management().may_declare()
+            && let Some(declared) = tidedesk_core::company::declaration()
+        {
+            ui.horizontal(|ui| {
+                ui.small(declared.describe());
+                if ui.small_button("Withdraw").clicked() {
+                    if let Err(e) = tidedesk_core::company::withdraw() {
+                        self.notice = Some(format!("{e:#}"));
+                    }
+                    *COMPANY_CACHE.lock().unwrap() = None;
+                }
+            });
         }
         ui.separator();
 

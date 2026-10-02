@@ -260,6 +260,9 @@ that, new sessions wait for a licence or the next month. The viewer's title show
 from 2 hours into the month a small mark shows in a corner of the viewer's picture (never on the
 shared screen), and a running session is warned 10 minutes before it ends. A viewer on such a
 computer follows the same rule for itself.
+A home lab that runs its own domain (no Entra ID, no device management) can press **This
+computer is mine** on the Share tab: the declaration is saved with the Windows user and the date,
+shown on the Share tab and in About, and can be withdrawn.
 
 A licence that includes the session log keeps one line per session in `sessions.csv`, next to
 `tidedesk.log`: when it started and ended, the viewer, its address, how it was let in (access
