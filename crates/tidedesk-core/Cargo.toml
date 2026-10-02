@@ -35,4 +35,5 @@ features = [
     "Win32_NetworkManagement_NetManagement",
     "Win32_Networking_WinSock",
     "Win32_Security_Cryptography",
+    "Win32_System_Registry",
 ]
