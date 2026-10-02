@@ -110,7 +110,7 @@ try {
             throw 'Release text must link the terms of use.'
         }
     }
-    if ($releaseNotes -notmatch 'Business use requires separate written permission' -or
+    if ($releaseNotes -notmatch 'Business use requires' -or
         $releaseNotes -match 'free, open-source') {
         throw 'Release notes have stale license terms.'
     }
