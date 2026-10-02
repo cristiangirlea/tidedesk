@@ -56,7 +56,7 @@ impl egui_software_backend::App for Window {
                         .char_limit(chat::MAX_CHARS)
                         .hint_text("Write to the host; Enter sends"),
                 );
-                if (enter && edit.has_focus()) | ui.button("Send").clicked() {
+                if (enter && edit.has_focus()) | ui.add(tidedesk_ui::primary("Send")).clicked() {
                     self.send();
                     edit.request_focus();
                 }
@@ -71,18 +71,9 @@ impl egui_software_backend::App for Window {
                     for line in self.lines.lock().unwrap().iter() {
                         match line {
                             Line::Mine(text) => {
-                                ui.label(egui::RichText::new("You").small().strong());
-                                ui.label(text);
+                                tidedesk_ui::bubble(ui, true, text);
                             }
-                            Line::Theirs(text) => {
-                                ui.label(
-                                    egui::RichText::new("Host")
-                                        .small()
-                                        .strong()
-                                        .color(ui.visuals().hyperlink_color),
-                                );
-                                ui.label(text);
-                            }
+                            Line::Theirs(text) => tidedesk_ui::bubble(ui, false, text),
                             Line::Ended(why) => {
                                 ui.label(
                                     egui::RichText::new(format!("Session ended: {why}")).italics(),
@@ -107,6 +98,7 @@ pub fn run(title: &str) -> Result<()> {
         .with_min_inner_size([280.0, 240.0])
         .with_icon(crate::icon::egui_icon());
     egui_software_backend::run_app_with_software_backend(config, move |ctx| {
+        tidedesk_ui::apply(&ctx);
         let (lines, ctx) = (shown.clone(), ctx.clone());
         std::thread::spawn(move || {
             for line in std::io::stdin().lock().lines().map_while(Result::ok) {
