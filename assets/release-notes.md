@@ -10,29 +10,31 @@ Download @ZIP@ and extract it. Run tidedesk.exe on both computers.
 
 ## New in this release
 
-- **An About tab with the version.** About used to sit at the bottom of the Settings tab; it is a tab of its own now, with the version, a button that copies it for a question or a report, and one that opens the releases page to look for a newer version. License, terms of use, privacy and third-party notices are there as before. (#82)
+### Files and chat, free
 
-## Introduced in v0.1.0-alpha.10
+- **Copy files to the host:** drop files on the viewer's window. Each lands in `Downloads\TideDesk` on the host, and the viewer's title says when it is saved. **And back:** the host's Share tab has **Send files to the viewer...**, which opens Windows' file picker; the files land in `Downloads\TideDesk` on the viewer's computer. Files go directly between the two computers, below the picture, input and sound in priority, never through a server. Names are cleaned, nothing is overwritten, and a file only appears once it arrived whole. Each side can refuse files in its settings. Folders are not sent yet. (#98, #100)
+- **Chat:** Ctrl+Alt+T in the viewer (changeable) opens a small chat window, which also opens by itself when the host writes; the host chats from its Share tab, with nothing popping up on its screen. (#102)
+- Files and chat need both computers on this release; with an older one the viewer says so, and everything else works as before.
 
-### Access
+### Sessions
 
-- **Your own computers without the code.** Set a password under the access code on the host (or `tidedesk host --set-password`). A viewer that has connected to that computer before, or reaches it by device ID, types the password where the code goes. Neither computer sends the password: both prove to each other that they know it, and the host keeps only a key derived from it. Both computers need this release.
-- **Invite a viewer.** During a session, press **Trust this viewer** on the host: that viewer then connects with the code left empty, until you remove it from **Trusted viewers**. Each viewer has its own certificate, whose key never leaves that computer. Without a window: `tidedesk view --my-fingerprint` on the viewer, `tidedesk host --trust-viewer FINGERPRINT` on the host.
-- **A new access code after each session.** When a session ends the host makes a new code; the old one still works for five minutes, so a dropped connection comes straight back. A switch under the code turns this off; a host started with `--headless` keeps its code. A code remembered under My computers works until the host makes a new one.
-- **Wrong codes lock out only the address that sent them.** Someone guessing no longer locks you out too: each address gets five tries (a wrong password counts double), then waits that grow up to an hour. The host window names the addresses it refuses.
+- **A session that ends says why.** The viewer's window stays open with the last picture, and its title says why the session ended; nothing appears on the host's screen. The reason also goes to `tidedesk.log` in `%APPDATA%\TideDesk`. (#60)
 
-### The app
+### Licences
 
-- **The Settings shortcut can be changed**, like the clipboard, mouse and Game Boost ones; with it moved, Ctrl+Alt+S reaches the host. (#69)
-- **Settings opened during a session opens over it**, on the same monitor, instead of wherever Windows puts a new window. (#73)
-- **Simpler settings.** The fields for naming STUN servers and a connection service are gone from Host and Viewer Settings; servers named in the settings files or on the command line still apply.
-- **Cleaner text.** Window titles and labels use a bar or a colon instead of long dashes (`OBLIVION5080U9 | TideDesk`). (#70)
+- **About shows a licence, and takes one.** Business use is licensed with a short signed text: paste it under About, **Add a licence**. It is checked on the computer itself: no account, nothing sent anywhere. Personal use stays free. (#86)
+- **Session log**, for licences that include it: one line per session in `sessions.csv`, with who connected, from where, how they were let in, when and why it ended. (#88)
+- **Company computers.** A computer managed by an organisation (joined to a domain or to Microsoft Entra ID, or in device management) shows a notice that TideDesk will need a licence there for work. Nothing is limited in this release. A home lab that runs its own domain can declare its computer personal on the Share tab. (#90, #96, #104)
+
+## Introduced in v0.1.0-alpha.11
+
+- **An About tab with the version**, a button that copies it, and one that opens the releases page. (#82)
 
 ## Known issues
 
-- When a session ends, the viewer's window closes without saying why. (#60)
 - Automation tools that mark every key as an extended one (Python's `uiautomation`) send some letters with Ctrl or Alt as media keys: Ctrl+Alt+C turns the host's volume down. (#66)
 - A password or a trust needs the host on v0.1.0-alpha.10 or later; a code works with every host from v0.1.0-alpha.3 on.
+- Folders are not sent yet, and Ctrl+Alt+T does not bring an open chat window to the front.
 
 ## Good to know
 
