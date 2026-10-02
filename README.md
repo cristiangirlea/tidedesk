@@ -247,6 +247,11 @@ free. Business use (including a company's internal IT support), resale, paid cus
 support and product integration require separate written permission. No commercial
 license is included with this source checkout.
 
+A written permission comes as a short signed text, the licence. Paste it under About,
+**Add a licence**; About then shows who it is for, the edition and until when. It is
+checked on the computer itself: no account, nothing sent anywhere. An expired licence
+keeps working for 14 days.
+
 The new terms apply only to versions supplied under them, not retroactively to earlier
 AGPL releases. Third-party components retain their own licenses and notices.
 See [licensing and earlier releases](docs/licensing.md).
