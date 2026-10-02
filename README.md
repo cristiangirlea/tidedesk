@@ -285,7 +285,7 @@ A home lab that runs its own domain (no Entra ID, no device management) can pres
 computer is mine** on the Share tab: the declaration is saved with the Windows user and the date,
 shown on the Share tab and in About, and can be withdrawn.
 
-Every host keeps a **session history**, shown in Settings: when each session started and ended,
+Every host keeps a **session history**, opened with **Session history...** on the Share tab: when each session started and ended,
 the viewer, its address, how it was let in (access code, saved password or trusted viewer) and
 why it ended. It stays on the computer, sealed for the Windows account, and each entry is chained
 to the one before, so a changed or removed entry shows. Everyone sees the last 30 days; older

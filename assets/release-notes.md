@@ -23,7 +23,7 @@ Download @ZIP@ and extract it. Run tidedesk.exe on both computers.
 ### Licences
 
 - **About shows a licence, and takes one.** Business use is licensed with a short signed text: paste it under About, **Add a licence**. It is checked on the computer itself: no account, nothing sent anywhere. Personal use stays free. (#86)
-- **Session history, for everyone.** Settings shows who connected to this computer in the last 30 days: when, how long, from where, how they were let in and why the session ended. It stays on the computer, sealed for the Windows account, and each entry is chained to the one before, so a changed or removed entry shows. Older sessions are kept; a licence that includes the session history shows all of them, with search and a CSV export. (#88, #107)
+- **Session history, for everyone.** **Session history...** on the Share tab shows who connected to this computer in the last 30 days: when, how long, from where, how they were let in and why the session ended. It stays on the computer, sealed for the Windows account, and each entry is chained to the one before, so a changed or removed entry shows. Older sessions are kept; a licence that includes the session history shows all of them, with search and a CSV export. (#88, #107)
 - **Company computers.** A computer managed by an organisation (joined to a domain or to Microsoft Entra ID, or in device management) shows a notice that TideDesk will need a licence there for work. Nothing is limited in this release. A home lab that runs its own domain can declare its computer personal on the Share tab. (#90, #96, #104)
 
 ## Introduced in v0.1.0-alpha.11

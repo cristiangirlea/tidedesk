@@ -89,6 +89,8 @@ pub struct HostApp {
     /// What the session history is filtered by, and what its export did.
     history_search: String,
     history_note: Option<String>,
+    /// The session history window is open.
+    history_open: bool,
 }
 
 pub(crate) struct Address {
@@ -183,7 +185,6 @@ fn cached_history() -> Arc<tidedesk_core::history::History> {
 /// history with search and export with a licence that includes it.
 fn session_history(ui: &mut egui::Ui, search: &mut String, note: &mut Option<String>) {
     use tidedesk_core::history;
-    ui.label(RichText::new("Session history").strong());
     let full = crate::session_log::full();
     let past = cached_history();
     if past.changed {
@@ -223,7 +224,7 @@ fn session_history(ui: &mut egui::Ui, search: &mut String, note: &mut Option<Str
     } else {
         egui::ScrollArea::vertical()
             .id_salt("history")
-            .max_height(220.0)
+            .max_height(ui.available_height() - 40.0)
             .show(ui, |ui| {
                 egui::Grid::new("history-grid")
                     .striped(true)
@@ -330,6 +331,7 @@ impl HostApp {
             chat_draft: String::new(),
             history_search: String::new(),
             history_note: None,
+            history_open: false,
             tray: None,
             window_hooked: false,
         }
@@ -504,6 +506,24 @@ impl HostApp {
                 ui.label("Paused: new viewers are refused");
             }
         });
+        if ui
+            .button("Session history...")
+            .on_hover_text("Who connected to this computer, when, and how.")
+            .clicked()
+        {
+            self.history_open = true;
+        }
+        if self.history_open {
+            let mut open = true;
+            egui::Window::new("Session history")
+                .open(&mut open)
+                .resizable(true)
+                .default_size([680.0, 420.0])
+                .show(ui.ctx(), |ui| {
+                    session_history(ui, &mut self.history_search, &mut self.history_note)
+                });
+            self.history_open = open;
+        }
         let mut accept = accepting;
         if ui.checkbox(&mut accept, "Accept new connections").changed() {
             state.accepting.store(accept, Ordering::SeqCst);
@@ -871,8 +891,6 @@ impl HostApp {
                 "Files dropped on the viewer's window are saved in Downloads\\TideDesk.",
             );
         ui.small("Applies immediately. Clipboard also needs to be enabled in Viewer Settings.");
-        ui.add_space(8.0);
-        session_history(ui, &mut self.history_search, &mut self.history_note);
         ui.add_space(8.0);
 
         ui.label(RichText::new("Window").strong());
