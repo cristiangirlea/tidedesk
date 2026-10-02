@@ -11,6 +11,11 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
+/// Whether the trial and the monthly hours apply yet. Off until licences
+/// can be bought: until then a company computer only shows [`notice`], and
+/// its trial does not start, so nobody begins with it already over.
+pub const LIMITS: bool = false;
+
 /// Days a company computer works without limits before its monthly hours apply.
 pub const TRIAL_DAYS: i64 = 14;
 /// Hours a month that work as usual.
@@ -320,7 +325,7 @@ pub fn save(usage: &Usage) -> Result<()> {
 /// Where this computer stands today: `None` when no limit applies (not
 /// managed, or licensed for work). Starts the trial on the first call.
 pub fn allowance() -> Option<Allowance> {
-    if !management().managed() || crate::licence::allows("work") || declaration().is_some() {
+    if !LIMITS || !needs_licence() {
         return None;
     }
     let today = crate::dates::today();
@@ -332,6 +337,20 @@ pub fn allowance() -> Option<Allowance> {
         }
     }
     Some(usage.allowance(&today))
+}
+
+/// Whether this computer is a company computer that needs a licence: managed,
+/// not licensed for work, and not declared personal.
+pub fn needs_licence() -> bool {
+    management().managed() && !crate::licence::allows("work") && declaration().is_none()
+}
+
+/// What a company computer says while [`LIMITS`] are off.
+pub fn notice(organisation: &str) -> String {
+    format!(
+        "Company computer ({organisation}): TideDesk will need a licence for work on company \
+         computers, with a 14-day trial and then 8 hours a month without one."
+    )
 }
 
 /// What a running session's meter has to say.
