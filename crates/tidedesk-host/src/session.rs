@@ -231,7 +231,7 @@ pub async fn run(conn: quinn::Connection, state: Arc<HostState>) -> Result<()> {
     let fingerprint = net::peer_fingerprint(&conn);
     let trusted = fingerprint
         .as_deref()
-        .is_some_and(|fp| state.trusted.lock().unwrap().trusts(fp));
+        .is_some_and(|fp| crate::trusted::trusted_anywhere(&state.trusted.lock().unwrap(), fp));
     if !trusted
         && state
             .throttle

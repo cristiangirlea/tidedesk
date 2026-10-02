@@ -90,6 +90,32 @@ impl TrustedViewers {
     }
 }
 
+/// Viewers another program built on TideDesk trusts (an organisation's own
+/// list, say), besides those the person at this computer trusted. Asked
+/// with a normalised fingerprint; answers the name it knows the viewer by.
+pub trait TrustSource: Send + Sync {
+    fn trusted(&self, fingerprint: &str) -> Option<String>;
+}
+
+static SOURCE: std::sync::RwLock<Option<std::sync::Arc<dyn TrustSource>>> =
+    std::sync::RwLock::new(None);
+
+/// Sets the program's source of trusted viewers, replacing any earlier one.
+pub fn set_source(source: std::sync::Arc<dyn TrustSource>) {
+    *SOURCE.write().unwrap() = Some(source);
+}
+
+/// Whether a viewer is trusted: by the person here (`own`), or by the
+/// program's source.
+pub fn trusted_anywhere(own: &TrustedViewers, fingerprint: &str) -> bool {
+    own.trusts(fingerprint)
+        || SOURCE
+            .read()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|s| s.trusted(&normalize_fingerprint(fingerprint)).is_some())
+}
+
 /// Today's date as `YYYY-MM-DD`, in UTC.
 pub fn today() -> String {
     tidedesk_core::dates::today()
@@ -131,5 +157,28 @@ mod tests {
         let today = today();
         assert_eq!(today.len(), 10);
         assert!(today.as_str() >= "2026-01-01", "{today}");
+    }
+
+    /// Trusts one fingerprint, as a program's list would.
+    struct One(String);
+
+    impl TrustSource for One {
+        fn trusted(&self, fingerprint: &str) -> Option<String> {
+            (fingerprint == self.0).then(|| "From the list".into())
+        }
+    }
+
+    #[test]
+    fn a_programs_list_adds_to_the_persons_own() {
+        let mut own = TrustedViewers::default();
+        own.add("AAAA 1111", "Mine", "2026-10-02");
+        set_source(std::sync::Arc::new(One(normalize_fingerprint("bbbb 2222"))));
+        assert!(trusted_anywhere(&own, "aaaa1111"), "the person's own");
+        assert!(
+            trusted_anywhere(&own, "BBBB 2222"),
+            "the program's, any spelling"
+        );
+        assert!(!trusted_anywhere(&own, "CCCC 3333"));
+        assert!(!own.trusts("BBBB 2222"), "the person's list is unchanged");
     }
 }
