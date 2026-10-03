@@ -17,6 +17,8 @@ pub struct Tray {
     icon: TrayIcon,
     accept: CheckMenuItem,
     last_tooltip: String,
+    /// Whether the icon now shows the connected dot.
+    showing_connected: bool,
     /// The window's title: shown in the menu and used to find the window.
     title: &'static str,
     quit: MenuItem,
@@ -115,6 +117,7 @@ impl Tray {
             accept,
             quit,
             last_tooltip: String::new(),
+            showing_connected: false,
             title,
         })
     }
@@ -132,8 +135,30 @@ impl Tray {
         if self.accept.is_checked() != accepting {
             self.accept.set_checked(accepting);
         }
-        let tooltip = match state.viewer.lock().unwrap().as_ref() {
-            Some(v) => format!("{}: {} connected", self.title, v.name),
+        let viewer = state
+            .viewer
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|v| v.name.clone());
+        // Someone connected shows on the icon itself, not only on hover.
+        if viewer.is_some() != self.showing_connected {
+            self.showing_connected = viewer.is_some();
+            let rgba = if self.showing_connected {
+                icon::connected_rgba()
+            } else {
+                icon::rgba()
+            };
+            match tray_icon::Icon::from_rgba(rgba, icon::SIZE, icon::SIZE) {
+                Ok(image) => {
+                    let _ = self.icon.set_icon(Some(image));
+                    tracing::info!(connected = self.showing_connected, "tray icon changed");
+                }
+                Err(e) => tracing::warn!("tray icon: {e}"),
+            }
+        }
+        let tooltip = match viewer {
+            Some(name) => format!("{}: {name} connected", self.title),
             None if accepting => format!("{}: waiting for a viewer", self.title),
             None => format!("{}: paused", self.title),
         };

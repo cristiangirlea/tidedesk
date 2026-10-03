@@ -18,6 +18,35 @@ mod windows_impl {
     };
     use windows::core::BOOL;
 
+    /// Runs `tick` on this thread every `period`, through the thread's message
+    /// loop: unlike drawing, that goes on while every window is hidden.
+    pub fn every(period: std::time::Duration, tick: impl FnMut() + 'static) {
+        use std::cell::RefCell;
+        use windows::Win32::UI::WindowsAndMessaging::SetTimer;
+
+        type Tick = Box<dyn FnMut()>;
+        thread_local! {
+            static TICKS: RefCell<Vec<(usize, Tick)>> = const { RefCell::new(Vec::new()) };
+        }
+        unsafe extern "system" fn proc(_hwnd: HWND, _msg: u32, id: usize, _time: u32) {
+            TICKS.with(|ticks| {
+                // A tick that pumps messages itself must not run again inside.
+                if let Ok(mut ticks) = ticks.try_borrow_mut() {
+                    for (_, tick) in ticks.iter_mut().filter(|(at, _)| *at == id) {
+                        tick();
+                    }
+                }
+            });
+        }
+        let ms = u32::try_from(period.as_millis()).unwrap_or(u32::MAX);
+        let id = unsafe { SetTimer(None, 0, ms, Some(proc)) };
+        if id == 0 {
+            tracing::warn!("no timer: {}", windows::core::Error::from_thread());
+            return;
+        }
+        TICKS.with(|ticks| ticks.borrow_mut().push((id, Box::new(tick))));
+    }
+
     pub fn attach_console() {
         use windows::Win32::Storage::FileSystem::{FILE_TYPE_DISK, FILE_TYPE_PIPE, GetFileType};
         use windows::Win32::System::Console::{
@@ -404,6 +433,7 @@ mod windows_impl {
 
 #[cfg(not(windows))]
 mod fallback {
+    pub fn every(_period: std::time::Duration, _tick: impl FnMut() + 'static) {}
     pub fn attach_console() {}
     pub fn enable_dpi_awareness() {}
     pub fn work_area() -> Option<(f32, f32)> {
