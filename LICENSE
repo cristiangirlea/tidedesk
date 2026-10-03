@@ -1,0 +1,88 @@
+TideDesk Freeware License 1.0
+
+Copyright (c) 2026 Cristian Girlea. All rights reserved except as granted below.
+
+1. Scope and earlier releases
+
+This license applies to the TideDesk software in executable form, its
+installers and its documentation, as supplied by Cristian Girlea (the
+"Licensor") with this license (the "Software"). Third-party components are
+excluded and remain under their own licenses, whose notices come with the
+Software. This license does not replace or restrict rights previously granted
+under GNU AGPL-3.0-only, the TideDesk Personal Use Source License 1.0 or any
+other license: earlier releases and any source code published with them keep
+the licenses supplied with those releases.
+
+2. Free personal use
+
+The Licensor grants you, as a natural person, a worldwide, non-exclusive,
+royalty-free permission to download, install and run the Software solely for
+your own personal, non-commercial purposes. Unpaid help to family and friends
+for their personal purposes is included.
+
+Personal use excludes use in employment, a trade, a profession, a business, or
+on behalf of an organization, including internal IT support. It also excludes
+providing remote access, administration, hosting, help-desk or other services
+to customers, whether charged separately or bundled into another service.
+
+3. Business use
+
+Any use outside section 2, including business use, internal organizational
+use and services to customers, requires a paid TideDesk license (for example
+TideDesk Solo, Team or Enterprise) or another written license from the
+Licensor before that use begins, under the terms supplied with that license.
+
+4. Sharing
+
+You may give other individuals unmodified copies of the Software's official
+installer or package for their personal use, without payment or other
+commercial consideration, provided this license and all notices stay with it.
+Pointing others to the official download (tidedesk.app, the Microsoft Store or
+the official releases page) is always allowed.
+
+5. Restrictions
+
+The Software is provided in executable form only; no source code is licensed.
+Except as this license or applicable law expressly allows, you may not:
+- modify, adapt or create derivative works of the Software;
+- decompile, disassemble or reverse engineer it, except to the extent
+  applicable law permits this despite this restriction (for example for
+  interoperability under the EU Software Directive);
+- remove or bypass its license checks or notices;
+- rent, lease, sell or sublicense it, or include it in another product or
+  service.
+
+6. Ownership, names and third-party rights
+
+You receive permission to use the Software, not ownership of it. Do not remove
+notices, misrepresent authorship or imply that your product or service is an
+official TideDesk offering. This license grants no trademark rights except
+truthful identification of the Software and its origin.
+
+This license does not grant rights in third-party patents or override any
+third-party license. Nothing here restricts rights granted directly to you
+under a third-party license or rights that applicable law does not allow the
+Licensor to restrict.
+
+7. No warranty; limitation of liability
+
+TO THE EXTENT PERMITTED BY APPLICABLE LAW, THE SOFTWARE IS PROVIDED "AS IS",
+WITHOUT WARRANTIES OF ANY KIND, INCLUDING MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NON-INFRINGEMENT. TO THE SAME EXTENT, THE LICENSOR IS
+NOT LIABLE FOR DAMAGES ARISING FROM THE SOFTWARE OR ITS USE. NOTHING IN THIS
+LICENSE EXCLUDES LIABILITY OR STATUTORY RIGHTS THAT CANNOT LAWFULLY BE EXCLUDED.
+
+8. Breach and termination
+
+If you breach this license, permission granted by this license terminates.
+It is reinstated if you cure the breach within 30 days after first receiving
+written notice from the Licensor, unless a prior breach was already cured
+under this provision. Termination does not affect rights you hold separately
+under another license, including rights to earlier releases.
+
+9. Contact
+
+For a license outside these terms, contact Cristian Girlea:
+cristiangirlea@gmail.com
+
+This is a freeware license for personal use. It is not an open-source license.
