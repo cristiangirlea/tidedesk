@@ -164,7 +164,8 @@ pub(crate) fn maps_port(config: &config::HostConfig, managed: &Policy) -> bool {
 
 /// Whether the person at this computer may stop sharing or quit: unless the
 /// administrator said no (`AllowStopSharing = 0`). A session in progress
-/// shows in the host's window and tray either way, and can be ended there.
+/// shows in the host's window, and in the tray icon's tooltip; it can be
+/// ended from the window or with the tray's "Disconnect viewer".
 pub fn may_stop_sharing(managed: &Policy) -> bool {
     Policy::bool_or(managed.stop_sharing, true)
 }
