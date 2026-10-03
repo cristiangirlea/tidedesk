@@ -183,6 +183,75 @@ pub fn peer_fingerprint(conn: &quinn::Connection) -> Option<String> {
     Some(identity::fingerprint(certs.first()?))
 }
 
+/// Client of one of TideDesk's own services, speaking `alpn`: it takes only
+/// the certificate whose fingerprint is `pinned`, so nothing is sent to any
+/// other server, whatever the name resolved to.
+pub fn service_client_config(alpn: &[u8], pinned: &str) -> Result<quinn::ClientConfig> {
+    let verifier = PinnedVerifier {
+        signatures: FingerprintVerifier(provider()),
+        pinned: identity::normalize_fingerprint(pinned),
+    };
+    let mut tls = rustls::ClientConfig::builder_with_provider(provider())
+        .with_protocol_versions(&[&rustls::version::TLS13])?
+        .dangerous()
+        .with_custom_certificate_verifier(Arc::new(verifier))
+        .with_no_client_auth();
+    tls.alpn_protocols = vec![alpn.to_vec()];
+    Ok(quinn::ClientConfig::new(Arc::new(
+        QuicClientConfig::try_from(tls)?,
+    )))
+}
+
+/// Takes only the certificate with the pinned fingerprint, and checks the
+/// handshake signature as [`FingerprintVerifier`] does.
+#[derive(Debug)]
+struct PinnedVerifier {
+    signatures: FingerprintVerifier,
+    /// Uppercase hex, as [`identity::normalize_fingerprint`] gives it.
+    pinned: String,
+}
+
+impl ServerCertVerifier for PinnedVerifier {
+    fn verify_server_cert(
+        &self,
+        end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: UnixTime,
+    ) -> Result<ServerCertVerified, rustls::Error> {
+        if identity::normalize_fingerprint(&identity::fingerprint(end_entity)) == self.pinned {
+            Ok(ServerCertVerified::assertion())
+        } else {
+            Err(rustls::Error::InvalidCertificate(
+                rustls::CertificateError::ApplicationVerificationFailure,
+            ))
+        }
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        self.signatures.verify_tls12_signature(message, cert, dss)
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, rustls::Error> {
+        self.signatures.verify_tls13_signature(message, cert, dss)
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        self.signatures.supported_verify_schemes()
+    }
+}
+
 /// Accepts any certificate *chain* but still verifies the handshake signature,
 /// proving the host holds the certificate's private key. Whether that
 /// certificate is the right one is decided afterwards by fingerprint pinning

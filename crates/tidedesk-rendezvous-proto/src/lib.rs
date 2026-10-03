@@ -25,6 +25,8 @@ use ring::signature::{
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
+pub mod report;
+
 /// First bytes of every rendezvous datagram. The zero keeps them apart from
 /// QUIC, the rest from STUN and from punch packets (`00 'T' 'D' 'P'`).
 pub const MAGIC: [u8; 4] = [0x00, b'T', b'D', b'R'];
