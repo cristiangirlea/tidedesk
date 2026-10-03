@@ -33,6 +33,11 @@ gradle assembleDebug        # or assembleRelease
 The `cargoBuild` task builds the Rust library into `app/src/main/jniLibs` first. Install with
 `adb install app/build/outputs/apk/debug/app-debug.apk`.
 
+**In the emulator on a PC:** debug builds also carry the x86_64 library (release builds are for
+phones only, ARM64). With the Android Emulator and an x86_64 system image from the SDK, plus the
+Rust target `x86_64-linux-android`, start a virtual phone and install the debug APK on it with
+`adb install`.
+
 ## What it does now
 
 - **Connecting:**
