@@ -216,8 +216,10 @@ pub struct ProblemsView {
     /// The problem whose report is open, and the report.
     open: Option<(usize, String)>,
     note: Option<String>,
-    /// The answer of a report being sent to TideDesk, once it comes.
-    sending: Option<std::sync::mpsc::Receiver<Result<String>>>,
+    /// A report being sent to TideDesk, and its answer once it comes.
+    sending: Option<(String, std::sync::mpsc::Receiver<Result<String>>)>,
+    /// Reports already sent, not to be sent twice.
+    sent: Vec<String>,
 }
 
 impl ProblemsView {
@@ -241,8 +243,17 @@ impl ProblemsView {
         use tidedesk_core::problems;
         use tidedesk_ui as look;
         self.refresh();
-        if let Some(answer) = self.sending.as_ref().and_then(|r| r.try_recv().ok()) {
-            self.note = Some(sent_note(answer));
+        if let Some((text, answer)) = &self.sending
+            && let Ok(answer) = answer.try_recv()
+        {
+            let text = text.clone();
+            if answer.is_ok() {
+                self.sent.push(text.clone());
+            }
+            // Told on the report that was sent, not on another one opened since.
+            if self.open.as_ref().is_some_and(|(_, open)| *open == text) {
+                self.note = Some(sent_note(answer));
+            }
             self.sending = None;
         }
         if self.problems.is_empty() {
@@ -299,15 +310,17 @@ impl ProblemsView {
                     if look::copy(ui, "Copy", &report, false).clicked() {
                         self.note = None;
                     }
-                    let sending = self.sending.is_some();
+                    let sent = self.sent.contains(&report);
+                    let label = match (&self.sending, sent) {
+                        (Some(_), _) => "Sending…",
+                        (None, true) => "Sent",
+                        (None, false) => "Send to TideDesk",
+                    };
                     if ui
-                        .add_enabled(!sending, egui::Button::new(if sending {
-                            "Sending…"
-                        } else {
-                            "Send to TideDesk"
-                        }))
+                        .add_enabled(self.sending.is_none() && !sent, egui::Button::new(label))
                         .on_hover_text(
-                            "Sends this report, exactly as shown, to TideDesk's report service.                              Where it came from is not kept.",
+                            "Sends this report, exactly as shown, to TideDesk's report service. \
+                             Where it came from is not kept.",
                         )
                         .clicked()
                     {
@@ -317,7 +330,7 @@ impl ProblemsView {
                             let _ = answer.send(tidedesk_core::report::send(&text));
                             ctx.request_repaint();
                         });
-                        self.sending = Some(sent);
+                        self.sending = Some((report.clone(), sent));
                         self.note = None;
                     }
                     if ui

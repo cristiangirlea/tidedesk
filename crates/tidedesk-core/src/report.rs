@@ -14,12 +14,20 @@ use tidedesk_rendezvous_proto::report::{
 /// Where reports go.
 pub const SERVER: &str = "report.tidedesk.app";
 
-/// Fingerprint of the report service's certificate. Reports go to no other.
-pub const SERVER_FINGERPRINT: &str =
-    "4914 22E1 31C4 A220 7FFB 9906 D9EA DE9F 0365 5C2C 5B73 0F49 274D 2D76 133A 0C91";
+/// Fingerprints of the report service's certificates: the one in use, and
+/// a spare kept offline to move to if the first is ever lost. Reports go to
+/// no other.
+pub const SERVER_FINGERPRINTS: &[&str] = &[
+    "4914 22E1 31C4 A220 7FFB 9906 D9EA DE9F 0365 5C2C 5B73 0F49 274D 2D76 133A 0C91",
+    "71A9 8ACF BCBB 29B8 3F3D 884F 0A96 C615 01F4 A828 E43B 7308 DE80 1E3F 8243 F0DC",
+];
 
 /// How long sending may take in all.
 const TIMEOUT: Duration = Duration::from_secs(20);
+
+/// How long one of the service's addresses may take, so that one that
+/// cannot be reached leaves time for the next.
+const TIMEOUT_EACH: Duration = Duration::from_secs(8);
 
 /// Sends `text` to TideDesk and returns the reference it was kept under.
 /// Blocks: call it off the UI thread.
@@ -37,7 +45,12 @@ pub fn send(text: &str) -> Result<String> {
                 .collect();
             let mut last = None;
             for address in addresses {
-                match send_to(address, SERVER_FINGERPRINT, text).await {
+                let attempt =
+                    tokio::time::timeout(TIMEOUT_EACH, send_to(address, SERVER_FINGERPRINTS, text));
+                match attempt
+                    .await
+                    .unwrap_or_else(|_| Err(anyhow::anyhow!("no answer from {address}")))
+                {
                     Ok(reference) => return Ok(reference),
                     // TideDesk answered: another address would answer the same.
                     Err(e) if e.is::<Answered>() => return Err(e),
@@ -51,15 +64,18 @@ pub fn send(text: &str) -> Result<String> {
     })
 }
 
-/// Sends `text` to the service at `address`, which must show the certificate
-/// with `fingerprint`.
-pub async fn send_to(address: SocketAddr, fingerprint: &str, text: &str) -> Result<String> {
+/// Sends `text` to the service at `address`, which must show a certificate
+/// with one of `fingerprints`.
+pub async fn send_to(address: SocketAddr, fingerprints: &[&str], text: &str) -> Result<String> {
     let report = Report {
         version: crate::problems::VERSION.to_string(),
         text: cut(text),
     };
-    if !report.fits() {
+    if report.text.trim().is_empty() {
         bail!("the report is empty");
+    }
+    if !report.fits() {
+        bail!("the report is longer than TideDesk takes");
     }
     let bind: SocketAddr = if address.is_ipv4() {
         "0.0.0.0:0".parse().unwrap()
@@ -67,7 +83,7 @@ pub async fn send_to(address: SocketAddr, fingerprint: &str, text: &str) -> Resu
         "[::]:0".parse().unwrap()
     };
     let mut endpoint = quinn::Endpoint::client(bind).context("opening a socket")?;
-    endpoint.set_default_client_config(crate::net::service_client_config(ALPN, fingerprint)?);
+    endpoint.set_default_client_config(crate::net::service_client_config(ALPN, fingerprints)?);
     let conn = endpoint
         .connect(address, SERVER)?
         .await
@@ -184,7 +200,7 @@ mod tests {
     async fn a_sent_report_arrives_whole_and_comes_back_with_its_reference() {
         let service = service(Answer::Received("R-1234".into()));
         let text = "TideDesk problem report\nWhat: Sharing could not start";
-        let reference = send_to(service.address, &service.fingerprint, text)
+        let reference = send_to(service.address, &[&service.fingerprint], text)
             .await
             .unwrap();
         assert_eq!(reference, "R-1234");
@@ -201,7 +217,7 @@ mod tests {
     #[tokio::test]
     async fn nothing_is_sent_to_a_server_with_another_certificate() {
         let service = service(Answer::Received("R-1234".into()));
-        let error = send_to(service.address, SERVER_FINGERPRINT, "a problem")
+        let error = send_to(service.address, SERVER_FINGERPRINTS, "a problem")
             .await
             .unwrap_err();
         assert!(
@@ -214,9 +230,13 @@ mod tests {
     #[tokio::test]
     async fn a_busy_service_says_so_in_words() {
         let service = service(Answer::TooMany);
-        let error = send_to(service.address, &service.fingerprint, "a problem")
-            .await
-            .unwrap_err();
+        let error = send_to(
+            service.address,
+            &["0000", &service.fingerprint],
+            "a problem",
+        )
+        .await
+        .unwrap_err();
         assert!(error.is::<Answered>());
         assert!(error.to_string().contains("Try again later"), "{error}");
     }
@@ -225,7 +245,7 @@ mod tests {
     async fn an_empty_report_is_not_sent() {
         let service = service(Answer::Received("R-1234".into()));
         assert!(
-            send_to(service.address, &service.fingerprint, "  \n")
+            send_to(service.address, &[&service.fingerprint], "  \n")
                 .await
                 .is_err()
         );
@@ -242,10 +262,12 @@ mod tests {
     }
 
     #[test]
-    fn the_pinned_fingerprint_is_a_whole_sha256() {
-        assert_eq!(
-            crate::identity::normalize_fingerprint(SERVER_FINGERPRINT).len(),
-            64
-        );
+    fn the_pinned_fingerprints_are_whole_sha256s() {
+        for fingerprint in SERVER_FINGERPRINTS {
+            assert_eq!(
+                crate::identity::normalize_fingerprint(fingerprint).len(),
+                64
+            );
+        }
     }
 }

@@ -184,12 +184,15 @@ pub fn peer_fingerprint(conn: &quinn::Connection) -> Option<String> {
 }
 
 /// Client of one of TideDesk's own services, speaking `alpn`: it takes only
-/// the certificate whose fingerprint is `pinned`, so nothing is sent to any
-/// other server, whatever the name resolved to.
-pub fn service_client_config(alpn: &[u8], pinned: &str) -> Result<quinn::ClientConfig> {
+/// a certificate whose fingerprint is one of `pinned`, so nothing is sent to
+/// any other server, whatever the name resolved to.
+pub fn service_client_config(alpn: &[u8], pinned: &[&str]) -> Result<quinn::ClientConfig> {
     let verifier = PinnedVerifier {
         signatures: FingerprintVerifier(provider()),
-        pinned: identity::normalize_fingerprint(pinned),
+        pinned: pinned
+            .iter()
+            .map(|fp| identity::normalize_fingerprint(fp))
+            .collect(),
     };
     let mut tls = rustls::ClientConfig::builder_with_provider(provider())
         .with_protocol_versions(&[&rustls::version::TLS13])?
@@ -202,13 +205,13 @@ pub fn service_client_config(alpn: &[u8], pinned: &str) -> Result<quinn::ClientC
     )))
 }
 
-/// Takes only the certificate with the pinned fingerprint, and checks the
+/// Takes only a certificate with a pinned fingerprint, and checks the
 /// handshake signature as [`FingerprintVerifier`] does.
 #[derive(Debug)]
 struct PinnedVerifier {
     signatures: FingerprintVerifier,
     /// Uppercase hex, as [`identity::normalize_fingerprint`] gives it.
-    pinned: String,
+    pinned: Vec<String>,
 }
 
 impl ServerCertVerifier for PinnedVerifier {
@@ -220,7 +223,8 @@ impl ServerCertVerifier for PinnedVerifier {
         _ocsp_response: &[u8],
         _now: UnixTime,
     ) -> Result<ServerCertVerified, rustls::Error> {
-        if identity::normalize_fingerprint(&identity::fingerprint(end_entity)) == self.pinned {
+        let shown = identity::normalize_fingerprint(&identity::fingerprint(end_entity));
+        if self.pinned.contains(&shown) {
             Ok(ServerCertVerified::assertion())
         } else {
             Err(rustls::Error::InvalidCertificate(
