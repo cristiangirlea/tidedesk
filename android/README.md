@@ -1,4 +1,7 @@
-# TideDesk viewer for Android
+# TideDesk viewer for Android (experimental)
+
+**Experimental preview.** It works, but it may change, and some things are not there yet (see
+the end of this page).
 
 A light Android app that connects to computers sharing their screen with TideDesk. It views
 and controls them; the phone shares nothing.
@@ -36,12 +39,19 @@ The `cargoBuild` task builds the Rust library into `app/src/main/jniLibs` first.
   - by device ID, through TideDesk's connection service, with hole punching (including guessing the port behind a symmetric router);
   - by address on the same network, trusting the computer on first use as the desktop viewer does.
 - **The access code.**
-- **Touch:** tap to click, long press to right-click, drag with one finger, scroll with two.
+- **Touch, directly:** tap to click, long press to right-click, drag with one finger, scroll with two.
+- **Touch as a touchpad**, with the host's pointer drawn on the phone: one finger moves it, a tap
+  clicks, a two-finger tap right-clicks, a long press then moving drags.
+- **A mouse or keyboard plugged into the phone** works as on a PC.
+- **The phone's keyboard** types into the host (US layout), with a row of special keys: Esc, Tab,
+  Ctrl, Alt, Win, Shift, arrows, Home, End, the page keys, Del, F1 to F12.
 
 ## Not yet
 
 - The saved password and trusted-viewer sign-in.
-- The keyboard, saved computers, the clipboard, files, chat and sound.
+- Pinch to zoom.
+- Characters without a key on a US keyboard (such as ă, ș, ț).
+- Saved computers, the clipboard, files, chat and sound.
 - "Over the internet" by typed address.
 - No CI job builds the app yet.
 

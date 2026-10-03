@@ -38,6 +38,11 @@ class ConnectActivity : Activity() {
             textSize = 24f
             setTextColor(Color.WHITE)
         })
+        column.addView(TextView(this).apply {
+            text = "Experimental preview: things may change or not work yet."
+            setTextColor(MUTED)
+            setPadding(0, 0, 0, pad / 2)
+        })
         target = field("Device ID or address", InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS)
         target.setText(getPreferences(MODE_PRIVATE).getString(LAST_TARGET, ""))
         code = field("Access code", InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_CHARACTERS)
