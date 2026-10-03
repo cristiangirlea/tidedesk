@@ -9,6 +9,7 @@
 
 use std::net::{Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -162,6 +163,8 @@ pub struct Viewer {
     pointer: Arc<Mutex<Pointer>>,
     frames: Mutex<mpsc::Receiver<Frame>>,
     cursor: Mutex<watch::Receiver<Option<Cursor>>>,
+    /// Smoother-video requests so far: each change is its own request.
+    boosts: AtomicU64,
     _endpoint: quinn::Endpoint,
     _agent: Option<Arc<Agent>>,
     runtime: tokio::runtime::Runtime,
@@ -211,6 +214,7 @@ impl Viewer {
             pointer,
             frames: Mutex::new(incoming),
             cursor: Mutex::new(cursor),
+            boosts: AtomicU64::new(0),
             _endpoint: opened.endpoint,
             _agent: opened.agent,
             runtime,
@@ -267,6 +271,15 @@ impl Viewer {
             Ok(()) => *cursor.borrow_and_update(),
             Err(_) => None,
         }
+    }
+
+    /// Smoother video (60 frames a second, less buffering), as the desktop
+    /// viewer's Game Boost: more battery and data.
+    pub fn game_boost(&self, enabled: bool) {
+        let request = self.boosts.fetch_add(1, Ordering::Relaxed) + 1;
+        let _ = self
+            .control
+            .send(ClientMessage::SetGameBoost { request, enabled });
     }
 
     /// After the decoder lost its place: the host sends a keyframe.
@@ -718,6 +731,24 @@ mod tests {
                     scancode: 0x1E,
                     pressed: false
                 }),
+            ]
+        );
+
+        // Smoother video, as the desktop's Game Boost: each change its own request.
+        viewer.game_boost(true);
+        viewer.game_boost(false);
+        let boosts = wait_for(&got, 2, |m| matches!(m, ClientMessage::SetGameBoost { .. }));
+        assert_eq!(
+            boosts,
+            [
+                ClientMessage::SetGameBoost {
+                    request: 1,
+                    enabled: true
+                },
+                ClientMessage::SetGameBoost {
+                    request: 2,
+                    enabled: false
+                },
             ]
         );
 

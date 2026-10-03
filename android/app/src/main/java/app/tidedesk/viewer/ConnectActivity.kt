@@ -5,9 +5,9 @@ import android.app.AlertDialog
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
-import android.os.Build
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.os.Bundle
-import android.provider.Settings
 import android.text.InputType
 import android.view.Gravity
 import android.view.inputmethod.EditorInfo
@@ -40,10 +40,18 @@ class ConnectActivity : Activity() {
             setPadding(pad, pad * 2, pad, pad)
             gravity = Gravity.TOP
         }
-        column.addView(TextView(this).apply {
-            text = "Connect to a computer"
-            textSize = 24f
-            setTextColor(Color.WHITE)
+        column.addView(LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            addView(TextView(context).apply {
+                text = "Connect to a computer"
+                textSize = 24f
+                setTextColor(Color.WHITE)
+            }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            addView(Button(context).apply {
+                text = "⚙ Settings"
+                setOnClickListener { startActivity(Intent(context, SettingsActivity::class.java)) }
+            })
         })
         column.addView(TextView(this).apply {
             text = "Experimental preview: things may change or not work yet."
@@ -146,9 +154,31 @@ class ConnectActivity : Activity() {
             status.text = "Enter the computer's device ID or address."
             return
         }
+        val prefs = Prefs(this)
+        if (prefs.askOnMobileData && onMobileData()) {
+            AlertDialog.Builder(this)
+                .setTitle("Connect on mobile data?")
+                .setMessage("This phone is on mobile data. A session can use tens of megabytes a minute.")
+                .setPositiveButton("Connect") { _, _ -> connectTo(where, secret, prefs.shownName) }
+                .setNegativeButton("Cancel", null)
+                .show()
+        } else {
+            connectTo(where, secret, prefs.shownName)
+        }
+    }
+
+    /** Whether the phone's connection is mobile data, not Wi-Fi or a cable. */
+    private fun onMobileData(): Boolean {
+        val network = getSystemService(ConnectivityManager::class.java) ?: return false
+        val now = network.getNetworkCapabilities(network.activeNetwork) ?: return false
+        return now.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) &&
+            !now.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) &&
+            !now.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
+    }
+
+    private fun connectTo(where: String, secret: String, name: String) {
         connect.isEnabled = false
         status.text = "Connecting to $where…"
-        val name = Settings.Global.getString(contentResolver, Settings.Global.DEVICE_NAME) ?: Build.MODEL
         // Connecting waits for the network: never on the main thread.
         thread(name = "connect") {
             val handle = Native.connect(where, secret, name, filesDir.absolutePath)
