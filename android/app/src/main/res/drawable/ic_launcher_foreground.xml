@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- TideDesk's mark: a screen with a wave on it, on its stand. Drawn inside
+     the adaptive icon's safe zone (the middle 66 of 108). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:pathData="M35,33h38a4,4 0 0 1 4,4v24a4,4 0 0 1 -4,4h-38a4,4 0 0 1 -4,-4v-24a4,4 0 0 1 4,-4z"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="5"
+        android:strokeLineJoin="round" />
+    <path
+        android:pathData="M39,50C44,38 49,38 54,49C59,60 64,60 69,47"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="5"
+        android:strokeLineCap="round" />
+    <path
+        android:pathData="M54,65v9M44,75h20"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="5"
+        android:strokeLineCap="round" />
+</vector>
