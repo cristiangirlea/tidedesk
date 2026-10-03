@@ -17,6 +17,9 @@
 //! | `SavedPassword` | DWORD | 0/1: viewers may come in with the saved password |
 //! | `PortMapping` | DWORD | 0/1: ask the router to open a port |
 //! | `AllowStopSharing` | DWORD | 0/1: the person at the computer may stop sharing or quit |
+//! | `Reports` | DWORD | 0: problem reports can be copied, not sent anywhere |
+//! | `ReportServer` | SZ | problem reports go only to this report service, not to TideDesk |
+//! | `ReportServerFingerprint` | SZ | the SHA-256 of that service's certificate; without it nothing is sent |
 
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
@@ -93,6 +96,19 @@ impl Choice {
     }
 }
 
+/// Where problem reports may be sent (see [`crate::report`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum Reports {
+    /// To TideDesk, or by email to TideDesk's support.
+    #[default]
+    TideDesk,
+    /// Only to the organisation's own report service, which must show the
+    /// certificate with this fingerprint.
+    Own { server: String, fingerprint: String },
+    /// Nowhere: a report can be copied, not sent.
+    Off,
+}
+
 /// Whether two names are the same service: case aside, with the usual port
 /// when none is given.
 pub fn same_service(a: &str, b: &str) -> bool {
@@ -110,6 +126,7 @@ pub struct Policy {
     pub saved_password: Option<bool>,
     pub port_mapping: Option<bool>,
     pub stop_sharing: Option<bool>,
+    pub reports: Reports,
 }
 
 impl Policy {
@@ -127,6 +144,11 @@ impl Policy {
             saved_password: self.saved_password.or(under.saved_password),
             port_mapping: self.port_mapping.or(under.port_mapping),
             stop_sharing: self.stop_sharing.or(under.stop_sharing),
+            reports: if self.reports != Reports::TideDesk {
+                self.reports
+            } else {
+                under.reports
+            },
         }
     }
 
@@ -194,8 +216,33 @@ pub fn parse(get: impl Fn(&str) -> Option<Value>) -> Policy {
     } else {
         Services::Any
     };
+    let reports = if flag("Reports") == Some(false) {
+        Reports::Off
+    } else if let Some(server) = text("ReportServer") {
+        match text("ReportServerFingerprint") {
+            Some(fingerprint)
+                if crate::identity::normalize_fingerprint(&fingerprint).len() == 64 =>
+            {
+                Reports::Own {
+                    server,
+                    fingerprint,
+                }
+            }
+            // Never to TideDesk when the organisation named its own service.
+            _ => {
+                tracing::warn!(
+                    "administrator setting ReportServer needs ReportServerFingerprint, the \
+                     SHA-256 of its certificate: reports are not sent"
+                );
+                Reports::Off
+            }
+        }
+    } else {
+        Reports::TideDesk
+    };
     Policy {
         services,
+        reports,
         lan_discovery: flag("LanDiscovery"),
         typed_addresses: flag("TypedAddresses"),
         access_code: flag("AccessCode"),
@@ -453,6 +500,70 @@ mod tests {
         assert_eq!(policy.services.choose(None), Choice::Chosen(None));
         let on = parse(values(&[("Rendezvous", Value::Dword(1))]));
         assert_eq!(on.services, Services::Any, "1 adds nothing");
+    }
+
+    #[test]
+    fn reports_go_to_the_organisations_own_service_when_it_names_one() {
+        let fingerprint = "AB".repeat(32);
+        let policy = parse(values(&[
+            ("ReportServer", Value::Text(" reports.example.com ".into())),
+            ("ReportServerFingerprint", Value::Text(fingerprint.clone())),
+        ]));
+        assert_eq!(
+            policy.reports,
+            Reports::Own {
+                server: "reports.example.com".into(),
+                fingerprint
+            }
+        );
+        assert!(policy.any());
+        assert_eq!(parse(|_| None).reports, Reports::TideDesk);
+    }
+
+    #[test]
+    fn an_own_service_without_its_fingerprint_gets_no_reports_and_neither_does_tidedesk() {
+        for fingerprint in [None, Some("12 34")] {
+            let mut pairs = vec![("ReportServer", Value::Text("reports.example.com".into()))];
+            if let Some(fp) = fingerprint {
+                pairs.push(("ReportServerFingerprint", Value::Text(fp.into())));
+            }
+            assert_eq!(
+                parse(values(&pairs)).reports,
+                Reports::Off,
+                "{fingerprint:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn reports_can_be_turned_off() {
+        let policy = parse(values(&[
+            ("Reports", Value::Dword(0)),
+            ("ReportServer", Value::Text("reports.example.com".into())),
+        ]));
+        assert_eq!(policy.reports, Reports::Off, "off beats a named service");
+        let on = parse(values(&[("Reports", Value::Dword(1))]));
+        assert_eq!(on.reports, Reports::TideDesk, "1 adds nothing");
+    }
+
+    #[test]
+    fn a_programs_report_service_is_used_unless_the_registry_sets_one() {
+        let program = Policy {
+            reports: Reports::Own {
+                server: "a.example".into(),
+                fingerprint: "AB".repeat(32),
+            },
+            ..Policy::default()
+        };
+        assert_eq!(
+            Policy::default().over(program.clone()).reports,
+            program.reports
+        );
+        let off = Policy {
+            reports: Reports::Off,
+            ..Policy::default()
+        };
+        assert_eq!(off.over(program).reports, Reports::Off);
     }
 
     #[test]

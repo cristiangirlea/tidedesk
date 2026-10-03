@@ -19,7 +19,7 @@ use tidedesk_core::nat::signal::Credentials;
 use tidedesk_core::nat::signal::RendezvousStatus;
 use tidedesk_core::nat::stun::STUN_REFRESH;
 use tidedesk_core::nat::{Agent, NatKind, PublicStatus};
-use tidedesk_core::policy::{Policy, Services};
+use tidedesk_core::policy::{Policy, Reports, Services};
 
 use crate::capture::{self, DisplayInfo};
 use crate::config::HostConfig;
@@ -220,7 +220,8 @@ pub struct ProblemsView {
     open: Option<(usize, String)>,
     note: Option<String>,
     /// A report being sent to TideDesk, and its answer once it comes.
-    sending: Option<(String, std::sync::mpsc::Receiver<Result<String>>)>,
+    /// Also whether it went to TideDesk rather than the organisation.
+    sending: Option<(String, bool, std::sync::mpsc::Receiver<Result<String>>)>,
     /// Reports already sent, not to be sent twice.
     sent: Vec<String>,
 }
@@ -246,16 +247,16 @@ impl ProblemsView {
         use tidedesk_core::problems;
         use tidedesk_ui as look;
         self.refresh();
-        if let Some((text, answer)) = &self.sending
+        if let Some((text, to_tidedesk, answer)) = &self.sending
             && let Ok(answer) = answer.try_recv()
         {
-            let text = text.clone();
+            let (text, to_tidedesk) = (text.clone(), *to_tidedesk);
             if answer.is_ok() {
                 self.sent.push(text.clone());
             }
             // Told on the report that was sent, not on another one opened since.
             if self.open.as_ref().is_some_and(|(_, open)| *open == text) {
-                self.note = Some(sent_note(answer));
+                self.note = Some(sent_note(answer, to_tidedesk));
             }
             self.sending = None;
         }
@@ -309,23 +310,40 @@ impl ProblemsView {
                                 .desired_width(f32::INFINITY),
                         );
                     });
+                // Where reports may go is the organisation's to say.
+                let reports = tidedesk_core::policy::current().reports;
                 ui.horizontal(|ui| {
                     if look::copy(ui, "Copy", &report, false).clicked() {
                         self.note = None;
                     }
+                    let (send, hover) = match &reports {
+                        Reports::TideDesk => (
+                            "Send to TideDesk".to_string(),
+                            "Sends this report, exactly as shown, to TideDesk's report service. \
+                             Where it came from is not kept."
+                                .to_string(),
+                        ),
+                        Reports::Own { server, .. } => (
+                            "Send to your organisation".to_string(),
+                            format!(
+                                "Sends this report, exactly as shown, to your organisation's \
+                                 report service ({server}). {}",
+                                tidedesk_core::policy::LOCKED_NOTE
+                            ),
+                        ),
+                        Reports::Off => (String::new(), String::new()),
+                    };
                     let sent = self.sent.contains(&report);
                     let label = match (&self.sending, sent) {
-                        (Some(_), _) => "Sending…",
-                        (None, true) => "Sent",
-                        (None, false) => "Send to TideDesk",
+                        (Some(_), _) => "Sending…".to_string(),
+                        (None, true) => "Sent".to_string(),
+                        (None, false) => send,
                     };
-                    if ui
-                        .add_enabled(self.sending.is_none() && !sent, egui::Button::new(label))
-                        .on_hover_text(
-                            "Sends this report, exactly as shown, to TideDesk's report service. \
-                             Where it came from is not kept.",
-                        )
-                        .clicked()
+                    if reports != Reports::Off
+                        && ui
+                            .add_enabled(self.sending.is_none() && !sent, egui::Button::new(label))
+                            .on_hover_text(hover)
+                            .clicked()
                     {
                         let (answer, sent) = std::sync::mpsc::channel();
                         let (ctx, text) = (ui.ctx().clone(), report.clone());
@@ -333,17 +351,19 @@ impl ProblemsView {
                             let _ = answer.send(tidedesk_core::report::send(&text));
                             ctx.request_repaint();
                         });
-                        self.sending = Some((report.clone(), sent));
+                        let to_tidedesk = reports == Reports::TideDesk;
+                        self.sending = Some((report.clone(), to_tidedesk, sent));
                         self.note = None;
                     }
-                    if ui
-                        .button("Send by email")
-                        .on_hover_text(format!(
-                            "Opens your mail app with the report to {}; it is also copied, \
+                    if reports == Reports::TideDesk
+                        && ui
+                            .button("Send by email")
+                            .on_hover_text(format!(
+                                "Opens your mail app with the report to {}; it is also copied, \
                              to paste in full.",
-                            problems::SUPPORT_EMAIL
-                        ))
-                        .clicked()
+                                problems::SUPPORT_EMAIL
+                            ))
+                            .clicked()
                     {
                         ui.ctx().copy_text(report.clone());
                         platform::open_link(&problems::email_link(&problem, &report));
@@ -356,6 +376,12 @@ impl ProblemsView {
                     if ui.button("Close").clicked() {
                         self.open = None;
                         self.note = None;
+                    }
+                    if reports == Reports::Off {
+                        ui.small(
+                            "Your organisation has turned off sending reports. You can copy it \
+                             and pass it on.",
+                        );
                     }
                 });
                 if let Some(note) = &self.note {
@@ -410,14 +436,19 @@ impl ProblemsView {
 /// Lines of the log a report ends with.
 const REPORT_LOG_LINES: usize = 40;
 
-/// What the person is told once a report was sent, or could not be.
-fn sent_note(answer: Result<String>) -> String {
-    match answer {
-        Ok(reference) => format!(
+/// What the person is told once a report was sent, or could not be:
+/// `to_tidedesk`, or to the organisation's own report service.
+fn sent_note(answer: Result<String>, to_tidedesk: bool) -> String {
+    match (answer, to_tidedesk) {
+        (Ok(reference), true) => format!(
             "Sent. Its reference is {reference}: quote it if you write to {}.",
             tidedesk_core::problems::SUPPORT_EMAIL
         ),
-        Err(e) => format!("Could not send it: {e:#}. You can send it by email instead."),
+        (Ok(reference), false) => {
+            format!("Sent. Its reference is {reference}: quote it to your IT team.")
+        }
+        (Err(e), true) => format!("Could not send it: {e:#}. You can send it by email instead."),
+        (Err(e), false) => format!("Could not send it: {e:#}. You can copy it and pass it on."),
     }
 }
 
@@ -1506,14 +1537,30 @@ mod tests {
 
     #[test]
     fn a_sent_report_shows_its_reference_and_a_failed_one_the_way_by_email() {
-        let sent = super::sent_note(Ok("R-1234".into()));
+        let sent = super::sent_note(Ok("R-1234".into()), true);
         assert!(
             sent.contains("R-1234") && sent.contains("support@tidedesk.app"),
             "{sent}"
         );
-        let failed = super::sent_note(Err(anyhow::anyhow!("TideDesk did not answer in time")));
+        let failed = super::sent_note(
+            Err(anyhow::anyhow!("the report service did not answer in time")),
+            true,
+        );
         assert!(failed.contains("did not answer in time"), "{failed}");
         assert!(failed.contains("by email"), "{failed}");
+    }
+
+    #[test]
+    fn a_report_sent_to_the_organisation_never_points_to_tidedesk() {
+        let sent = super::sent_note(Ok("ORG-7".into()), false);
+        assert!(sent.contains("ORG-7") && sent.contains("IT team"), "{sent}");
+        let failed = super::sent_note(Err(anyhow::anyhow!("no answer")), false);
+        for note in [&sent, &failed] {
+            assert!(
+                !note.contains("tidedesk.app") && !note.contains("email"),
+                "{note}"
+            );
+        }
     }
 
     /// What a widget says: a button's label, a label's text.

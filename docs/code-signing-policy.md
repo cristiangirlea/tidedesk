@@ -80,7 +80,10 @@ it goes, with TideDesk's version, to `report.tidedesk.app` (run by the maintaine
 which keeps the report text to look into the problem and answers with a reference.
 The service sees the computer's public IP address while the report arrives, to limit
 how many reports one address sends, and does not store it with the report. Access
-codes are hidden in reports before they are shown.
+codes are hidden in reports before they are shown. An organisation can send its
+computers' reports to its own report service instead, or turn sending off
+(`ReportServer`, `ReportServerFingerprint` and `Reports` under
+`HKLM\SOFTWARE\Policies\TideDesk`); TideDesk then receives none of them.
 
 Operators choose their network destinations. If they use a separate VPN or other
 third-party network service, that service's privacy policy also applies.
