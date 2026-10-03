@@ -5,17 +5,32 @@ pub fn valid_text(text: &str) -> bool {
     text.len() <= MAX_CLIPBOARD_BYTES && !text.contains('\0')
 }
 
-trait ClipboardIo: Send {
-    fn get_text(&mut self) -> Result<String, arboard::Error>;
-    fn set_text(&mut self, text: &str) -> Result<(), arboard::Error>;
+/// Why the clipboard gave no text.
+#[derive(Debug)]
+#[cfg_attr(target_os = "android", allow(dead_code))]
+enum ClipboardError {
+    /// It holds no text.
+    Empty,
+    /// Another program has it open, or it failed: try again later.
+    Busy,
 }
 
+trait ClipboardIo: Send {
+    fn get_text(&mut self) -> Result<String, ClipboardError>;
+    fn set_text(&mut self, text: &str) -> Result<(), ClipboardError>;
+}
+
+// Android has no clipboard backend here: its clipboard is not shared yet.
+#[cfg(not(target_os = "android"))]
 impl ClipboardIo for arboard::Clipboard {
-    fn get_text(&mut self) -> Result<String, arboard::Error> {
-        arboard::Clipboard::get_text(self)
+    fn get_text(&mut self) -> Result<String, ClipboardError> {
+        arboard::Clipboard::get_text(self).map_err(|e| match e {
+            arboard::Error::ContentNotAvailable => ClipboardError::Empty,
+            _ => ClipboardError::Busy,
+        })
     }
-    fn set_text(&mut self, text: &str) -> Result<(), arboard::Error> {
-        arboard::Clipboard::set_text(self, text)
+    fn set_text(&mut self, text: &str) -> Result<(), ClipboardError> {
+        arboard::Clipboard::set_text(self, text).map_err(|_| ClipboardError::Busy)
     }
 }
 
@@ -41,6 +56,7 @@ impl ClipboardBridge {
     }
 
     fn backend(&mut self) -> Option<&mut Box<dyn ClipboardIo>> {
+        #[cfg(not(target_os = "android"))]
         if self.clipboard.is_none() {
             self.clipboard = arboard::Clipboard::new()
                 .ok()
@@ -57,8 +73,8 @@ impl ClipboardBridge {
         let result = self.backend()?.get_text();
         let text = match result {
             Ok(text) if valid_text(&text) => Some(text),
-            Ok(_) | Err(arboard::Error::ContentNotAvailable) => None,
-            Err(_) => return None, // Busy clipboard: retry at the next tick.
+            Ok(_) | Err(ClipboardError::Empty) => None,
+            Err(ClipboardError::Busy) => return None, // Retry at the next tick.
         };
         self.observe(text)
     }
@@ -105,12 +121,12 @@ mod tests {
     }
 
     impl ClipboardIo for Arc<Mutex<FakeClipboard>> {
-        fn get_text(&mut self) -> Result<String, arboard::Error> {
+        fn get_text(&mut self) -> Result<String, ClipboardError> {
             let mut state = self.lock().unwrap();
             state.reads += 1;
             Ok(state.text.clone())
         }
-        fn set_text(&mut self, text: &str) -> Result<(), arboard::Error> {
+        fn set_text(&mut self, text: &str) -> Result<(), ClipboardError> {
             let mut state = self.lock().unwrap();
             state.writes += 1;
             state.text = text.into();

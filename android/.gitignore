@@ -1,0 +1,5 @@
+.gradle/
+build/
+local.properties
+# Built from crates/tidedesk-android by the cargoBuild task.
+app/src/main/jniLibs/
