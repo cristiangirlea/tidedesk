@@ -2,8 +2,33 @@
 
 pub const SIZE: u32 = 64;
 
+/// The dot on the tray icon while a viewer is connected.
+const CONNECTED_DOT: [u8; 4] = [0xE5, 0x48, 0x4D, 0xFF];
+
 pub fn rgba() -> Vec<u8> {
     include_bytes!("../../../assets/tidedesk-64.rgba").to_vec()
+}
+
+/// The icon with a red dot in its bottom-right corner, ringed in white so it
+/// shows on light and dark taskbars: the tray's sign that someone is connected.
+pub fn connected_rgba() -> Vec<u8> {
+    let mut rgba = rgba();
+    let (centre, dot, ring) = (SIZE as f32 - 15.5, 12.0_f32, 15.0_f32);
+    for y in 0..SIZE {
+        for x in 0..SIZE {
+            let distance = ((x as f32 - centre).powi(2) + (y as f32 - centre).powi(2)).sqrt();
+            let colour = if distance <= dot {
+                CONNECTED_DOT
+            } else if distance <= ring {
+                [0xFF; 4]
+            } else {
+                continue;
+            };
+            let at = ((y * SIZE + x) * 4) as usize;
+            rgba[at..at + 4].copy_from_slice(&colour);
+        }
+    }
+    rgba
 }
 
 pub fn egui_icon() -> std::sync::Arc<egui::IconData> {
@@ -12,4 +37,27 @@ pub fn egui_icon() -> std::sync::Arc<egui::IconData> {
         width: SIZE,
         height: SIZE,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pixel(rgba: &[u8], x: u32, y: u32) -> &[u8] {
+        let at = ((y * SIZE + x) * 4) as usize;
+        &rgba[at..at + 4]
+    }
+
+    #[test]
+    fn the_connected_icon_is_the_icon_with_a_dot_in_the_corner() {
+        let (plain, connected) = (rgba(), connected_rgba());
+        assert_eq!(connected.len(), plain.len());
+        // The dot's centre, and white just inside its ring.
+        assert_eq!(pixel(&connected, SIZE - 16, SIZE - 16), CONNECTED_DOT);
+        assert_eq!(pixel(&connected, SIZE - 16, SIZE - 16 - 14), [0xFF; 4]);
+        // The rest of the icon is untouched.
+        for (x, y) in [(0, 0), (SIZE / 2, SIZE / 2), (SIZE - 1, 0), (0, SIZE - 1)] {
+            assert_eq!(pixel(&connected, x, y), pixel(&plain, x, y), "({x}, {y})");
+        }
+    }
 }

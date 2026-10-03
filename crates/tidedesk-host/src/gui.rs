@@ -5,7 +5,9 @@
 //! window needs a few MB. egui only repaints on input or when the server reports
 //! a change, so an open window costs nothing while nothing happens.
 
+use std::cell::RefCell;
 use std::net::{IpAddr, Ipv4Addr};
+use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
@@ -90,7 +92,8 @@ pub struct HostApp {
     notice: Option<String>,
     settings_error: Option<String>,
     autostart: bool,
-    tray: Option<Tray>,
+    /// Shared with the timer that keeps it current while the window is hidden.
+    tray: Option<Rc<RefCell<Tray>>>,
     window_hooked: bool,
     /// Confirming that this domain computer is personal.
     declaring: bool,
@@ -628,8 +631,19 @@ impl HostApp {
         // Quitting ends the process: the router's port is closed first.
         let agent = self.info.agent.clone();
         let before_quit = move || agent.close_port_before_exit(Duration::from_secs(1));
-        match Tray::new(state, self.title, before_quit) {
-            Ok(tray) => self.tray = Some(tray),
+        match Tray::new(state.clone(), self.title, before_quit) {
+            Ok(tray) => {
+                let tray = Rc::new(RefCell::new(tray));
+                // A hidden window draws nothing, so frames alone would leave
+                // the tray showing an old state, even who is connected.
+                let ticking = tray.clone();
+                platform::every(Duration::from_millis(500), move || {
+                    if let Ok(mut tray) = ticking.try_borrow_mut() {
+                        tray.sync(&state);
+                    }
+                });
+                self.tray = Some(tray);
+            }
             Err(e) => tracing::warn!("no tray icon: {e:#}"),
         }
     }
@@ -642,7 +656,7 @@ impl HostApp {
             platform::hide_on_close(self.title);
             self.window_hooked = true;
         }
-        if let Some(tray) = &mut self.tray {
+        if let Some(Ok(mut tray)) = self.tray.as_ref().map(|t| t.try_borrow_mut()) {
             tray.sync(&self.info.state);
         }
     }
