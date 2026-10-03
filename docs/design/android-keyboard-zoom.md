@@ -1,4 +1,4 @@
-# Plan: Android viewer — keyboard, cursor visibility, zoom
+# Plan for the Android viewer: keyboard, cursor visibility, zoom
 
 The Android viewer (`android/app/.../SessionActivity.kt`, Rust in
 `crates/tidedesk-android`) shows the remote screen and sends touch as mouse.
