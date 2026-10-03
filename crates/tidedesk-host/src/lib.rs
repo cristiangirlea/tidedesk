@@ -10,7 +10,6 @@ mod icon;
 mod input;
 mod internet;
 pub mod limits;
-pub mod notice;
 mod platform;
 pub mod saved_password;
 pub mod session;
@@ -164,8 +163,9 @@ pub(crate) fn maps_port(config: &config::HostConfig, managed: &Policy) -> bool {
 }
 
 /// Whether the person at this computer may stop sharing or quit: unless the
-/// administrator said no (`AllowStopSharing = 0`). Sessions stay visible
-/// and endable either way: the connected notice always shows them.
+/// administrator said no (`AllowStopSharing = 0`). A session in progress
+/// shows in the host's window, and in the tray icon's tooltip; it can be
+/// ended from the window or with the tray's "Disconnect viewer".
 pub fn may_stop_sharing(managed: &Policy) -> bool {
     Policy::bool_or(managed.stop_sharing, true)
 }
@@ -377,8 +377,6 @@ pub fn start(options: &StartOptions) -> Result<Started> {
         }
     });
     runtime.spawn(accept_loop(endpoint, state.clone()));
-    // Every session shows on screen, whatever else is set.
-    notice::start(state.clone());
 
     let info = gui::HostInfo {
         state,
