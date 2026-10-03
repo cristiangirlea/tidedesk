@@ -147,6 +147,10 @@ struct Shell {
     licence: LicenceBox,
     /// The History tab: its search, export and page.
     history: tidedesk_host::HistoryView,
+    /// What went wrong on this computer, next to the sessions.
+    problems: tidedesk_host::ProblemsView,
+    /// History shows the problems instead of the sessions.
+    showing_problems: bool,
     /// TideDesk's icon, at the top of the sidebar.
     logo: Option<egui::TextureHandle>,
     /// The group of settings shown.
@@ -286,6 +290,7 @@ fn start_sharing(hidden: bool) -> (Sharing, bool, bool) {
         }
         Err(e) => {
             tracing::warn!("sharing could not start: {e:#}");
+            tidedesk_core::problems::record("Sharing could not start", &format!("{e:#}"));
             // No tray icon without sharing, so never start hidden: the window
             // would be unreachable.
             let sharing = Sharing {
@@ -370,6 +375,8 @@ impl Shell {
                 ..LicenceBox::default()
             },
             history: Default::default(),
+            problems: Default::default(),
+            showing_problems: false,
             logo: None,
             settings_group: SettingsPage::default(),
             added,
@@ -840,13 +847,49 @@ impl Shell {
                     }
                 }
                 Tab::History => {
-                    ui.label(tidedesk_ui::title("History"));
-                    ui.label(
-                        egui::RichText::new("Who connected to this computer.")
-                            .color(tidedesk_ui::MUTED),
-                    );
+                    use tidedesk_ui as look;
+                    ui.horizontal(|ui| {
+                        ui.label(look::title("History"));
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            // Sessions | Problems, as two buttons side by side.
+                            let count = self.problems.count();
+                            let problems = if count == 0 {
+                                "Problems".to_string()
+                            } else {
+                                format!("Problems ({count})")
+                            };
+                            for (label, showing) in [(problems, true), ("Sessions".into(), false)] {
+                                let chosen = self.showing_problems == showing;
+                                let button = egui::Button::new(
+                                    egui::RichText::new(label).color(if chosen {
+                                        look::TEXT
+                                    } else {
+                                        look::MUTED
+                                    }),
+                                )
+                                .fill(if chosen {
+                                    look::SELECTED
+                                } else {
+                                    look::BG
+                                });
+                                if ui.add(button).clicked() {
+                                    self.showing_problems = showing;
+                                }
+                            }
+                        });
+                    });
+                    let about = if self.showing_problems {
+                        "What went wrong on this computer, to report if you choose."
+                    } else {
+                        "Who connected to this computer."
+                    };
+                    ui.label(egui::RichText::new(about).color(look::MUTED));
                     ui.add_space(6.0);
-                    self.history.ui(ui);
+                    if self.showing_problems {
+                        self.problems.ui(ui);
+                    } else {
+                        self.history.ui(ui);
+                    }
                 }
                 Tab::Settings => {
                     egui::ScrollArea::vertical().show(ui, |ui| self.settings_tab(ui));

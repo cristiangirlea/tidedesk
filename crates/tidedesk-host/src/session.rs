@@ -618,6 +618,12 @@ pub async fn run(conn: quinn::Connection, state: Arc<HostState>) -> Result<()> {
         Ok(()) => "the connection closed".into(),
         Err(e) => plain_reason(&format!("{e:#}")),
     });
+    if let Err(e) = &result {
+        let detail = format!("{e:#}");
+        if !everyday_ending(&detail) {
+            tidedesk_core::problems::record("A session ended because of an error", &detail);
+        }
+    }
     drop(stop_video);
     injector.release_all();
     let _ = send.shutdown().await;
@@ -709,6 +715,21 @@ async fn receive_file(
     let _ = saved.send(message);
 }
 
+/// Whether a session's end is an everyday one (the viewer left, the network
+/// dropped), not a problem worth keeping.
+fn everyday_ending(reason: &str) -> bool {
+    plain_reason(reason) != reason
+        || [
+            "closed by peer",
+            "connection lost",
+            "reset",
+            "aborted",
+            "lost the connection",
+        ]
+        .iter()
+        .any(|ordinary| reason.contains(ordinary))
+}
+
 /// Why a session ended, in words for the session history; the technical
 /// reason goes to the log.
 fn plain_reason(reason: &str) -> String {
@@ -738,6 +759,24 @@ impl Drop for StopOnDrop<'_> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn only_unusual_endings_are_problems() {
+        for everyday in [
+            "control stream: viewer closed",
+            "video stream: connection lost: timed out",
+            "control reader: connection lost: closed by peer: 0",
+            "disconnected by host",
+        ] {
+            assert!(super::everyday_ending(everyday), "{everyday}");
+        }
+        for problem in [
+            "video stream: the encoder failed: 0x80070057",
+            "video stream: capturing the screen: access denied",
+        ] {
+            assert!(!super::everyday_ending(problem), "{problem}");
+        }
+    }
+
     #[test]
     fn the_history_says_why_in_plain_words() {
         for (reason, plain) in [

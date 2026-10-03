@@ -206,6 +206,167 @@ impl HistoryView {
     }
 }
 
+/// The problems this computer kept (see [`tidedesk_core::problems`]), each
+/// with a report the person can read, copy or send. Nothing is sent by
+/// itself.
+#[derive(Default)]
+pub struct ProblemsView {
+    problems: Vec<tidedesk_core::problems::Problem>,
+    loaded: Option<Instant>,
+    /// The problem whose report is open, and the report.
+    open: Option<(usize, String)>,
+    note: Option<String>,
+}
+
+impl ProblemsView {
+    /// How many problems are kept.
+    pub fn count(&mut self) -> usize {
+        self.refresh();
+        self.problems.len()
+    }
+
+    fn refresh(&mut self) {
+        if self
+            .loaded
+            .is_none_or(|at| at.elapsed() > Duration::from_secs(5))
+        {
+            self.problems = tidedesk_core::problems::list();
+            self.loaded = Some(Instant::now());
+        }
+    }
+
+    pub fn ui(&mut self, ui: &mut egui::Ui) {
+        use tidedesk_core::problems;
+        use tidedesk_ui as look;
+        self.refresh();
+        if self.problems.is_empty() {
+            ui.label(
+                RichText::new(
+                    "No problems recorded. When sharing cannot start, a session ends because \
+                     of an error, or TideDesk stops unexpectedly, it shows here.",
+                )
+                .color(look::MUTED),
+            );
+            return;
+        }
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(
+                    "Kept on this computer only. Nothing is sent unless you send a report.",
+                )
+                .color(look::MUTED),
+            );
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button("Clear all").clicked() {
+                    if let Err(e) = problems::clear() {
+                        self.note = Some(format!("Could not clear them: {e:#}"));
+                    }
+                    self.problems.clear();
+                    self.open = None;
+                }
+            });
+        });
+        ui.add_space(4.0);
+        // The open report first, with what can be done with it.
+        if let Some((index, report)) = &self.open
+            && let Some(problem) = self.problems.get(*index)
+        {
+            let (problem, report) = (problem.clone(), report.clone());
+            look::card().show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.label(look::label(&format!("Report: {}", problem.what)));
+                ui.label(
+                    RichText::new("This is all of it. It goes only where you send it.")
+                        .color(look::MUTED),
+                );
+                egui::ScrollArea::vertical()
+                    .id_salt("report")
+                    .max_height(200.0)
+                    .show(ui, |ui| {
+                        ui.add(
+                            egui::TextEdit::multiline(&mut report.as_str())
+                                .font(egui::TextStyle::Monospace)
+                                .desired_width(f32::INFINITY),
+                        );
+                    });
+                ui.horizontal(|ui| {
+                    if look::copy(ui, "Copy", &report, false).clicked() {
+                        self.note = None;
+                    }
+                    if ui
+                        .button("Send by email")
+                        .on_hover_text(format!(
+                            "Opens your mail app with the report to {}; it is also copied, \
+                             to paste in full.",
+                            problems::SUPPORT_EMAIL
+                        ))
+                        .clicked()
+                    {
+                        ui.ctx().copy_text(report.clone());
+                        platform::open_link(&problems::email_link(&problem, &report));
+                        self.note = Some(
+                            "Your mail app opened with the report. It is also copied, in case \
+                             it was cut short."
+                                .into(),
+                        );
+                    }
+                    if ui.button("Close").clicked() {
+                        self.open = None;
+                        self.note = None;
+                    }
+                });
+                if let Some(note) = &self.note {
+                    ui.small(note.as_str());
+                }
+            });
+            ui.add_space(6.0);
+        }
+        let mut open = None;
+        egui::ScrollArea::vertical()
+            .id_salt("problems")
+            .auto_shrink([false, true])
+            .show(ui, |ui| {
+                for (index, problem) in self.problems.iter().enumerate() {
+                    look::card().show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        ui.label(look::label(&problem.what));
+                        let times = if problem.count > 1 {
+                            format!(" · {} times", problem.count)
+                        } else {
+                            String::new()
+                        };
+                        ui.label(
+                            RichText::new(format!(
+                                "{} UTC{times} · TideDesk {}",
+                                tidedesk_core::dates::time(problem.at),
+                                problem.version
+                            ))
+                            .color(look::MUTED),
+                        );
+                        ui.label(RichText::new(&problem.detail).monospace().small());
+                        if ui.button("Report…").clicked() {
+                            open = Some(index);
+                        }
+                    });
+                    ui.add_space(4.0);
+                }
+            });
+        if let Some(index) = open {
+            let system = format!("Windows {}", std::env::consts::ARCH);
+            let report = problems::report(
+                &self.problems[index],
+                &system,
+                &problems::log_tail(REPORT_LOG_LINES),
+            );
+            self.open = Some((index, report));
+            self.note = None;
+        }
+    }
+}
+
+/// Lines of the log a report ends with.
+const REPORT_LOG_LINES: usize = 40;
+
 /// The history page for `past` at `now` (seconds since 1970); `full` with a
 /// licence that includes the whole history.
 fn history_page(
