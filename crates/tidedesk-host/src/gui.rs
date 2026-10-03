@@ -216,6 +216,10 @@ pub struct ProblemsView {
     /// The problem whose report is open, and the report.
     open: Option<(usize, String)>,
     note: Option<String>,
+    /// A report being sent to TideDesk, and its answer once it comes.
+    sending: Option<(String, std::sync::mpsc::Receiver<Result<String>>)>,
+    /// Reports already sent, not to be sent twice.
+    sent: Vec<String>,
 }
 
 impl ProblemsView {
@@ -239,6 +243,19 @@ impl ProblemsView {
         use tidedesk_core::problems;
         use tidedesk_ui as look;
         self.refresh();
+        if let Some((text, answer)) = &self.sending
+            && let Ok(answer) = answer.try_recv()
+        {
+            let text = text.clone();
+            if answer.is_ok() {
+                self.sent.push(text.clone());
+            }
+            // Told on the report that was sent, not on another one opened since.
+            if self.open.as_ref().is_some_and(|(_, open)| *open == text) {
+                self.note = Some(sent_note(answer));
+            }
+            self.sending = None;
+        }
         if self.problems.is_empty() {
             ui.label(
                 RichText::new(
@@ -291,6 +308,29 @@ impl ProblemsView {
                     });
                 ui.horizontal(|ui| {
                     if look::copy(ui, "Copy", &report, false).clicked() {
+                        self.note = None;
+                    }
+                    let sent = self.sent.contains(&report);
+                    let label = match (&self.sending, sent) {
+                        (Some(_), _) => "Sending…",
+                        (None, true) => "Sent",
+                        (None, false) => "Send to TideDesk",
+                    };
+                    if ui
+                        .add_enabled(self.sending.is_none() && !sent, egui::Button::new(label))
+                        .on_hover_text(
+                            "Sends this report, exactly as shown, to TideDesk's report service. \
+                             Where it came from is not kept.",
+                        )
+                        .clicked()
+                    {
+                        let (answer, sent) = std::sync::mpsc::channel();
+                        let (ctx, text) = (ui.ctx().clone(), report.clone());
+                        std::thread::spawn(move || {
+                            let _ = answer.send(tidedesk_core::report::send(&text));
+                            ctx.request_repaint();
+                        });
+                        self.sending = Some((report.clone(), sent));
                         self.note = None;
                     }
                     if ui
@@ -366,6 +406,17 @@ impl ProblemsView {
 
 /// Lines of the log a report ends with.
 const REPORT_LOG_LINES: usize = 40;
+
+/// What the person is told once a report was sent, or could not be.
+fn sent_note(answer: Result<String>) -> String {
+    match answer {
+        Ok(reference) => format!(
+            "Sent. Its reference is {reference}: quote it if you write to {}.",
+            tidedesk_core::problems::SUPPORT_EMAIL
+        ),
+        Err(e) => format!("Could not send it: {e:#}. You can send it by email instead."),
+    }
+}
 
 /// The history page for `past` at `now` (seconds since 1970); `full` with a
 /// licence that includes the whole history.
@@ -1438,6 +1489,18 @@ fn locked_checkbox(
 #[cfg(test)]
 mod tests {
     use egui::accesskit::{Node, Role};
+
+    #[test]
+    fn a_sent_report_shows_its_reference_and_a_failed_one_the_way_by_email() {
+        let sent = super::sent_note(Ok("R-1234".into()));
+        assert!(
+            sent.contains("R-1234") && sent.contains("support@tidedesk.app"),
+            "{sent}"
+        );
+        let failed = super::sent_note(Err(anyhow::anyhow!("TideDesk did not answer in time")));
+        assert!(failed.contains("did not answer in time"), "{failed}");
+        assert!(failed.contains("by email"), "{failed}");
+    }
 
     /// What a widget says: a button's label, a label's text.
     fn text(node: &Node) -> &str {

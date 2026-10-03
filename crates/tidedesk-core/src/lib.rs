@@ -22,6 +22,7 @@ pub mod paths;
 pub mod policy;
 pub mod problems;
 pub mod protocol;
+pub mod report;
 pub mod secret;
 pub mod sharing;
 pub mod stats;

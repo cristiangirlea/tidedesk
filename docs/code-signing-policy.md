@@ -74,6 +74,14 @@ local network, with a packet of the same size; nothing of this leaves the local
 network. Turn answering off under Settings, Network (or with `lan_discovery = false`
 in `host.toml`).
 
+Problems TideDesk runs into are kept on the computer, under History, Problems. A
+report is sent only when the user presses "Send to TideDesk" after seeing all of it:
+it goes, with TideDesk's version, to `report.tidedesk.app` (run by the maintainer),
+which keeps the report text to look into the problem and answers with a reference.
+The service sees the computer's public IP address while the report arrives, to limit
+how many reports one address sends, and does not store it with the report. Access
+codes are hidden in reports before they are shown.
+
 Operators choose their network destinations. If they use a separate VPN or other
 third-party network service, that service's privacy policy also applies.
 
