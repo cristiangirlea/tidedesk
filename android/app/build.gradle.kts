@@ -16,8 +16,8 @@ android {
         // hints are all there.
         minSdk = 26
         targetSdk = 36
-        versionCode = 12
-        versionName = "0.1.0-alpha.12"
+        versionCode = 13
+        versionName = "0.1.0-alpha.13"
         // Phones are ARM64; one library keeps the app small.
         ndk { abiFilters += "arm64-v8a" }
     }
