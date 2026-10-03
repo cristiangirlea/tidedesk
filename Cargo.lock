@@ -3717,6 +3717,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "tidedesk-android"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "jni",
+ "quinn",
+ "tidedesk-core",
+ "tidedesk-rendezvous-proto",
+ "tokio",
+]
+
+[[package]]
 name = "tidedesk-codec"
 version = "0.1.0"
 dependencies = [

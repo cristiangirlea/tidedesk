@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "crates/tidedesk",
+    "crates/tidedesk-android",
     "crates/tidedesk-codec",
     "crates/tidedesk-core",
     "crates/tidedesk-host",
