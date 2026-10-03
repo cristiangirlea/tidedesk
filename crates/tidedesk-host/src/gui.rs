@@ -220,7 +220,8 @@ pub struct ProblemsView {
     open: Option<(usize, String)>,
     note: Option<String>,
     /// A report being sent to TideDesk, and its answer once it comes.
-    sending: Option<(String, std::sync::mpsc::Receiver<Result<String>>)>,
+    /// Also whether it went to TideDesk rather than the organisation.
+    sending: Option<(String, bool, std::sync::mpsc::Receiver<Result<String>>)>,
     /// Reports already sent, not to be sent twice.
     sent: Vec<String>,
 }
@@ -246,16 +247,15 @@ impl ProblemsView {
         use tidedesk_core::problems;
         use tidedesk_ui as look;
         self.refresh();
-        if let Some((text, answer)) = &self.sending
+        if let Some((text, to_tidedesk, answer)) = &self.sending
             && let Ok(answer) = answer.try_recv()
         {
-            let text = text.clone();
+            let (text, to_tidedesk) = (text.clone(), *to_tidedesk);
             if answer.is_ok() {
                 self.sent.push(text.clone());
             }
             // Told on the report that was sent, not on another one opened since.
             if self.open.as_ref().is_some_and(|(_, open)| *open == text) {
-                let to_tidedesk = tidedesk_core::policy::current().reports == Reports::TideDesk;
                 self.note = Some(sent_note(answer, to_tidedesk));
             }
             self.sending = None;
@@ -351,7 +351,8 @@ impl ProblemsView {
                             let _ = answer.send(tidedesk_core::report::send(&text));
                             ctx.request_repaint();
                         });
-                        self.sending = Some((report.clone(), sent));
+                        let to_tidedesk = reports == Reports::TideDesk;
+                        self.sending = Some((report.clone(), to_tidedesk, sent));
                         self.note = None;
                     }
                     if reports == Reports::TideDesk
