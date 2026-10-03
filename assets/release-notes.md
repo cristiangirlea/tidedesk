@@ -10,6 +10,25 @@ Download @ZIP@ and extract it. Run tidedesk.exe on both computers.
 
 ## New in this release
 
+### Problems, and reporting them
+
+- **History, Problems:** when sharing cannot start, a session ends because of an error, or TideDesk stops unexpectedly, the problem is kept on this computer (the last 30), with what happened, when and how often. Nothing is sent by itself. (#170)
+- **A report for each problem,** to read in full before it goes anywhere, with access codes hidden. **Copy** it, **Send by email** to support@tidedesk.app, or **Send to TideDesk**: the report goes, exactly as shown, to TideDesk's report service (report.tidedesk.app), which answers with a reference to quote. The service does not keep the address a report came from. (#176)
+- **Organisations decide where reports go:** `ReportServer` with `ReportServerFingerprint` (the SHA-256 of its certificate) sends them only to the organisation's own report service, and `Reports` = 0 turns sending off. Either way, TideDesk's email is not offered. (#180)
+
+### Sessions
+
+- **The tray icon shows a red dot while a viewer is connected,** even with the window closed. The corner notice from alpha.12 is gone. (#165, #178)
+
+### TideDesk on Android (experimental)
+
+- **Zoom:** pinch to zoom up to 4x. Zoomed in, one finger pans in Touch mode, and the view follows the pointer in Touchpad mode; **Fit** goes back. Two fingers pinch to zoom, slide to scroll, or tap to right-click. (#167)
+- **My computers:** each computer connected to is remembered by its name, the latest first. Tap to use it, long-press to forget it. Access codes are never kept. (#167)
+- **Settings** (the gear on the connect screen): Touch or Touchpad to start with, touchpad and scroll speed, natural or classic scrolling, vibration, the computer's pointer, screen orientation, keeping the screen on, the name computers see, smoother video (Game Boost), and asking before connecting on mobile data. (#174)
+- **TideDesk's icon,** with a themed version for Android 13 and later, and the toolbar folded under a small ☰ so it no longer covers the computer's window buttons. (#167)
+
+## Introduced in v0.1.0-alpha.12
+
 ### A new look
 
 - **One window with a sidebar:** This computer, Connect, History, Settings and About, in TideDesk's dark look with the IBM Plex fonts.
@@ -66,16 +85,12 @@ Download @ZIP@ and extract it. Run tidedesk.exe on both computers.
 - **Session history, for everyone.** Settings shows who connected to this computer in the last 30 days: when, how long, from where, how they were let in and why the session ended. It stays on the computer, sealed for the Windows account, and each entry is chained to the one before, so a changed or removed entry shows. Older sessions are kept; a licence that includes the session history shows all of them, with search and a CSV export. (#88, #107)
 - **Company computers.** A computer managed by an organisation (joined to a domain or to Microsoft Entra ID, or in device management) shows a notice that TideDesk will need a licence there for work. Nothing is limited in this release. A home lab that runs its own domain can declare its computer personal on the Share tab. (#90, #96, #104)
 
-## Introduced in v0.1.0-alpha.11
-
-- **An About tab with the version**, a button that copies it, and one that opens the releases page. (#82)
-
 ## Known issues
 
 - Automation tools that mark every key as an extended one (Python's `uiautomation`) send some letters with Ctrl or Alt as media keys: Ctrl+Alt+C turns the host's volume down. (#66)
 - A password or a trust needs the host on v0.1.0-alpha.10 or later; a code works with every host from v0.1.0-alpha.3 on.
 - Folders are not sent yet, and Ctrl+Alt+T does not bring an open chat window to the front.
-- The Android viewer is experimental: it types only what a US keyboard can, has no zoom yet, and signs in with the access code only.
+- The Android viewer is experimental: it types only what a US keyboard can, and signs in with the access code only.
 
 ## Good to know
 
