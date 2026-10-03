@@ -24,7 +24,7 @@ use tidedesk_core::protocol::{
 use tidedesk_core::sharing::PointerPosition;
 use tidedesk_core::{DEFAULT_PORT, auth, net};
 use tidedesk_rendezvous_proto::DeviceId;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 
 /// Frames waiting for the decoder: few, so that a slow decoder slows the
 /// host down (it skips captures) instead of memory filling up.
@@ -46,6 +46,16 @@ pub struct Frame {
     pub capture_us: u64,
     /// One H.264 access unit, Annex B.
     pub data: Vec<u8>,
+}
+
+/// Where the host's mouse pointer is, from 0 to 1 across its screen. The
+/// video does not show it: the phone draws it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Cursor {
+    pub x: f32,
+    pub y: f32,
+    /// Off the shared screen, it is not drawn.
+    pub visible: bool,
 }
 
 /// What to connect to, and as whom.
@@ -151,9 +161,10 @@ pub struct Viewer {
     control: mpsc::UnboundedSender<ClientMessage>,
     pointer: Arc<Mutex<Pointer>>,
     frames: Mutex<mpsc::Receiver<Frame>>,
+    cursor: Mutex<watch::Receiver<Option<Cursor>>>,
     _endpoint: quinn::Endpoint,
     _agent: Option<Arc<Agent>>,
-    _runtime: tokio::runtime::Runtime,
+    runtime: tokio::runtime::Runtime,
 }
 
 /// A session past the access code.
@@ -178,8 +189,14 @@ impl Viewer {
         let (control, outgoing) = mpsc::unbounded_channel();
         let (frames, incoming) = mpsc::channel(FRAMES_QUEUED);
         let pointer = Arc::new(Mutex::new(Pointer::default()));
+        let (cursor_tx, cursor) = watch::channel(None);
         runtime.spawn(write_control(opened.send, outgoing));
-        runtime.spawn(read_control(opened.recv, pointer.clone(), control.clone()));
+        runtime.spawn(read_control(
+            opened.recv,
+            pointer.clone(),
+            control.clone(),
+            cursor_tx,
+        ));
         runtime.spawn(read_video(opened.connection.clone(), frames));
         // Before any mouse event: the host takes them only once granted.
         let _ = control.send(ClientMessage::SetSharing {
@@ -193,9 +210,10 @@ impl Viewer {
             control,
             pointer,
             frames: Mutex::new(incoming),
+            cursor: Mutex::new(cursor),
             _endpoint: opened.endpoint,
             _agent: opened.agent,
-            _runtime: runtime,
+            runtime,
         })
     }
 
@@ -232,6 +250,23 @@ impl Viewer {
             dx: 0,
             dy: notches.saturating_mul(120),
         });
+    }
+
+    /// Presses or releases the key with PC/AT set-1 `scancode` (`0xE0` in the
+    /// high byte for extended keys).
+    pub fn key(&self, scancode: u16, pressed: bool) {
+        let key = InputEvent::Key { scancode, pressed };
+        let _ = self.control.send(ClientMessage::Input(key));
+    }
+
+    /// The host's cursor once it moves, waiting for that; `None` once the
+    /// session ended.
+    pub fn next_cursor(&self) -> Option<Cursor> {
+        let mut cursor = self.cursor.lock().unwrap();
+        match self.runtime.block_on(cursor.changed()) {
+            Ok(()) => *cursor.borrow_and_update(),
+            Err(_) => None,
+        }
     }
 
     /// After the decoder lost its place: the host sends a keyframe.
@@ -355,13 +390,35 @@ async fn read_control(
     mut recv: quinn::RecvStream,
     pointer: Arc<Mutex<Pointer>>,
     control: mpsc::UnboundedSender<ClientMessage>,
+    cursor: watch::Sender<Option<Cursor>>,
 ) {
+    // The host's pointer, wherever it moved: for the phone to draw.
+    let show = |position: PointerPosition| {
+        let now = Some(Cursor {
+            x: f32::from(position.x) / 65535.0,
+            y: f32::from(position.y) / 65535.0,
+            visible: position.inside,
+        });
+        cursor.send_if_modified(|shown| {
+            let changed = *shown != now;
+            *shown = now;
+            changed
+        });
+    };
     while let Ok(Some(message)) = protocol::read_message::<_, ServerMessage>(&mut recv).await {
         let answers = match message {
             ServerMessage::PointerAnchor { request, position } => {
+                show(position);
                 pointer.lock().unwrap().anchored(request, position)
             }
-            ServerMessage::Pointer(_) => pointer.lock().unwrap().lost(),
+            ServerMessage::Cursor(position) => {
+                show(position);
+                Vec::new()
+            }
+            ServerMessage::Pointer(position) => {
+                show(position);
+                pointer.lock().unwrap().lost()
+            }
             // The cursor, clipboard, chat and the rest: not on the phone yet.
             _ => Vec::new(),
         };
@@ -487,6 +544,14 @@ mod tests {
                         audio: false,
                     };
                     protocol::write_message(&mut send, &welcome).await.unwrap();
+                    // Where the host's pointer is: a quarter across, three quarters down.
+                    let cursor = ServerMessage::Cursor(PointerPosition {
+                        epoch: 7,
+                        x: 16384,
+                        y: 49151,
+                        inside: true,
+                    });
+                    protocol::write_message(&mut send, &cursor).await.unwrap();
                     let mut video = conn.open_uni().await.unwrap();
                     for (keyframe, data) in
                         [(true, keyframe()), (false, vec![0, 0, 0, 1, 0x41, 0x9A])]
@@ -586,6 +651,11 @@ mod tests {
         assert_eq!(first.data, keyframe());
         assert!(!viewer.next_frame().unwrap().keyframe);
 
+        // The host's cursor, drawn by the phone since it is not in the video.
+        let cursor = viewer.next_cursor().unwrap();
+        assert!((cursor.x - 0.25).abs() < 0.001 && (cursor.y - 0.75).abs() < 0.001);
+        assert!(cursor.visible);
+
         // A tap in the middle: move there, press, release.
         viewer.pointer(0.5, 0.5);
         viewer.button(MouseButton::Left, true);
@@ -615,9 +685,9 @@ mod tests {
             ]
         );
         // The mouse was asked for first, and the host's pointer read once.
-        let got = got.lock().unwrap().clone();
+        let sent = got.lock().unwrap().clone();
         assert!(matches!(
-            got[0],
+            sent[0],
             ClientMessage::SetSharing {
                 mouse: true,
                 clipboard: false,
@@ -625,16 +695,42 @@ mod tests {
             }
         ));
         assert_eq!(
-            got.iter()
+            sent.iter()
                 .filter(|m| matches!(m, ClientMessage::PointerSync { .. }))
                 .count(),
             1
+        );
+
+        // Keys go as they are, with no pointer epoch.
+        viewer.key(0x1E, true);
+        viewer.key(0x1E, false);
+        let keys = wait_for(&got, 2, |m| {
+            matches!(m, ClientMessage::Input(InputEvent::Key { .. }))
+        });
+        assert_eq!(
+            keys,
+            [
+                ClientMessage::Input(InputEvent::Key {
+                    scancode: 0x1E,
+                    pressed: true
+                }),
+                ClientMessage::Input(InputEvent::Key {
+                    scancode: 0x1E,
+                    pressed: false
+                }),
+            ]
         );
 
         viewer.wheel(2);
         viewer.request_keyframe();
         viewer.close();
         assert_eq!(viewer.next_frame(), None, "nothing after the end");
+        // Moves not yet drawn come first, then the end.
+        let mut pending = 0;
+        while viewer.next_cursor().is_some() {
+            pending += 1;
+            assert!(pending < 10, "the cursor ends with the session");
+        }
         drop(runtime);
     }
 

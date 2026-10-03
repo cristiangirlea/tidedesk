@@ -166,6 +166,38 @@ pub extern "system" fn Java_app_tidedesk_viewer_Native_requestKeyframe(
     }
 }
 
+/// `scancode`: PC/AT set 1, `0xE0` in the high byte for extended keys.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_app_tidedesk_viewer_Native_key(
+    _unowned: EnvUnowned<'_>,
+    _class: JClass<'_>,
+    handle: jlong,
+    scancode: jint,
+    pressed: jboolean,
+) {
+    // SAFETY: Kotlin passes a live session.
+    if let Some(viewer) = unsafe { viewer(handle) } {
+        viewer.key(scancode as u16, pressed);
+    }
+}
+
+/// The host's cursor once it moves, waiting for that: bit 32 set when it is
+/// on the shared screen, x in bits 16 to 31 and y in bits 0 to 15, each from
+/// 0 to 65535 across the screen. -1 once the session ended.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_app_tidedesk_viewer_Native_nextCursor(
+    _unowned: EnvUnowned<'_>,
+    _class: JClass<'_>,
+    handle: jlong,
+) -> jlong {
+    // SAFETY: Kotlin passes a live session.
+    let Some(cursor) = unsafe { viewer(handle) }.and_then(Viewer::next_cursor) else {
+        return -1;
+    };
+    let wire = |v: f32| (v.clamp(0.0, 1.0) * 65535.0).round() as i64;
+    (i64::from(cursor.visible) << 32) | (wire(cursor.x) << 16) | wire(cursor.y)
+}
+
 /// Ends the session; the decoder thread's `nextFrame` then returns `null`.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_app_tidedesk_viewer_Native_close(

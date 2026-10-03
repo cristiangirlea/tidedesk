@@ -31,6 +31,16 @@ object Native {
     /** Positive scrolls up. */
     @JvmStatic external fun wheel(handle: Long, notches: Int)
 
+    /** [scancode]: PC/AT set 1, 0xE0 in the high byte for extended keys (see [Keys]). */
+    @JvmStatic external fun key(handle: Long, scancode: Int, pressed: Boolean)
+
+    /**
+     * The host's cursor once it moves, waiting for that: bit 32 set when it is
+     * on the shared screen, x in bits 16 to 31, y in bits 0 to 15 (0 to 65535
+     * across the screen); -1 once the session ended.
+     */
+    @JvmStatic external fun nextCursor(handle: Long): Long
+
     @JvmStatic external fun requestKeyframe(handle: Long)
 
     @JvmStatic external fun close(handle: Long)
