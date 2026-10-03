@@ -198,6 +198,20 @@ pub extern "system" fn Java_app_tidedesk_viewer_Native_nextCursor(
     (i64::from(cursor.visible) << 32) | (wire(cursor.x) << 16) | wire(cursor.y)
 }
 
+/// Smoother video (the desktop's Game Boost) on or off.
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_app_tidedesk_viewer_Native_gameBoost(
+    _unowned: EnvUnowned<'_>,
+    _class: JClass<'_>,
+    handle: jlong,
+    enabled: jboolean,
+) {
+    // SAFETY: Kotlin passes a live session.
+    if let Some(viewer) = unsafe { viewer(handle) } {
+        viewer.game_boost(enabled);
+    }
+}
+
 /// Ends the session; the decoder thread's `nextFrame` then returns `null`.
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_app_tidedesk_viewer_Native_close(

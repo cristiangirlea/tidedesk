@@ -51,6 +51,13 @@ Rust target `x86_64-linux-android`, start a virtual phone and install the debug 
 - **The phone's keyboard** types into the host (US layout), with a row of special keys: Esc, Tab,
   Ctrl, Alt, Win, Shift, arrows, Home, End, the page keys, Del, F1 to F12.
 
+- **Settings** (the gear on the connect screen):
+  - start as Touch or Touchpad; touchpad speed; natural or classic scrolling and its speed;
+  - vibration; showing the computer's pointer;
+  - orientation; keeping the screen on;
+  - the name computers see; smoother video (Game Boost); asking before connecting on mobile data;
+  - forgetting all computers; a guide to the gestures; and what the app is.
+
 ## Not yet
 
 - The saved password and trusted-viewer sign-in.

@@ -41,6 +41,9 @@ object Native {
      */
     @JvmStatic external fun nextCursor(handle: Long): Long
 
+    /** Smoother video (60 frames a second): more battery and data. */
+    @JvmStatic external fun gameBoost(handle: Long, enabled: Boolean)
+
     @JvmStatic external fun requestKeyframe(handle: Long)
 
     @JvmStatic external fun close(handle: Long)

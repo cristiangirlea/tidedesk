@@ -2,6 +2,7 @@ package app.tidedesk.viewer
 
 import android.app.Activity
 import android.content.Context
+import android.content.pm.ActivityInfo
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
@@ -63,6 +64,7 @@ import kotlin.math.hypot
  */
 class SessionActivity : Activity(), SurfaceHolder.Callback {
     private var handle = 0L
+    private lateinit var prefs: Prefs
     private lateinit var root: FrameLayout
     private lateinit var surface: SurfaceView
     private lateinit var pointerView: PointerView
@@ -87,7 +89,14 @@ class SessionActivity : Activity(), SurfaceHolder.Callback {
             finish()
             return
         }
-        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        prefs = Prefs(this)
+        if (prefs.keepScreenOn) window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        requestedOrientation = when (prefs.orientation) {
+            "portrait" -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+            "auto" -> ActivityInfo.SCREEN_ORIENTATION_FULL_USER
+            else -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+        }
+        touchpad = prefs.startAsTouchpad
         if (Build.VERSION.SDK_INT >= 30) window.setDecorFitsSystemWindows(false)
 
         root = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
@@ -130,6 +139,7 @@ class SessionActivity : Activity(), SurfaceHolder.Callback {
         }
         setContentView(root)
         title = Native.hostName(handle)
+        if (prefs.smoothVideo) Native.gameBoost(handle, true)
         hideSystemBars()
         cursorWatcher = thread(name = "cursor") { watchCursor() }
     }
@@ -161,7 +171,7 @@ class SessionActivity : Activity(), SurfaceHolder.Callback {
             cornerRadius = dp(8).toFloat()
         }
         setOnClickListener {
-            it.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+            if (prefs.vibrate) it.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
             onClick()
         }
     }
@@ -171,7 +181,7 @@ class SessionActivity : Activity(), SurfaceHolder.Callback {
         val bar = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         val add = { v: View -> bar.addView(v, LinearLayout.LayoutParams(WRAP, WRAP).apply { marginEnd = dp(6) }) }
         add(chip("Keyboard") { toggleKeyboard() })
-        modeButton = chip("Touch") { toggleMode() }
+        modeButton = chip(if (touchpad) "Touchpad" else "Touch") { toggleMode() }
         add(modeButton)
         fitButton = chip("Fit") { resetZoom() }
         fitButton.visibility = View.GONE
@@ -512,7 +522,8 @@ class SessionActivity : Activity(), SurfaceHolder.Callback {
     }
 
     private fun drawPointer() {
-        pointerView.visibility = if (pointerShown && shownWidth > 0) View.VISIBLE else View.INVISIBLE
+        val visible = prefs.showPointer && pointerShown && shownWidth > 0
+        pointerView.visibility = if (visible) View.VISIBLE else View.INVISIBLE
         pointerView.translationX = offsetX + pointerX * shownWidth
         pointerView.translationY = offsetY + pointerY * shownHeight
     }
@@ -575,7 +586,7 @@ class SessionActivity : Activity(), SurfaceHolder.Callback {
     private var scrolled = 0f
     private val longPress = Runnable {
         longPressed = true
-        root.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+        if (prefs.vibrate) root.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
         if (touchpad) {
             // A long press, then moving, drags.
             dragging = true
@@ -688,11 +699,12 @@ class SessionActivity : Activity(), SurfaceHolder.Callback {
             }
             Two.SCROLL -> {
                 scrolled += y - lastMidY
-                val notches = (scrolled / SCROLL_STEP).toInt()
+                val step = prefs.scrollStep
+                val notches = (scrolled / step).toInt()
                 if (notches != 0) {
-                    // Swiping up scrolls down, as on the phone.
-                    Native.wheel(handle, notches)
-                    scrolled -= notches * SCROLL_STEP
+                    // Natural: swiping up scrolls down, as on the phone.
+                    Native.wheel(handle, if (prefs.naturalScrolling) notches else -notches)
+                    scrolled -= notches * step
                 }
             }
             Two.UNDECIDED -> {}
@@ -718,8 +730,8 @@ class SessionActivity : Activity(), SurfaceHolder.Callback {
             if (!dragging) ui.removeCallbacks(longPress)
         }
         // The same finger movement covers the same part of the screen, zoomed or not.
-        pointerX = (pointerX + dx / shownWidth * PAD_SPEED).coerceIn(0f, 1f)
-        pointerY = (pointerY + dy / shownHeight * PAD_SPEED).coerceIn(0f, 1f)
+        pointerX = (pointerX + dx / shownWidth * prefs.touchpadSpeed).coerceIn(0f, 1f)
+        pointerY = (pointerY + dy / shownHeight * prefs.touchpadSpeed).coerceIn(0f, 1f)
         Native.pointer(handle, pointerX, pointerY)
         drawPointer()
         followPointer()
@@ -822,10 +834,6 @@ class SessionActivity : Activity(), SurfaceHolder.Callback {
         private const val LEFT = 0
         private const val RIGHT = 1
         private const val MIDDLE = 2
-        /** Pixels of two-finger movement per scroll notch. */
-        private const val SCROLL_STEP = 40f
-        /** How far the pointer goes for a finger's movement on the touchpad. */
-        private const val PAD_SPEED = 1.6f
         private val MOUSE_BUTTONS = listOf(
             MotionEvent.BUTTON_PRIMARY to LEFT,
             MotionEvent.BUTTON_SECONDARY to RIGHT,
