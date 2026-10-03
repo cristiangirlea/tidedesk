@@ -121,6 +121,12 @@ fn usage() -> String {
 /// `extensions` added.
 pub fn run(mut extensions: Extensions) {
     tidedesk_host::attach_console();
+    // A crash in any TideDesk process is kept as a problem, then reported as usual.
+    let earlier = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        tidedesk_core::problems::record("TideDesk stopped unexpectedly", &info.to_string());
+        earlier(info);
+    }));
     if let Some(start) = extensions.on_start.take() {
         start();
     }

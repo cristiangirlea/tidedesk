@@ -20,6 +20,7 @@ pub mod net;
 pub mod password;
 pub mod paths;
 pub mod policy;
+pub mod problems;
 pub mod protocol;
 pub mod secret;
 pub mod sharing;
