@@ -23,6 +23,10 @@ android {
     }
 
     buildTypes {
+        // Debug builds also run in the emulator on a PC (x86_64).
+        debug {
+            ndk { abiFilters += "x86_64" }
+        }
         release {
             isMinifyEnabled = true
             isShrinkResources = true
@@ -46,8 +50,9 @@ val cargoBuild by tasks.registering(Exec::class) {
     val release = gradle.startParameter.taskNames.any { it.contains("Release") }
     workingDir = rootDir.parentFile
     environment("ANDROID_NDK_HOME", android.ndkDirectory.absolutePath)
+    val targets = if (release) listOf("-t", "arm64-v8a") else listOf("-t", "arm64-v8a", "-t", "x86_64")
     commandLine(
-        listOf("cargo", "ndk", "-t", "arm64-v8a", "-o", "android/app/src/main/jniLibs", "build", "-p", "tidedesk-android")
+        listOf("cargo", "ndk") + targets + listOf("-o", "android/app/src/main/jniLibs", "build", "-p", "tidedesk-android")
             + if (release) listOf("--release") else emptyList()
     )
 }
