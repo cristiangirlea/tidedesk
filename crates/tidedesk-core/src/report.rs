@@ -261,6 +261,25 @@ mod tests {
         assert_eq!(cut("short"), "short");
     }
 
+    /// A real report service on this machine, named by
+    /// `TIDEDESK_TEST_REPORTS=ip:port`, with the certificate whose fingerprint
+    /// is `TIDEDESK_TEST_REPORTS_FINGERPRINT`. The service is not part of this
+    /// repository; its own CI runs this.
+    #[tokio::test]
+    #[ignore = "needs a report service on this machine: TIDEDESK_TEST_REPORTS=ip:port"]
+    async fn a_report_reaches_a_real_service() {
+        let service: SocketAddr = std::env::var("TIDEDESK_TEST_REPORTS")
+            .expect("TIDEDESK_TEST_REPORTS=ip:port names a report service on this machine")
+            .parse()
+            .expect("TIDEDESK_TEST_REPORTS is an ip:port");
+        let fingerprint = std::env::var("TIDEDESK_TEST_REPORTS_FINGERPRINT")
+            .expect("TIDEDESK_TEST_REPORTS_FINGERPRINT is the service certificate's SHA-256");
+        let reference = send_to(service, &[&fingerprint], "What: a contract test")
+            .await
+            .unwrap();
+        assert!(reference.starts_with("R-"), "{reference}");
+    }
+
     #[test]
     fn the_pinned_fingerprints_are_whole_sha256s() {
         for fingerprint in SERVER_FINGERPRINTS {
