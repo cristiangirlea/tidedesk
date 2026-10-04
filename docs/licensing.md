@@ -7,11 +7,12 @@ license, and TideDesk's source code is not public.
 ## Summary
 
 - Individuals may install and run TideDesk for personal, non-commercial purposes,
-  including unpaid help to family and friends.
+  including unpaid help to family and friends. Paid additions for personal use
+  (Personal Plus) add features, and stay for personal use.
 - Business use, including internal organizational IT support and services to
-  customers, needs a TideDesk licence (Solo, Team or Enterprise) or another written
-  license. Licences are sold at [tidedesk.app](https://tidedesk.app) and added in the
-  app under About.
+  customers, needs a TideDesk licence (Solo, Business or Enterprise) or another written
+  license. Licences are sold at [tidedesk.app](https://tidedesk.app) and activated in
+  the app under Settings, Licence.
 - Unmodified official copies may be shared without payment for personal use, with the
   license and notices kept. Pointing to the official download is always allowed.
 - The LICENSE text is authoritative.
