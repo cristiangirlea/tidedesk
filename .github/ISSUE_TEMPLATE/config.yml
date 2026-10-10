@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Can't connect?
+    url: https://tidedesk.app/cant-connect/
+    about: The usual reasons two computers don't find each other, and what to do.
+  - name: Licences and payments
+    url: https://tidedesk.app/licence/
+    about: Your licences, computers and billing. Questions go to support@tidedesk.app.

@@ -1,0 +1,84 @@
+name: Report a problem
+description: Something in TideDesk does not work as it should.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time. A few details help a lot.
+
+        **Found a security problem?** Please don't post it here, where everyone can read it: email support@tidedesk.app instead.
+
+        **Please leave out** access codes, passwords, device IDs, licence keys and internet addresses. This page is public.
+  - type: input
+    id: version
+    attributes:
+      label: TideDesk version
+      description: In TideDesk, open **About**. If the two computers differ, give both.
+      placeholder: 0.1.0-alpha.14
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: Where it came from
+      options:
+        - ZIP from GitHub
+        - Microsoft Store
+        - Android app (APK)
+        - Other or not sure
+    validations:
+      required: true
+  - type: dropdown
+    id: side
+    attributes:
+      label: Which computer has the problem
+      options:
+        - The viewer (the computer I connect from)
+        - The host (the computer being shared)
+        - Both, or the connection between them
+        - Not sure
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      description: Press Win+R, type `winver` and press Enter. For example "Windows 11 24H2".
+  - type: dropdown
+    id: network
+    attributes:
+      label: How the computers connect
+      options:
+        - Same local network
+        - Over the internet, by device ID
+        - Over the internet, by address
+        - Not connected yet (the problem is before connecting)
+        - Not sure
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: How to make it happen again
+      description: Steps, if you know them. "It happens sometimes" is fine too.
+      placeholder: |
+        1. Connect to the host
+        2. ...
+  - type: input
+    id: reference
+    attributes:
+      label: Problem report reference
+      description: If TideDesk kept the problem under **History**, **Problems** and you sent it with **Send to TideDesk**, paste the reference it gave you.
+  - type: checkboxes
+    id: private
+    attributes:
+      label: Before posting
+      options:
+        - label: I left out access codes, passwords, device IDs, licence keys and internet addresses.
+          required: true
