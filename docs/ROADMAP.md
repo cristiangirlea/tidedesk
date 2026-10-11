@@ -21,13 +21,14 @@ the two computers; TideDesk never relays it. One viewer at a time.
   network a device ID works without the internet. (Experimental.)
 - Direct internet connections: the router's port is opened by itself where the router
   allows it, and routers that change ports on one side usually get through. With such a
-  router on both sides, a forwarded port or a VPN is still needed. (Experimental.)
+  router on both sides, the host's router opening its port, a forwarded port or a VPN
+  is still needed. (Experimental.)
   See [internet access](internet-access.md).
 
 **Access and safety**
 
-- An access code that changes after each session, with lock-outs only for the address
-  that guesses wrong.
+- An access code that changes after each session unless that is turned off, with
+  lock-outs only for the address that guesses wrong.
 - A saved password for your own computers, which neither computer ever sends, and
   trusted viewers that connect without a code. (Since v0.1.0-alpha.10.)
 - Host fingerprint pinning, a red dot on the tray icon while a viewer is connected, and
@@ -35,7 +36,8 @@ the two computers; TideDesk never relays it. One viewer at a time.
 - Session history of the last 30 days, kept on the computer, where a changed or removed
   entry shows. Problems are kept on the computer too; a report is sent only when you choose
   to, after reading it in full.
-- Settings an administrator can set for every user through Group Policy.
+- Settings an administrator can set for every user, for example through Group Policy.
+  (Since v0.1.0-alpha.12.)
 
 **Picture, sound and input**
 
@@ -87,7 +89,7 @@ to earlier ones.
 
 ## Planned
 
-Follow an issue (Subscribe, on its page) to hear when it ships.
+Where an item has an issue, follow it (Subscribe, on its page) to hear when it ships.
 
 - **Cancel a file while it is being sent**, on either computer, without ending the
   session. ([#1](https://github.com/cristiangirlea/tidedesk/issues/1))
@@ -121,7 +123,7 @@ list its known issues in full.
 ## Game mode: keyboard, mouse and streaming
 
 The first gaming goal is fast, responsive picture and sound with keyboard and mouse.
-Video on the graphics card and Game Boost are the start; still to come:
+Video on the graphics card and Game Boost are the start. Planned, not scheduled:
 
 - Bitrate and frame rate that adapt to the connection, rather than a fixed promise.
 - Relative mouse input for game cameras, with an easy way to release the mouse.
