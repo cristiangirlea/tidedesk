@@ -1,126 +1,145 @@
 # Roadmap
 
-This is a technical planning list, not a promise of delivery, dates or future
-licensing terms. Features under "Planned" and "Exploration" are not available yet.
-See [licensing](licensing.md) for development-branch and earlier-release terms.
+This is a planning list, not a promise of delivery, dates or future licensing terms.
+Only what is under "Available now" is in a release; everything else is not available yet
+and may change or be dropped. See [licensing](licensing.md) for the terms of each release.
 
-## Available in the Windows alpha
+Last brought up to date for v0.1.0-alpha.14.
 
-- Windows-to-Windows screen, keyboard and mouse control; one viewer at a time.
-- DXGI capture, OpenH264 software video, WASAPI system audio and Opus.
-- QUIC/TLS, access-code authentication, throttling and host fingerprint pinning.
-- Tray host with saved settings and a viewer with saved computers.
-- Optional text clipboard sharing, independent host permissions and custom shortcuts.
-- Separate host/viewer cursor indicators and safe mouse-control handoff.
-- Native-size viewer startup when the display permits, with per-host window placement.
-- No Visual C++ Redistributable dependency; third-party license notices ship with builds.
+## Available now (Windows alpha)
 
-Real-world two-computer and multi-monitor validation of recent interaction/window
-changes is still pending. No hardware encoder selector, permanent user-chosen
-password, 2FA or paid-feature enforcement is implemented.
+TideDesk is an experimental alpha for Windows x64. Every session runs directly between
+the two computers; TideDesk never relays it. One viewer at a time.
 
-## Planned: Windows reliability and security
+**Connecting**
 
-- Complete two-computer, multi-monitor and mixed-DPI validation.
-- Optional permanent password alongside the random code, with a separate,
-  reviewed authentication flow, strong-password checks and protected local storage.
-- Optional local TOTP two-factor authentication and recovery codes. Design goal:
-  no TideDesk account or central user database; protected verifier data stays on the host.
-- Selectable hardware encoders where actually supported, retaining software fallback.
-  Performance, hardware support and codec licensing need validation.
-- Adaptive bitrate/frame rate, lower memory use and improved presentation.
-- Native cursor shapes/visibility, in-session monitor switching and image clipboard.
-- Evaluate signed distribution and MSIX/Store packaging.
+- One program, `tidedesk.exe`, on both computers, with one window and a sidebar: This
+  computer, Connect, History, Settings and About. `tidedesk host` and `tidedesk view`
+  still run either side alone, and `tidedesk host --headless` suits servers.
+- Connect by device ID or by address. TideDesk's connection service only introduces the
+  two computers and never carries the session; it can be turned off. On the same local
+  network a device ID works without the internet. (Experimental.)
+- Direct internet connections: the router's port is opened by itself where the router
+  allows it, and routers that change ports on one side usually get through. With such a
+  router on both sides, a forwarded port or a VPN is still needed. (Experimental.)
+  See [internet access](internet-access.md).
 
-## Experimental in v0.1.0-alpha.3: initial Game Boost
+**Access and safety**
 
-- Saved Viewer Settings button and customizable Ctrl+Alt+G shortcut, applied live.
-- 60 FPS target, motion-oriented software encoding, bounded decode queue and
-  smaller audio buffer, with return to the host's desktop FPS.
-- Unchanged host resolution, bitrate and sharing permissions; input release on
-  profile changes and coalesced mouse movement without reordering input barriers.
-- Synthetic live-switching and codec regression tests. Two-computer gameplay,
-  visual quality and end-to-end latency validation are still pending.
+- An access code that changes after each session, with lock-outs only for the address
+  that guesses wrong.
+- A saved password for your own computers, which neither computer ever sends, and
+  trusted viewers that connect without a code. (Since v0.1.0-alpha.10.)
+- Host fingerprint pinning, a red dot on the tray icon while a viewer is connected, and
+  a reason shown in the viewer when a session ends.
+- Session history of the last 30 days, kept on the computer, where a changed or removed
+  entry shows. Problems are kept on the computer too; a report is sent only when you choose
+  to, after reading it in full.
+- Settings an administrator can set for every user through Group Policy.
 
-See [Game Boost](game-boost.md) for use and limitations. This is not a stable feature.
+**Picture, sound and input**
 
-## Experimental in v0.1.0-alpha.5: direct internet connections
+- Video encoded on the graphics card where it has an H.264 encoder (AMD, Intel or
+  NVIDIA), falling back to software by itself; decoding with Windows' own decoder.
+  (Since v0.1.0-alpha.8.)
+- Bitrate that follows the screen's size, and scaling that keeps text readable at any
+  window size.
+- The host's sound on the viewer.
+- Keyboard and mouse control, two-way text clipboard sharing, safe mouse handoff,
+  separate cursor indicators and changeable shortcuts. See
+  [interaction controls](interaction-controls.md).
+- Game Boost, opt-in: a 60 FPS target with lower buffering, switched live. (Experimental;
+  see [Game Boost](game-boost.md).)
 
-Every session runs directly between the two computers; TideDesk never relays.
+**Files and chat** (since v0.1.0-alpha.12)
 
-- The host learns its internet address from public STUN servers (configurable, can be
-  turned off) and shows it; the viewer does the same when connecting over the internet.
-- Both computers punch a path through their routers on the QUIC port; QUIC, TLS,
-  access-code proof and pinning run over it unchanged (protocol v3).
-- Symmetric NAT and same-network cases are detected with clear advice; forwarded
-  ports work without the manual step.
-- Two-network validation is still pending. See
-  [internet access](internet-access.md) and the [design notes](design/nat-traversal.md).
+- Copy files to the host by dropping them on the viewer's window, and send files back
+  from the host. Files go directly between the two computers, never through a server.
+- Chat between the viewer and the host.
 
-### Experimental: connect by device ID
+**Licence**
 
-- A viewer reaches a host by its stable device ID instead of both people typing
-  addresses, headless hosts included. TideDesk's own connection service introduces the
-  two computers by default (changeable or off in Settings) and never carries session
-  data; direct paths only, no relay.
-- On the same local network the viewer also asks the network for the ID and the host
-  answers directly, so device IDs work there without the service or the internet.
+- Free for personal, non-commercial use. TideDesk Solo licenses work use and is activated
+  under Settings, Licence (since v0.1.0-alpha.14). See
+  [tidedesk.app/pricing](https://tidedesk.app/pricing/).
 
-## Next: one app
+**Android viewer** (experimental, since v0.1.0-alpha.12)
 
-- One program, `tidedesk.exe`, with one window and a sidebar: This computer, Connect,
-  History, Settings, About. One thing to install on both computers; `tidedesk host` and
-  `tidedesk view` still run either side alone. Linux follows (viewer first, then host),
-  then Android and iOS viewers.
+- Connect by device ID or address with the access code; touch or touchpad control, zoom,
+  saved computers and settings. Not yet: passwords, trusted viewers, files, chat and sound.
 
-## Next: Game mode: keyboard, mouse and streaming
+**Still to confirm**
 
-The first gaming milestone is fast, responsive screen/audio streaming with
-keyboard and mouse input. Controller forwarding, USB passthrough and their
-virtual-device drivers are outside this milestone and must not delay it.
+- Two-computer, multi-monitor and mixed-DPI checks of recent changes, and two-computer
+  gameplay and end-to-end latency for Game Boost.
+- The executables are not code-signed yet; see the [code signing policy](code-signing-policy.md).
 
-- Use hardware encoding and decoding where supported, reduce unnecessary GPU/CPU
-  frame copies, and retain a software fallback with its limitations made visible.
-- Tune frame pacing, bounded video queues and audio buffering; adapt bitrate and
-  frame rate to the available hardware and connection instead of promising a
-  fixed frame rate or latency.
-- Prioritize responsive keyboard input, including held keys and key combinations,
-  with reliable input release when focus is lost or the session disconnects.
-- Add relative mouse input for game-camera control while preserving local-host
-  takeover, input release on disconnect and an easy way to release the viewer's
-  mouse capture.
-- Show useful performance measurements, distinguishing network round-trip time
-  from capture, encoding and decoding time. Validate input-to-display latency and
-  game compatibility on two computers before describing the mode as gaming-ready.
+## Built, in testing for the next release
+
+Not in any release yet. Both computers will need the new release, which cannot connect
+to earlier ones.
+
+- A keyboard switch like the mouse one, and one shortcut that turns all input off to
+  only watch. The host can allow or refuse the viewer's keyboard on its own.
+- Talk to the host: the viewer's microphone on the host's speakers, off on both sides
+  until each turns it on.
+- A list of files on their way, with size, progress and speed, on both computers.
+
+## Planned
+
+Follow an issue (Subscribe, on its page) to hear when it ships.
+
+- **Cancel a file while it is being sent**, on either computer, without ending the
+  session. ([#1](https://github.com/cristiangirlea/tidedesk/issues/1))
+- **Send whole folders**, arriving as that folder in `Downloads\TideDesk`.
+  ([#2](https://github.com/cristiangirlea/tidedesk/issues/2))
+- **Internet connections over IPv6**, alongside IPv4, still direct between the two
+  computers. ([#3](https://github.com/cristiangirlea/tidedesk/issues/3))
+- **Linux**, viewer first, then host.
+
+## Ideas, not scheduled
+
+Say on the issue whether it would help you.
+
+- **Updates inside the app for the Microsoft Store version**, never during a session.
+  ([#4](https://github.com/cristiangirlea/tidedesk/issues/4))
+- **Usage profiles:** Office, Gaming, Slow connection, Battery saver, set in one
+  choice, within what the host allows.
+  ([#5](https://github.com/cristiangirlea/tidedesk/issues/5))
+- **A sharper picture when the viewer's window is larger** than the picture the host
+  sends. ([#6](https://github.com/cristiangirlea/tidedesk/issues/6))
+
+## Known issues
+
+- Ctrl+Alt+C sent by some automation tools lowers the host's volume, and other letters
+  with Ctrl or Alt act as media keys. Typing on the keyboard is not affected.
+  ([#7](https://github.com/cristiangirlea/tidedesk/issues/7))
+
+The release notes of each [release](https://github.com/cristiangirlea/tidedesk/releases)
+list its known issues in full.
+
+## Game mode: keyboard, mouse and streaming
+
+The first gaming goal is fast, responsive picture and sound with keyboard and mouse.
+Video on the graphics card and Game Boost are the start; still to come:
+
+- Bitrate and frame rate that adapt to the connection, rather than a fixed promise.
+- Relative mouse input for game cameras, with an easy way to release the mouse.
+- Measurements that tell the network apart from the computers' own work, and checks on
+  two computers before calling the mode ready for games.
+
+Controllers and USB devices are outside this goal and will not delay it.
 
 ## Exploration, not scheduled
 
-- General USB device passthrough over the authenticated connection, starting with
-  an explicitly tested device allowlist rather than claiming support for every USB
-  device. Require per-device approval and a visible stop-sharing control; document
-  when a forwarded device becomes unavailable locally.
-- Review USB passthrough isolation, driver maintenance, device ownership and safe
-  disconnect/recovery before implementation. Keep this separate from controller
-  emulation and ordinary file transfer; do not automatically forward storage
-  devices or security keys.
-- Linux and mobile clients; macOS support.
-- Folders in file transfer, session recording and multiple viewers.
-- Team administration, shared device lists and ticketing integration.
-- Windows service mode and secure-desktop support, subject to security review.
-
-### Optional controller forwarding (later, not part of initial Game mode)
-
-- Consider gamepad forwarding with a compatible virtual controller on the host
-  after the keyboard/mouse streaming milestone. This is also separate from generic
-  USB device passthrough.
-- Require explicit session permission, show which controller is being forwarded,
-  and release its inputs and remove the virtual device when forwarding stops or
-  the connection ends.
-- Evaluate a maintained, appropriately licensed driver implementation and a tested
-  controller compatibility list. Treat vibration and device-specific features as
-  separately validated capabilities, not guarantees for every controller.
-- Keep the driver component optional. Validate its installation, updates, removal
-  and signing separately from the portable application and Store package.
-  Windows kernel drivers have their own
-  [signing requirements](https://learn.microsoft.com/en-us/windows-hardware/drivers/install/driver-signing);
-  [MSIX does not install drivers](https://learn.microsoft.com/en-us/windows/msix/packaging-tool/tool-known-issues).
+- Sharing USB devices over the session, starting with a tested list of devices, with
+  approval for each device and a visible stop. Storage devices and security keys would
+  never be shared by themselves.
+- Game controllers, as an optional, separately installed part. Windows drivers have their
+  own [signing requirements](https://learn.microsoft.com/en-us/windows-hardware/drivers/install/driver-signing),
+  and [MSIX packages do not install drivers](https://learn.microsoft.com/en-us/windows/msix/packaging-tool/tool-known-issues).
+- Optional two-factor sign-in on the host, with no TideDesk account.
+- Seeing and answering Windows permission prompts from the viewer, subject to a security
+  review.
+- Image clipboard, in-session monitor switching and the host's own cursor shapes.
+- macOS, and an iOS viewer.
