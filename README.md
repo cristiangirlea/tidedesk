@@ -18,6 +18,11 @@ Business use needs a TideDesk licence: see [tidedesk.app](https://tidedesk.app).
 
 Each release lists SHA-256 checksums for its files.
 
+The next release's notes are [release-notes.md](release-notes.md): a template whose `@VERSION@`,
+`@ZIP@`, `@SIGNING@` and `@HASHES@` the release build fills in. Check a change to it with
+`./tools/check-release-notes.ps1 -Path release-notes.md`, and a change to that check with
+`./tools/test-check-release-notes.ps1`.
+
 ## Documents
 
 - [Terms of use](docs/terms-of-use.md), including the connection service's rules
