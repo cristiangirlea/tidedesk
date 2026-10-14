@@ -10,11 +10,16 @@ Download @ZIP@ and extract it. Run tidedesk.exe on both computers.
 
 ## New in this release
 
+### Once, after updating
+
+- **A new access code, and trusted viewers to trust again.** On Windows the access code is now kept sealed for your Windows account, and the list of trusted viewers carries a signature. A code or a list from an earlier release cannot be checked, so the host makes a new code once and trusts nobody from the old list. Each viewer signs in with the new code, and the person at the host presses **Trust this viewer** to trust it again. Going back to an earlier release changes the code once more, and so does coming back to this one. (#227)
+
 ### Files
 
 - **See what is on its way.** Each file sent or received is listed with its size, how much has gone, the speed, and where it was saved, or why not. The host lists them on the Share tab, under the viewer, with **Clear** for the files that are done; **Open Downloads\TideDesk** sits beside **Send files**. The viewer shows them in a **Files** window, which opens by itself when a file starts going either way. (#196)
 - **Cancel a file on its way.** Each file still going, or waiting its turn behind another, has **Cancel** in the list of files. Only that file stops; the other files and the session go on. The list then says where it was cancelled, and nothing of it is left in Downloads\TideDesk. (#200)
 - **Send a folder.** Drop one on the viewer's window, or press **Send a folder** on the host: it arrives in Downloads\TideDesk with everything in it, listed as one line. Both computers need this release, as with every change to what the two computers tell each other: an older one says "protocol mismatch". (#201)
+- **The sender sees the name the folder was saved under.** When the name is already taken there, the folder is saved as "Photos (2)", and the sender's list now says so. (#298)
 - **Two files of the same name sent at the same moment both keep theirs.** Before, one could rarely replace the other, while both senders were told it arrived. The second is now saved as "name (2)". (#183)
 
 ### Input
@@ -27,19 +32,31 @@ Download @ZIP@ and extract it. Run tidedesk.exe on both computers.
 
 - **Talk to the host.** The viewer's microphone can play on the host's speakers, so the person at the viewer can talk to the person at the host. It is off at both ends: **Ctrl+Alt+V** (changeable) or **Talk to the host** in the viewer's Settings, and **Play the viewer's microphone** in the host's **Live session permissions**. Nothing is captured until the host has agreed, and the viewer's title says when the microphone is on. The voice goes directly between the two computers, like the host's sound. (#192)
 - **No echo.** The host's shared sound now leaves TideDesk's own playback out, so the viewer does not hear its own voice come back. This needs Windows 10 version 2004 or later on the host; older Windows shares the whole output as before.
-- **Sound that stops during a session.** The host now tells the viewer when its sound stops, and the viewer goes on as in a session without sound. The host's log says so too. Both computers need this release. (#267)
+- **Sound that stops during a session.** The host now tells the viewer when its sound stops, and the viewer goes on as in a session without sound, also when the sound stops with an error. The host's log says so too. Both computers need this release. (#267, #290)
+- **A microphone that stops is shown off.** When the viewer's microphone cannot be opened, or stops during a session, the viewer turns it off and says why in the viewer's title: "Microphone off: it could not be opened" or "Microphone off: it stopped". Turn it on again with its switch. (#301)
 - The Microsoft Store version asks once for the microphone, as Windows does for every app that uses one.
 
 ### Connections
 
-- **Another TideDesk computer behind the host's router no longer gets in the way.** Over the internet, the viewer tries a few ports near the host's, and another TideDesk computer there could answer in the host's place. The viewer then waited 20 seconds or stopped at that computer's fingerprint. It now checks the computer that answered, and goes to the host's own address when it is not the host. (#237)
-- **Steadier when strangers knock.** A computer that connects to the host but has not given the access code or password can open only the one connection it needs to sign in until it does, so many of them at once use far less of the host's memory. Files and sound start as before once the viewer is let in. (#213)
+- **Another TideDesk computer behind the host's router no longer gets in the way.** Over the internet, the viewer tries a few ports near the host's, and another TideDesk computer there could answer in the host's place. The viewer then waited 20 seconds or stopped at that computer's fingerprint. It now checks the computer that answered, and goes to the host's own address when it is not the host. It then keeps that address open while the connection starts, and a connection by device ID also tries the host's own address before giving up. (#237, #260)
+- **A host met before at another address is asked about.** Over the internet, a host known only by another address is no longer trusted silently: TideDesk asks once, and remembers the answer. Two computers behind one router are no longer taken for each other without asking, and no password or code is sent before the host is confirmed. From a script with no terminal, such a host is refused until it is given with `--fingerprint`. (#259, #289)
+- **Router ports are never opened for good.** TideDesk never asks a router to keep its port open permanently: a router that can only do that gets no mapping, and a port left open after a crash is closed at the next start, or ends by itself when its time runs out. (#225)
+- **Steadier when strangers knock.** A computer that connects to the host but has not given the access code or password can open only the one connection it needs to sign in until it does, so many of them at once use far less of the host's memory. Files and sound start as before once the viewer is let in. The host also takes fewer such connections at once and gives each less memory until it signs in. Computers that came in before still get through. (#213, #279)
 
 ### Access
 
-- **The saved password works only from a computer that connected before.** The host now checks this itself: a computer that never came in with the access code or as a trusted viewer is told to use the access code once. The host starts its list with this release, so a computer that is not a trusted viewer uses the code once more before the password works for it again. Where an administrator has turned the access code off, the password works as before. (#211)
-- **Disconnect means gone.** When you press **Disconnect** (or **Disconnect viewer** in the tray), turn off **Accept new connections**, or quit, the code that viewer used stops working at once. After a dropped connection the old code still works for five minutes, but now only for the viewer that was connected, so nobody else can use it. The Android viewer shows no certificate yet, so after a dropped connection it needs the new code. (#209)
-- **Guessing from many computers slows down instead of locking you out.** A wrong access code or password counts from the moment it is tried, so many tries at once from one address get no further than a few. When many addresses guess at once, each try waits its turn instead of the host turning your own computers away, and computers that came in before, by their certificate or from an address used in the last month, never wait. (#212)
+- **The saved password works only from a computer that connected before.** The host now checks this itself: a computer that never came in with the access code or as a trusted viewer is told to use the access code once. The host starts its list with this release, so every computer, trusted viewers included (see **Once, after updating**), uses the code once more before the password works for it again. Where an administrator has turned the access code off, the password works as before. (#211)
+- **Disconnect means gone.** When you press **Disconnect** (or **Disconnect viewer** in the tray), turn off **Accept new connections**, or quit, the code that viewer used stops working at once. After a dropped connection the old code still works for five minutes from the first drop, but now only for the viewer that was connected, so nobody else can use it. The Android viewer shows no certificate yet, so after a dropped connection it needs the new code. (#209)
+- **Guessing from many computers slows down instead of locking you out.** A wrong access code or password counts from the moment it is tried, so many tries at once from one address get no further than a few. When many addresses guess at once, each try waits its turn instead of the host turning your own computers away, and computers that came in before, by their certificate or from an address used in the last month, never wait. A computer that came in before is counted by its certificate, so another one at the same internet address cannot lock it out. (#212, #277)
+- **Libraries only from Windows' own folder.** TideDesk loads the system's libraries only from Windows' System32 folder, so a file placed next to it cannot be run in its place. (#227)
+
+### Problem reports
+
+- **Reports leave out who and where.** A report sent with **Send to TideDesk** no longer carries the other computer's name, the names of files sent or received, or full internet addresses: only the first part of an address is kept. (#226)
+
+### Android viewer
+
+- **Steadier sessions.** Leaving a session no longer closes the app now and then. Switching between light and dark mode during a session now ends the session instead of closing the app. (#224, #310)
 
 ### Chat and names
 
