@@ -10,6 +10,20 @@ Download @ZIP@ and extract it. Run tidedesk.exe on both computers.
 
 ## New in this release
 
+### Update both computers
+
+- **This build speaks protocol v6.** A new message lets the host tell the viewer about its own window (see **Input**), so both computers need this release. An older one is told which computer to update. (#395)
+
+### Sessions
+
+- **Several sessions at once.** Connect to several computers from one TideDesk: its window lists every open session with its status and a **Disconnect** for each, and each session has its own window. Connecting again to a computer that already has a session open brings that session's window to the front instead of opening a second one. TideDesk's window no longer minimises when a session starts. (#383)
+
+### Input
+
+- **Told when TideDesk's window on the host keeps your input out.** The host's own TideDesk window does not take the viewer's clicks and keys. Until now the viewer was not told: the first time it happens in a session, the viewer's title says "TideDesk's own window on the host does not take your clicks or keys". (#395)
+
+## Introduced in v0.1.0-alpha.15
+
 ### Once, after updating
 
 - **A new access code, and trusted viewers to trust again.** On Windows the access code is now kept sealed for your Windows account, and the list of trusted viewers carries a signature. A code or a list from an earlier release cannot be checked, so the host makes a new code once and trusts nobody from the old list. Each viewer signs in with the new code, and the person at the host presses **Trust this viewer** to trust it again. Going back to an earlier release changes the code once more, and so does coming back to this one. (#227)
@@ -25,7 +39,7 @@ Download @ZIP@ and extract it. Run tidedesk.exe on both computers.
 ### Input
 
 - **Keyboard off, and all input off.** The viewer's keyboard now has a switch like the mouse: **Ctrl+Alt+K** (changeable) keeps keys on your computer, and **Ctrl+Alt+I** turns mouse and keyboard off together, or back on, so one press lets you only watch. The host decides too: **Settings**, **Live session permissions** has **Allow viewer keyboard control** next to the mouse one, and **Allow viewer input** over both. A key held when control goes off is released on the host. Keys and mouse that the host does not allow show in the viewer's title as "blocked by host". (#191)
-- Both computers need this release for the keyboard switch: it changes what the two tell each other about input, so this build speaks protocol v5 and an older release says "protocol mismatch".
+- Both computers need this release for the keyboard switch: it changes what the two tell each other about input, so alpha.15 moved to protocol v5 and an older release says "protocol mismatch".
 - **The host's TideDesk windows are the host's own.** They are on the shared screen, but the viewer's clicks and key presses no longer reach them. The person at the host uses them as before. (#210)
 
 ### Sound
@@ -93,7 +107,7 @@ Download @ZIP@ and extract it. Run tidedesk.exe on both computers.
 
 A device ID also works on the same local network, even without the internet: the viewer asks its own network too, and the host answers directly. Two computers behind one router also find each other through the host's local addresses, which it gives the connection service sealed with its access code. The host encodes video on the graphics card where it has an H.264 encoder (AMD, Intel or NVIDIA) and falls back to Windows' software encoder by itself.
 
-**Keep host and viewer on the same release.** This build uses protocol v5, and both computers need that same version. This release then says which computer to update; an earlier one says "protocol mismatch". Update both computers together. (#370)
+**Keep host and viewer on the same release.** This build uses protocol v6, and both computers need that same version. This release then says which computer to update; an earlier one says "protocol mismatch". Update both computers together. (#370)
 
 Experimental direct internet connections, computer to computer, with no relay. The host shows its internet address, learned from public STUN servers (can be turned off in Host Settings, Internet). In the viewer, tick "Over the internet", connect to that address, and give the viewer's address to the person at the host, who types it under "Viewer on another network" and presses Open. Both computers then open a path through their routers and the session runs directly between them. Behind a symmetric NAT (common on mobile data) on one side, TideDesk guesses the next ports and usually gets through; with one on both sides, let the host's router open its port (Settings, Network) or use a VPN such as Tailscale. Hosts whose router opened the port, or with a forwarded port, connect without the manual step.
 
