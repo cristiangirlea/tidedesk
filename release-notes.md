@@ -136,7 +136,7 @@ Download @ZIP@ and extract it. Run tidedesk.exe on both computers.
 
 ## Known issues
 
-- The Licence page, and a company's profile and joining text, stay in English when another language is chosen under **Settings**, **Language**.
+- **Settings**, **Licence** and **Organisation**, and the **Computers** page, stay in English when another language is chosen under **Settings**, **Language**.
 - Automation tools that mark every key as an extended one (Python's `uiautomation`) send some letters with Ctrl or Alt as media keys: Ctrl+Alt+C turns the host's volume down. (#66)
 - A password or a trust needs the host on v0.1.0-alpha.10 or later; a code works with every host from v0.1.0-alpha.3 on.
 - Ctrl+Alt+T does not bring an open chat window to the front.
