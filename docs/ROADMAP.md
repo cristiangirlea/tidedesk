@@ -4,18 +4,20 @@ This is a planning list, not a promise of delivery, dates or future licensing te
 Only what is under "Available now" is in a release; everything else is not available yet
 and may change or be dropped. See [licensing](licensing.md) for the terms of each release.
 
-Last brought up to date for v0.1.0-alpha.14.
+Last brought up to date for v0.1.0-alpha.16.
 
 ## Available now (Windows alpha)
 
 TideDesk is an experimental alpha for Windows x64. Every session runs directly between
-the two computers; TideDesk never relays it. One viewer at a time.
+the two computers; TideDesk never relays it. A host takes one viewer at a time.
 
 **Connecting**
 
 - One program, `tidedesk.exe`, on both computers, with one window and a sidebar: This
   computer, Connect, History, Settings and About. `tidedesk host` and `tidedesk view`
   still run either side alone, and `tidedesk host --headless` suits servers.
+- Several sessions at once from one TideDesk, each in its own window, listed with its
+  status and a Disconnect for each. (Since v0.1.0-alpha.16.)
 - Connect by device ID or by address. TideDesk's connection service only introduces the
   two computers and never carries the session; it can be turned off. On the same local
   network a device ID works without the internet. (Experimental.)
@@ -24,18 +26,24 @@ the two computers; TideDesk never relays it. One viewer at a time.
   router on both sides, the host's router opening its port, a forwarded port or a VPN
   is still needed. (Experimental.)
   See [internet access](internet-access.md).
+- Keep both computers on the same release. From v0.1.0-alpha.16 on, TideDesk says which
+  computer to update.
 
 **Access and safety**
 
 - An access code that changes after each session unless that is turned off, with
   lock-outs only for the address that guesses wrong.
+- Disconnect ends the code that viewer used at once. (Since v0.1.0-alpha.15.)
 - A saved password for your own computers, which neither computer ever sends, and
-  trusted viewers that connect without a code. (Since v0.1.0-alpha.10.)
+  trusted viewers that connect without a code. (Since v0.1.0-alpha.10.) The password
+  works only from a computer that connected before. (Since v0.1.0-alpha.15.)
+- A typed code or password shows as dots until you tick Show. (Since v0.1.0-alpha.15.)
 - Host fingerprint pinning, a red dot on the tray icon while a viewer is connected, and
   a reason shown in the viewer when a session ends.
 - Session history of the last 30 days, kept on the computer, where a changed or removed
-  entry shows. Problems are kept on the computer too; a report is sent only when you choose
-  to, after reading it in full.
+  entry shows. Problems are listed on the computer; a report about one is sent only when
+  you choose to, after reading it in full, and leaves out the other computer's name,
+  file names and full internet addresses.
 - Settings an administrator can set for every user, for example through Group Policy.
   (Since v0.1.0-alpha.12.)
 
@@ -47,9 +55,17 @@ the two computers; TideDesk never relays it. One viewer at a time.
 - Bitrate that follows the screen's size, and scaling that keeps text readable at any
   window size.
 - The host's sound on the viewer.
+- Talk to the host: the viewer's microphone on the host's speakers, off on both sides,
+  and nothing is captured until the host agrees. The viewer does not hear its own voice
+  come back (with Windows 10 version 2004 or later on the host). (Since v0.1.0-alpha.15.)
 - Keyboard and mouse control, two-way text clipboard sharing, safe mouse handoff,
   separate cursor indicators and changeable shortcuts. See
   [interaction controls](interaction-controls.md).
+- A keyboard switch like the mouse one, and one shortcut that turns all input off to
+  only watch. The host can allow or refuse the viewer's keyboard on its own.
+  (Since v0.1.0-alpha.15.)
+- The host's own TideDesk windows ignore the viewer's clicks and keys (since
+  v0.1.0-alpha.15), and the viewer is told when that happens (since v0.1.0-alpha.16).
 - Game Boost, opt-in: a 60 FPS target with lower buffering, switched live. (Experimental;
   see [Game Boost](game-boost.md).)
 
@@ -57,6 +73,9 @@ the two computers; TideDesk never relays it. One viewer at a time.
 
 - Copy files to the host by dropping them on the viewer's window, and send files back
   from the host. Files go directly between the two computers, never through a server.
+- Send whole folders, and cancel a file on its way without ending the session. A list
+  of files on their way, with size, progress and speed, on both computers.
+  (Since v0.1.0-alpha.15.)
 - Chat between the viewer and the host.
 
 **Licence**
@@ -69,6 +88,9 @@ the two computers; TideDesk never relays it. One viewer at a time.
 
 - Connect by device ID or address with the access code; touch or touchpad control, zoom,
   saved computers and settings. Not yet: passwords, trusted viewers, files, chat and sound.
+- The latest Android download came with v0.1.0-alpha.15 and connects to computers on
+  that release. v0.1.0-alpha.16 has no Android download, and an earlier Android build
+  cannot connect to it.
 
 **Still to confirm**
 
@@ -76,28 +98,20 @@ the two computers; TideDesk never relays it. One viewer at a time.
   gameplay and end-to-end latency for Game Boost.
 - The executables are not code-signed yet; see the [code signing policy](code-signing-policy.md).
 
-## Built, in testing for the next release
+## Built, not in a release yet
 
-Not in any release yet. Both computers will need the new release, which cannot connect
-to earlier ones.
+Not in any release yet, and there is no download for it.
 
-- A keyboard switch like the mouse one, and one shortcut that turns all input off to
-  only watch. The host can allow or refuse the viewer's keyboard on its own.
-- Talk to the host: the viewer's microphone on the host's speakers, off on both sides
-  until each turns it on.
-- A list of files on their way, with size, progress and speed, on both computers.
+- **Linux:** the viewer, and the host on an X11 or a Wayland desktop, with screen, sound,
+  keyboard and mouse. On Wayland the desktop asks the person at the computer first.
 
 ## Planned
 
 Where an item has an issue, follow it (Subscribe, on its page) to hear when it ships.
 
-- **Cancel a file while it is being sent**, on either computer, without ending the
-  session. ([#1](https://github.com/cristiangirlea/tidedesk/issues/1))
-- **Send whole folders**, arriving as that folder in `Downloads\TideDesk`.
-  ([#2](https://github.com/cristiangirlea/tidedesk/issues/2))
 - **Internet connections over IPv6**, alongside IPv4, still direct between the two
   computers. ([#3](https://github.com/cristiangirlea/tidedesk/issues/3))
-- **Linux**, viewer first, then host.
+- **A Linux download** beside the Windows one.
 
 ## Ideas, not scheduled
 
