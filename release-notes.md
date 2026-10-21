@@ -10,17 +10,17 @@ Download @ZIP@ and extract it. Run tidedesk.exe on both computers.
 
 ## New in this release
 
-### Works with alpha.16
+### The same protocol as alpha.16
 
-- **Still protocol v6.** This release and v0.1.0-alpha.16 connect to each other, so the two computers can be updated one at a time.
+- **Still protocol v6.** This release speaks the same protocol as v0.1.0-alpha.16, so the two should connect. That has not been tried on two computers yet, so update both together, as before.
 
 ### Languages
 
-- **TideDesk in eight languages.** **Settings**, **Language** offers English, Romanian, German, Spanish, French, Italian, Portuguese (Brazil) and Polish, each by its own name, besides the language Windows uses. The change applies at once, without a restart: the windows, the host's pages and Settings, History, the tray and the messages TideDesk shows. Technical details in an error stay in English. (#244, #245, #246, #248, #249)
+- **TideDesk in eight languages.** **Settings**, **Language** offers English, Romanian, German, Spanish, French, Italian, Portuguese (Brazil) and Polish, each by its own name, besides the language Windows uses. The change applies at once, without a restart: the windows, the host's pages and Settings, History, the tray and the messages TideDesk shows. A session, chat or files window that is already open changes language when it opens again. Technical details in an error stay in English. (#244, #245, #246, #248, #249)
 
 ### Window
 
-- **One size on every screen.** TideDesk's window keeps the same size in pixels when it moves between screens with different scaling. It is chosen at start-up to fit every screen, and changes only when you resize it. Before, dragged from a screen at 175% to one at 125%, the window could become bigger than the screen. (#439)
+- **One size on every screen.** TideDesk's window keeps the same size in pixels when it moves between screens with different scaling. It is chosen at start-up to fit every screen, and changes only when you resize it or when a screen is too small for it. On a screen at a high scale, what the window shows is drawn bigger and scrolls inside it. Before, the window kept one size in points, so its size in pixels changed when it moved to a screen with another scale. (#435, #439)
 
 ### Connections
 
@@ -31,6 +31,7 @@ Download @ZIP@ and extract it. Run tidedesk.exe on both computers.
 ### Sessions
 
 - **Recently connected keeps up.** With several sessions open, a computer is listed under **Recently connected** as soon as its session connects, and a computer saved by one session is no longer dropped when another session saves at the same moment. (#379, #418)
+- **A damaged list of known computers is kept.** When `known_hosts.txt` cannot be read, TideDesk now says "reading known_hosts.txt" and remembers no new computer until the file is fixed or deleted. Before, it was silently replaced by a new list. (#418)
 - **Closing TideDesk's window during a session** no longer makes a session stop with an internal error, and a session's end is reported once. (#382)
 
 ### Sharing
