@@ -10,6 +10,45 @@ Download @ZIP@ and extract it. Run tidedesk.exe on both computers.
 
 ## New in this release
 
+### Works with alpha.16
+
+- **Still protocol v6.** This release and v0.1.0-alpha.16 connect to each other, so the two computers can be updated one at a time.
+
+### Languages
+
+- **TideDesk in eight languages.** **Settings**, **Language** offers English, Romanian, German, Spanish, French, Italian, Portuguese (Brazil) and Polish, each by its own name, besides the language Windows uses. The change applies at once, without a restart: the windows, the host's pages and Settings, History, the tray and the messages TideDesk shows. Technical details in an error stay in English. (#244, #245, #246, #248, #249)
+
+### Window
+
+- **One size on every screen.** TideDesk's window keeps the same size in pixels when it moves between screens with different scaling. It is chosen at start-up to fit every screen, and changes only when you resize it. Before, dragged from a screen at 175% to one at 125%, the window could become bigger than the screen. (#439)
+
+### Connections
+
+- **A device ID stays with the computer you met.** After the first connection by device ID, the viewer accepts only that computer's certificate for that ID. Another computer answering to the same ID is refused before the access code or password is used. (#219)
+- **Why a silent session ended.** When the host ends a session it has heard nothing from for 30 seconds, the viewer now says "the host heard nothing from this viewer and ended the session" instead of "the connection was lost". (#364)
+- **A certificate library updated for a security advisory.** TideDesk now uses rustls-webpki 0.103.16, which fixes RUSTSEC-2026-0382. (#454)
+
+### Sessions
+
+- **Recently connected keeps up.** With several sessions open, a computer is listed under **Recently connected** as soon as its session connects, and a computer saved by one session is no longer dropped when another session saves at the same moment. (#379, #418)
+- **Closing TideDesk's window during a session** no longer makes a session stop with an internal error, and a session's end is reported once. (#382)
+
+### Sharing
+
+- **A better hint when sharing cannot start.** TideDesk says another TideDesk may be using the port only when the port is the problem. Otherwise it suggests starting TideDesk again, and sending a report from **History**, **Problems** if that keeps happening. (#348)
+
+### Access
+
+- **Codes typed in a terminal stay hidden.** `tidedesk view` asking for an access code or password, and `tidedesk host --set-password`, no longer show what is typed. (#357)
+
+### Android viewer
+
+- **The computer's sound.** The Android viewer plays the host's sound. **Sound from the computer** in its Settings turns it off; a change applies from the next session. (#451)
+- **In the phone's language**, in the same eight languages. (#247, #248, #249)
+- **Device IDs remembered.** Like the desktop viewer, it keeps the certificate it met for each device ID and refuses another. (#219)
+
+## Introduced in v0.1.0-alpha.16
+
 ### Update both computers
 
 - **This build speaks protocol v6.** A new message lets the host tell the viewer about its own window (see **Input**), so both computers need this release. An older one is told which computer to update. (#395)
@@ -99,7 +138,7 @@ Download @ZIP@ and extract it. Run tidedesk.exe on both computers.
 - Automation tools that mark every key as an extended one (Python's `uiautomation`) send some letters with Ctrl or Alt as media keys: Ctrl+Alt+C turns the host's volume down. (#66)
 - A password or a trust needs the host on v0.1.0-alpha.10 or later; a code works with every host from v0.1.0-alpha.3 on.
 - Ctrl+Alt+T does not bring an open chat window to the front.
-- The Android viewer is experimental: it types only what a US keyboard can, and signs in with the access code only. An Android viewer needs a build from this release: earlier ones speak an older protocol, and the host says "protocol mismatch".
+- The Android viewer is experimental: it types only what a US keyboard can, and signs in with the access code only. An Android viewer needs a build from v0.1.0-alpha.16 or later: earlier ones speak an older protocol, and the host says "protocol mismatch". Its settings can be changed only between sessions, and leaving the session screen ends the session.
 - A Solo licence key activates on this release and later. Earlier releases take only a licence text under About.
 - The microphone uses the viewer's default microphone and the host's default speakers; neither can be chosen in TideDesk yet. The Android viewer does not send a voice.
 
