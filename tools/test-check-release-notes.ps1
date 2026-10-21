@@ -31,13 +31,16 @@ function Assert-Fails([string]$text, [hashtable]$options, [string]$message) {
 
 try {
     $template = [IO.File]::ReadAllText($notes)
+    # The protocol the template says this build uses; it changes with releases.
+    $protocol = [int][regex]::Match($template, '(?:uses|speaks) protocol v(\d+)').Groups[1].Value
+    if ($protocol -lt 2) { throw 'The template names no protocol this build uses.' }
     & $check -Path $notes | Out-Null
-    & $check -Path $notes -ProtocolVersion 5 | Out-Null
+    & $check -Path $notes -ProtocolVersion $protocol | Out-Null
     $filled = $template.Replace('@VERSION@', '0.1.0-alpha.99').Replace('@ZIP@', 'tidedesk.zip').
         Replace('@SIGNING@', 'Signing text.').Replace('@HASHES@', 'hashes')
-    & $check -Path (Write-Notes 'filled.md' $filled) -Filled -ProtocolVersion 5 | Out-Null
+    & $check -Path (Write-Notes 'filled.md' $filled) -Filled -ProtocolVersion $protocol | Out-Null
 
-    Assert-Fails $template @{ ProtocolVersion = 4 } 'uses protocol v4'
+    Assert-Fails $template @{ ProtocolVersion = $protocol - 1 } "uses protocol v$($protocol - 1)"
     Assert-Fails $template @{ ProtocolVersion = '' } 'ProtocolVersion'
     Assert-Fails $template @{ Filled = $true } 'Unfilled placeholders'
     Assert-Fails $filled @{} 'must keep @VERSION@'
@@ -50,6 +53,7 @@ try {
     Assert-Fails $template.Replace('Ctrl+Alt+G', 'a key') @{} 'Game Boost'
     Assert-Fails $template.Replace('terms-of-use.md', 'terms.md') @{} 'terms of use'
     Assert-Fails $template.Replace('graphics card', 'GPU') @{} 'graphics card'
+    Assert-Fails ($template + ' Audio remains host system output; no microphone forwarding.') @{} 'deny the microphone'
     Assert-Fails $template.Replace('Business use requires separate written permission', 'x') @{} 'licence lines'
     Write-Output 'Release notes check tests passed.'
 } finally {

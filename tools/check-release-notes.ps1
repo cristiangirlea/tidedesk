@@ -46,6 +46,8 @@ Require ($text -match 'local addresses') `
     'The notes must say a viewer behind the same router tries the host''s local addresses.'
 Require ($text -match 'graphics card' -and $text -notmatch 'no GPU encoding|GPU video acceleration') `
     'The notes must describe encoding on the graphics card.'
+Require ($text -notmatch 'no microphone forwarding') `
+    'The notes must not deny the microphone: Talk to the host shipped in v0.1.0-alpha.15.'
 if ($PSBoundParameters.ContainsKey('ProtocolVersion')) {
     # Earlier releases' sections may name older protocols; what this build uses must be this one.
     $uses = @([regex]::Matches($text, '(?:uses|speaks) protocol v(\d+)') | ForEach-Object { [int]$_.Groups[1].Value } |
