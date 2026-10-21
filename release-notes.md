@@ -16,7 +16,7 @@ Download @ZIP@ and extract it. Run tidedesk.exe on both computers.
 
 ### Languages
 
-- **TideDesk in eight languages.** **Settings**, **Language** offers English, Romanian, German, Spanish, French, Italian, Portuguese (Brazil) and Polish, each by its own name, besides the language Windows uses. The change applies at once, without a restart: the windows, the host's pages and Settings, History, the tray and the messages TideDesk shows. A session, chat or files window that is already open changes language when it opens again. Technical details in an error stay in English. (#244, #245, #246, #248, #249)
+- **TideDesk in eight languages.** **Settings**, **Language** offers English, Romanian, German, Spanish, French, Italian, Portuguese (Brazil) and Polish, each by its own name, besides the language Windows uses. The change applies at once, without a restart: the windows, the host's pages and Settings (**Licence** and **Organisation** included), the **Computers** page, History, the tray and the messages TideDesk shows. A session, chat or files window that is already open changes language when it opens again. Technical details in an error stay in English. (#244, #245, #246, #248, #249)
 
 ### Window
 
@@ -136,7 +136,6 @@ Download @ZIP@ and extract it. Run tidedesk.exe on both computers.
 
 ## Known issues
 
-- **Settings**, **Licence** and **Organisation**, and the **Computers** page, stay in English when another language is chosen under **Settings**, **Language**.
 - Automation tools that mark every key as an extended one (Python's `uiautomation`) send some letters with Ctrl or Alt as media keys: Ctrl+Alt+C turns the host's volume down. (#66)
 - A password or a trust needs the host on v0.1.0-alpha.10 or later; a code works with every host from v0.1.0-alpha.3 on.
 - Ctrl+Alt+T does not bring an open chat window to the front.
