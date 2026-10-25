@@ -18,11 +18,6 @@ Business use needs a TideDesk licence: see [tidedesk.app](https://tidedesk.app).
 
 Each release lists SHA-256 checksums for its files.
 
-The next release's notes are [release-notes.md](release-notes.md): a template whose `@VERSION@`,
-`@ZIP@`, `@SIGNING@` and `@HASHES@` the release build fills in. Check a change to it with
-`./tools/check-release-notes.ps1 -Path release-notes.md`, and a change to that check with
-`./tools/test-check-release-notes.ps1`.
-
 ## Documents
 
 - [Terms of use](docs/terms-of-use.md), including the connection service's rules
@@ -39,3 +34,10 @@ History, Problems to send a report. Licences and payments: support@tidedesk.app.
 
 TideDesk's source code is not public. Releases up to v0.1.0-alpha.2 were published under
 GNU AGPL-3.0-only and keep those terms; see [licensing](docs/licensing.md).
+
+## Release notes
+
+The next release's notes are [release-notes.md](release-notes.md): a template whose `@VERSION@`,
+`@ZIP@`, `@SIGNING@` and `@HASHES@` the release build fills in. Check a change to it with
+`./tools/check-release-notes.ps1 -Path release-notes.md`, and a change to that check with
+`./tools/test-check-release-notes.ps1`.
