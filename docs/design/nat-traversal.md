@@ -1,8 +1,8 @@
 # Direct internet connections (NAT traversal)
 
-Status: **experimental** in v0.1.0-alpha.5 (the manual exchange described here).
-A rendezvous service that removes the manual step is planned; see the end of this
-document.
+Status: **experimental**. The manual exchange came in v0.1.0-alpha.5; connecting by
+device ID through TideDesk's connection service, which removes the manual step, is
+described under Phase B.
 
 ## Goals and non-goals
 
@@ -165,15 +165,14 @@ inbound rule.
 - Someone must be at the host window to press Open (a `--headless` host cannot open
   a path yet), and both sides must act within two minutes of each other.
 
-## Phase B: rendezvous by device ID (experimental)
+## Phase B: connecting by device ID (experimental)
 
 A small UDP service remembers each registered host's public address under a stable
 **device ID**: the first 64 bits of the SHA-256 of the host's certificate, shown as
 `TD-XXXX-XXXX-XXXX-XXXX`. TideDesk's own service, `rendezvous.tidedesk.app`, is the
 default on both sides; Settings can name another or turn registration off. The
-wire format is the `tidedesk-rendezvous-proto` crate here. The service itself is not
-public; the host and viewer tests that need one are ignored here and run in the
-service's own CI against it (`TIDEDESK_TEST_SERVICE=ip:port`).
+service and its wire format are not public; the host and viewer tests that need a
+service run in the service's own CI against it.
 
 - **Registration.** The host says Hello to both service ports (the second port's
   answer classifies its NAT), gets a challenge bound to its address, and registers by

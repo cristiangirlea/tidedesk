@@ -12,11 +12,10 @@ model as an OSI-approved open-source project. A separately authorized signing
 service or Microsoft Store MSIX distribution must be evaluated before activation.
 See https://signpath.org/terms.html.
 
-Microsoft Store MSIX distribution is the planned package-signing route.
-The release workflow can prepare an unsigned submission candidate once Store
-identity variables are configured. It does not submit or publish automatically.
-Microsoft signs the Store package after certification; this does not sign the
-portable GitHub ZIP. [Setup and remaining validation](microsoft-store.md).
+The Microsoft Store package is the signed Windows build. The maintainer builds an
+unsigned MSIX submission candidate by hand, from the tidedesk.exe in that release's ZIP,
+and submits it by hand; nothing submits or publishes automatically. Microsoft signs the
+Store package after certification; this does not sign the portable GitHub ZIP.
 
 ## Responsibility
 
@@ -24,11 +23,36 @@ Cristian Girlea (https://github.com/cristiangirlea) maintains TideDesk, reviews 
 contributions and is the designated release-signing approver. Changes from other
 contributors require maintainer review, including changes to dependencies and build scripts.
 
-When signing is activated, release signatures require manual approval in SignPath.
-Builds run on GitHub-hosted Windows runners from the public source repository. The
-signing configuration limits signing to the TideDesk executable, tidedesk.exe, and verifies
+Release builds have no signing step; activating signing means adding one to the
+release build. The SignPath integration prepared in the source repository's own workflow,
+which does not make releases, runs on GitHub-hosted Windows runners. When signing is
+activated, release signatures require manual approval in SignPath. The signing
+configuration limits signing to the TideDesk executable, tidedesk.exe, and verifies
 its product name, version and original filename. Enabling signing makes signature
 verification mandatory before publication.
+
+## How releases are built and checked
+
+TideDesk's source code is kept in private repositories. Since v0.1.0-alpha.14, Windows
+releases are built on the maintainer's own Windows computer, not on a GitHub-hosted
+machine, from a private
+build repository that pins the exact commit of the source it builds. Only the
+maintainer tags and publishes a release.
+
+The build repository has a release workflow for that computer. It refuses to build
+unless the source carries the same release tag on exactly the pinned commit, checks the
+release notes before the build and again once the checksums are filled in, checks the
+formatting, lints with warnings as errors, runs the build repository's tests and builds
+with the locked dependency versions. The source's own tests run in its CI on Linux for
+every code change; Windows CI for the source is not set up yet. Packaging checks that tidedesk.exe's product name, version and file name match
+the release. A published release is never overwritten. That workflow's Windows runner
+is not set up yet: releases since v0.1.0-alpha.14 were built and published by the
+maintainer by hand on that computer. Earlier releases were built by the source
+repository's own workflow on GitHub-hosted Windows runners.
+
+Each release's notes list the SHA-256 checksums of the ZIP and of tidedesk.exe, and a
+`.sha256` file for the ZIP is attached to the release. The Microsoft Store package is
+made from that same tidedesk.exe and signed by Microsoft.
 
 ## Privacy
 
@@ -53,7 +77,7 @@ its own address (`--stun` chooses others). The small punch packets that open the
 (42 bytes, no content) go only to the address the user typed, and the session then runs
 directly between the two computers: TideDesk never relays it through a server.
 
-By default, TideDesk Host registers with TideDesk's own rendezvous service,
+By default, TideDesk Host registers with TideDesk's own connection service,
 `rendezvous.tidedesk.app` (run by the maintainer): the service learns the host's device
 ID, its certificate (which is public) and its public IP address and port, refreshed
 about every 25 seconds, so that it can introduce viewers who ask for that ID, and the
@@ -84,6 +108,22 @@ codes are hidden in reports before they are shown. An organisation can send its
 computers' reports to its own report service instead, or turn sending off
 (`ReportServer`, `ReportServerFingerprint` and `Reports` under
 `HKLM\SOFTWARE\Policies\TideDesk`); TideDesk then receives none of them.
+
+TideDesk for Android is a viewer only: it shows a computer's screen (and, from
+v0.1.0-alpha.17, plays its sound on the phone), and sends the phone's taps and keys to that computer; it shares nothing of the
+phone itself. It asks for no permission beyond the network, and reads whether the phone is on
+mobile data only to ask before a session there. Connecting by device ID, it asks TideDesk's
+connection service for that ID, which tells the service the phone's public IP address and
+port and which ID it asked for; it then sends a few small packets with no content to the
+address the service gave, and the session runs directly between the phone and the computer.
+Connecting by address, it contacts that address only. It sends no STUN request and no query
+on the local network. The computer sees the phone's name: the one chosen in the app's
+Settings, or else the phone's own device name. The app keeps in its own storage on the phone
+its settings, the computers it connected to (each one's name, and its device ID or address)
+and the fingerprint of the certificate of each computer it reached by address (from
+v0.1.0-alpha.17, by device ID too), never an access code. It keeps no logs,
+sends no problem reports, and has no analytics or advertising. Settings, "Forget all
+computers" removes the list of computers; uninstalling the app removes everything it kept.
 
 Operators choose their network destinations. If they use a separate VPN or other
 third-party network service, that service's privacy policy also applies.

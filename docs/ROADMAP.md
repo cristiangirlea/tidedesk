@@ -112,6 +112,7 @@ Where an item has an issue, follow it (Subscribe, on its page) to hear when it s
 - **Internet connections over IPv6**, alongside IPv4, still direct between the two
   computers. ([#3](https://github.com/cristiangirlea/tidedesk/issues/3))
 - **A Linux download** beside the Windows one.
+- **The Android viewer on Google Play**, beside the download on the releases page.
 
 ## Ideas, not scheduled
 

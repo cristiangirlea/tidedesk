@@ -2,8 +2,7 @@
 
 Introduced in **v0.1.0-alpha.3 as an experimental feature**, off by default.
 This is not a stable release or a claim of gaming-ready latency.
-Update **both** executables together: protocol v3
-rejects connections from the earlier v1/v2 builds.
+Update **both** computers together (see [protocol versions](interaction-controls.md)).
 
 ## Use
 
