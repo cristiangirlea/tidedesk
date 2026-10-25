@@ -68,7 +68,10 @@ network the ID works even without the service or the internet (see below).
    other networks can connect with this ID" once it is registered.
 2. **Viewer:** type the device ID where an address goes, and connect. There is no
    fingerprint question: the device ID is the start of the host certificate's
-   fingerprint, and a host that does not match it is refused.
+   fingerprint, and a host that does not match it is refused. From v0.1.0-alpha.17,
+   the viewer also remembers the certificate it met the first time: later, another
+   computer answering for that device ID is refused, even one whose certificate was
+   made to match it.
 
 From a terminal: `tidedesk view TD-1A2B-3C4D-5E6F-7A8B --code …`. The same limits
 apply: IPv4 only, and not between two symmetric NATs.
@@ -107,8 +110,10 @@ that viewer opens them with the code and connects directly, since two computers
 behind one router rarely reach each other through it. It never sees access codes,
 screens, audio, input, clipboard or host names, and nothing once the two computers
 are connected. It cannot impersonate a host: the
-viewer checks that the host's certificate hashes to the device ID it asked for, and
-the access code never passes through the service. A broken or hostile service can at
+viewer checks that the host's certificate hashes to the device ID it asked for (from
+v0.1.0-alpha.17 it also holds a host it met before to the certificate it saw then), and
+the access code never passes
+through the service. A broken or hostile service can at
 most send a viewer to a wrong address, where that check fails. See the privacy notes
 in the [code signing policy](code-signing-policy.md).
 
@@ -159,8 +164,8 @@ IP address or dynamic-DNS name. With a forwarded port, "Over the internet" also 
 without anyone pressing Open, after a few seconds.
 
 This exposes TideDesk directly to the internet. The connection is always encrypted, the access
-code is never sent over the network, and repeated wrong codes lock the host out for up to 15
-minutes. Even so:
+code is never sent over the network, and repeated wrong codes from one address lock that
+address out, for up to an hour. Even so:
 
 - Keep the default random access code; rotate it with `tidedesk host --new-code`.
 - Stop the host when you don't need it.
