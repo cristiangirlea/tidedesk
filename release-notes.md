@@ -13,22 +13,22 @@ Download @ZIP@ and extract it. Run tidedesk.exe on both computers.
 ### The same protocol as alpha.16 and alpha.17
 
 - **Still protocol v6.** This release speaks protocol v6, like v0.1.0-alpha.16 and v0.1.0-alpha.17, so it should connect to both. Two computers on different releases have not been tried together yet, so update both together, as before. Releases from v0.1.0-alpha.15 back use an older protocol and are still told which computer to update. (#459)
-- **Ready for the next protocol.** Host and viewer can now speak a range of protocol versions and agree on the older of the two sides' newest. This release's range holds v6 only, so nothing changes yet. A later release that moves to a new protocol can then still reach this one at v6. (#459)
+- **Ready for the next protocol.** Host and viewer can now speak a range of protocol versions and agree on the older of the two sides' newest. This release's range holds v6 only, so nothing changes yet. A later release that still supports v6 can then reach this one at v6. (#459)
 
 ### Protected settings
 
-- **Windows' administrator prompt guards the settings that let someone in.** Trusting a viewer, setting the saved password, unticking **New code after each session** and sharing when started at sign-in now show Windows' administrator prompt. **Yes** keeps the change; **No** keeps nothing. On a standard account, the prompt asks for an administrator's password. These settings are kept where only an administrator can change them, so a viewer using the host's mouse and keyboard cannot give itself lasting access: its clicks cannot reach the prompt. (#518)
-- **Taking access away applies at once.** Removing a viewer or the password, turning new codes back on and turning start-up off take effect straight away; the prompt only makes them last. (#518)
-- **Only when TideDesk is installed.** Windows is asked only when tidedesk.exe is in a folder users cannot change, such as Program Files. A copy run from another folder, such as Downloads, saves changes as before, and its window says to install it to protect them. (#518)
-- **Refused during a session where Windows would not stop the viewer.** While a viewer is connected, changes that let more in are refused when the administrator prompt is turned off, when Windows elevates without asking, or when TideDesk runs as an administrator. The window says why. (#518)
-- **Your settings move over when you choose.** Trusted viewers, the password and these settings from an earlier release keep working until the first confirmed change, or **Protect them**, moves them. Once they are protected, a host started at sign-in shares only if that was confirmed at the prompt. `--trust-viewer`, `--untrust-viewer`, `--set-password` and `--remove-password` ask in the same way. (#518)
+- **Windows' administrator prompt guards the settings that let someone in.** Trusting a viewer, setting the saved password, unticking **New code after each session** and sharing when started at sign-in now show Windows' administrator prompt. **Yes** keeps the change; **No** keeps nothing. On a standard account, the prompt asks for an administrator's password. These settings are kept where only an administrator can change them, so a viewer using the host's mouse and keyboard cannot approve these changes: its clicks cannot reach the prompt. (part of #210)
+- **Taking access away applies at once.** Removing a viewer or the password, turning new codes back on and turning start-up off take effect straight away; the prompt only makes them last. (part of #210)
+- **Only when TideDesk is installed.** Windows is asked only when tidedesk.exe is in a folder users cannot change, such as Program Files. A copy run from another folder, such as Downloads, saves changes as before, and its window says to install it to protect them. (part of #210)
+- **Refused during a session where Windows would not stop the viewer.** While a viewer is connected, changes that let more in are refused when the administrator prompt is turned off, when Windows elevates without asking, or when TideDesk runs as an administrator. The window says why. (part of #210)
+- **Your settings move over when you choose.** Trusted viewers, the password and these settings from an earlier release keep working until the first confirmed change, or **Protect them**, moves them. Once they are protected, a host started at sign-in shares only if that was confirmed at the prompt. `--trust-viewer`, `--untrust-viewer`, `--set-password` and `--remove-password` ask in the same way. (part of #210)
 
 ### Connections
 
-- **Hosts check the connection service's replies.** A host now accepts only replies that really come from the connection service, so a forged reply can no longer point it at another computer or take it off the service. It still works with the connection service as it was: the host then falls back to the earlier way after about three seconds. (#220)
+- **Hosts check the connection service's replies.** With the updated connection service, a host checks that each reply really comes from it, so a forged reply can no longer point it at another computer or take it off the service. With the connection service as it was, the host falls back to the earlier way after about three seconds, without that check. (#220)
 - **Fewer introductions per viewer.** One viewer network can ask a host for at most 10 connections a minute through the connection service. The host guesses a viewer's next ports only when the connection service has checked that viewer's address. (#220)
 - **One address cannot hold every place to sign in.** An address, or one IPv6 network, can hold only 2 of the 32 connections still setting up encryption, so strangers no longer keep everyone else out until they time out. Computers that came in before are not limited. (#327)
-- **Less memory held for strangers.** Until a viewer is let in, the host drops the picture and sound packets it sends, instead of keeping up to 256 KB of them for each connection. (#326)
+- **Less memory held for strangers.** Until a viewer is let in, the host drops the picture and sound packets it receives from it, instead of keeping up to 256 KB of them for each connection. (#326)
 
 ### Sessions
 
@@ -38,18 +38,18 @@ Download @ZIP@ and extract it. Run tidedesk.exe on both computers.
 
 ### Files
 
-- **Windows warns before a received program runs.** A file received by the viewer or the host, alone or in a folder, is marked as downloaded from the internet, as a browser marks a download. Windows then asks before running it. On a drive that cannot hold the mark (FAT, exFAT, some network shares) the file is saved unmarked, as browsers do. (#509)
-- **Received names cannot disguise a file.** Characters that change how a name reads are left out of the name a received file or folder is saved under. A file whose name was made to show as `photoexe.jpg` is saved as `photogpj.exe`, which is what it is. (#510)
-- **Size limits.** Each side refuses a file larger than the largest file it takes: a new setting under **Allow files**, 4 GB unless you change it. A file that would leave the disk less than a tenth of its free space is refused too. At most eight files of a session are on their way at once; the next one waits its turn and can be cancelled while it waits. An older release on the other side shows these refusals in English. (#515)
-- **No settings, no files.** When Viewer Settings cannot be read, the viewer refuses files from the host instead of taking them all. The host hears that the viewer does not accept files. (#513)
-- **A file never replaces another of the same name**, also on drives without hard links, such as FAT and exFAT. The later one is saved as "name (2)". (#514)
+- **Windows warns before a received program runs.** A file received by the viewer or the host, alone or in a folder, is marked as downloaded from the internet, as a browser marks a download. Windows then asks before running it. On a drive that cannot hold the mark (FAT, exFAT, some network shares) the file is saved unmarked, as browsers do. (part of #214)
+- **Received names cannot disguise a file.** Characters that change how a name reads are left out of the name a received file or folder is saved under. A file whose name was made to show as `photoexe.jpg` is saved as `photogpj.exe`, which is what it is. (part of #214)
+- **Size limits.** Each side refuses a file larger than the largest file it takes: a new setting under **Allow files**, 4 GB unless you change it. A file that would leave the disk less than a tenth of its free space is refused too. At most eight files of a session are on their way at once; the next one waits its turn and can be cancelled while it waits. An older release on the other side shows these refusals in English. (part of #214)
+- **No settings, no files.** When Viewer Settings cannot be read, the viewer refuses files from the host instead of taking them all. The host hears that the viewer does not accept files. (part of #214)
+- **A file never replaces another of the same name**, also on drives without hard links, such as FAT and exFAT. The later one is saved as "name (2)". (part of #214)
 - **Folders whose names clash stay apart.** Received folders whose names come out the same once saved, such as `a?b` and `a*b`, or `Docs` and `docs`, used to share one folder. The second is now numbered, as a folder sent on its own is. (#296)
 - **After a session ends**, a file dropped on its window is refused with "Could not send ‹name›: the session ended". A file cut off by the end no longer adds a notice on top of "Session ended", and a `send` from a script says the session ended instead of reporting success. (#366)
 
 ### Clipboard
 
 - **Asked once for each computer.** Before it shares the clipboard with a host, the viewer asks "Share your clipboard with ‹computer›?". Until you say yes, its title says "Clipboard off for this computer". A no is remembered: the clipboard shortcut, or turning sharing on in Settings, asks again, and Settings can forget every answer. (#223)
-- **Only what you copy in the session's window.** What you copy is shared only while the session's window is in front. A copy made in another window goes when you come back, the last one only. This is a new option, on by default. (#223)
+- **Shared when the session's window is in front.** What you copy is shared only while the session's window is in front. A copy made in another window goes when you come back, the last one only. This is a new option, on by default. (#223)
 - **Password managers' copies stay on your computer.** On Windows, a copy its app marks as private, as password managers do, is never sent, by the viewer or the host. (#223)
 
 ### Access
@@ -60,7 +60,7 @@ Download @ZIP@ and extract it. Run tidedesk.exe on both computers.
 ### Security
 
 - **Two libraries updated.** TideDesk now uses tokio 1.53.3, which fixes RUSTSEC-2026-0386, and clipboard-win 5.4.3, which replaces a withdrawn version and checks the bounds of copied web content. (#476)
-- **Damaged signatures are refused.** A licence file, a saved computer or a pasted key whose signature holds characters that are not hex digits is now refused with "the signature is not readable", instead of stopping TideDesk. Sealed files and the session history take hex digits only too. (#452, #472, #475)
+- **Damaged signatures are refused.** A licence file or a pasted key whose signature holds characters that are not hex digits is now refused with "the signature is not readable", instead of stopping TideDesk. A saved computer's code that is not hex is ignored, as if none was saved. Sealed files and the session history take hex digits only too. (#452, #472, #475)
 
 ### Problem reports
 
@@ -75,7 +75,7 @@ Download @ZIP@ and extract it. Run tidedesk.exe on both computers.
 
 - **Leave for another app and come back.** Going to another app no longer ends the session: it is paused for three minutes, with a notification that says so and has **End**. At 2:30 it says the session ends in 30 seconds. Coming back carries on; nothing is decoded or played while paused. Back and **Disconnect** still end the session at once. (#319)
 - **Notifications needed for the pause.** The app asks once for notifications, at the first session, on Android 13 and later. With notifications off, leaving ends the session as before: a pause nobody can see is not allowed. (#319)
-- **Reconnect.** For 4 minutes 30 seconds after a session ends, the connect screen offers "Reconnect to ‹computer›" with the same code. The host still takes that code from this phone for 5 minutes after a dropped session. The code is held in memory only, never saved. If the host refuses it, type its current code. (#319)
+- **Reconnect.** For up to 4 minutes 30 seconds after the first session with that code ends, the connect screen offers "Reconnect to ‹computer›" with the same code. The host still takes that code from this phone for 5 minutes after a dropped session. The code is held in memory only, never saved. If the host refuses it, type its current code. (#319)
 - **The phone shows hosts a certificate of its own**, made on first use and kept in the app, so a host knows it again after a dropped session. (#319)
 - **The Keyboard button closes the keyboard too.** Ctrl, Alt, Win and Shift held from the keys row are let go whenever the keyboard closes. (#320)
 - **Forgotten computers go at once.** After **Forget all computers** in Settings, the connect screen no longer shows them. (#462)
@@ -220,7 +220,7 @@ Download @ZIP@ and extract it. Run tidedesk.exe on both computers.
 - Automation tools that mark every key as an extended one (Python's `uiautomation`) send some letters with Ctrl or Alt as media keys: Ctrl+Alt+C turns the host's volume down. (#66)
 - A password or a trust needs the host on v0.1.0-alpha.10 or later; a code works with every host from v0.1.0-alpha.3 on.
 - Ctrl+Alt+T does not bring an open chat window to the front.
-- The Android viewer is experimental: it types only what a US keyboard can, and signs in with the access code only. An Android viewer needs a build from v0.1.0-alpha.16 or later: earlier ones speak an older protocol, and the host says "protocol mismatch". Its settings can be changed only between sessions. Back ends the session, and leaving it for another app ends it after three minutes.
+- The Android viewer is experimental: it types only what a US keyboard can, and signs in with the access code only. An Android viewer needs a build from v0.1.0-alpha.16 or later: earlier ones speak an older protocol, and the host says "protocol mismatch". Its settings can be changed only between sessions. Back ends the session. Leaving it for another app pauses it for up to three minutes when its notification can show; otherwise it ends at once.
 - A Solo licence key activates on this release and later. Earlier releases take only a licence text under About.
 - Protected settings have not been tried in the Microsoft Store version. Some ways to keep access still bypass them, such as an older TideDesk copy on the same computer.
 - The microphone uses the viewer's default microphone and the host's default speakers; neither can be chosen in TideDesk yet. The Android viewer does not send a voice.
