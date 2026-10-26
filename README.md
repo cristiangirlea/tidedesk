@@ -1,4 +1,4 @@
-<img src="https://tidedesk.app/favicon.svg" alt="TideDesk" width="96" align="right">
+<img src="https://tidedesk.app/tidedesk-256.png" alt="TideDesk" width="96" align="right">
 
 # TideDesk
 
