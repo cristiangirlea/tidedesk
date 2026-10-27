@@ -163,6 +163,7 @@ Download @ZIP@ and extract it. Run tidedesk.exe on both computers.
 ### Input
 
 - **Told when TideDesk's window on the host keeps your input out.** The host's own TideDesk window does not take the viewer's clicks and keys. Until now the viewer was not told: the first time it happens in a session, the viewer's title says "TideDesk's own window on the host does not take your clicks or keys". (#395)
+- **Letters pressed by automation tools.** A tool that marks every key as extended (Python's `uiautomation`) no longer sends a letter with Ctrl or Alt as a media key: Ctrl+Alt+C works as the viewer's shortcut instead of turning the host's volume down. (#66)
 
 ## Introduced in v0.1.0-alpha.15
 
@@ -238,7 +239,6 @@ Download @ZIP@ and extract it. Run tidedesk.exe on both computers.
 
 ## Known issues
 
-- Automation tools that mark every key as an extended one (Python's `uiautomation`) send some letters with Ctrl or Alt as media keys: Ctrl+Alt+C turns the host's volume down. (#66)
 - A password or a trust needs the host on v0.1.0-alpha.10 or later; a code works with every host from v0.1.0-alpha.3 on.
 - Ctrl+Alt+T does not bring an open chat window to the front.
 - The Android viewer is experimental: it types only what a US keyboard can, and signs in with the access code only. An Android viewer needs a build from v0.1.0-alpha.16 or later: earlier ones speak an older protocol, and the host says "protocol mismatch". Its settings can be changed only between sessions. Back ends the session. Leaving it for another app pauses it for up to three minutes when its notification can show; otherwise it ends at once.
