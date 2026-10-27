@@ -111,17 +111,24 @@ computers' reports to its own report service instead, or turn sending off
 
 TideDesk for Android is a viewer only: it shows a computer's screen (and, from
 v0.1.0-alpha.17, plays its sound on the phone), and sends the phone's taps and keys to that computer; it shares nothing of the
-phone itself. It asks for no permission beyond the network, and reads whether the phone is on
-mobile data only to ask before a session there. Connecting by device ID, it asks TideDesk's
+phone itself. Besides the network, it asks only to show notifications: from v0.1.0-alpha.18, a
+session left for another app is held for up to 3 minutes with a notification that says so and ends it, and
+is never held where that notification cannot show. It reads whether the phone is on mobile
+data only to ask before a session there. Connecting by device ID, it asks TideDesk's
 connection service for that ID, which tells the service the phone's public IP address and
 port and which ID it asked for; it then sends a few small packets with no content to the
 address the service gave, and the session runs directly between the phone and the computer.
 Connecting by address, it contacts that address only. It sends no STUN request and no query
 on the local network. The computer sees the phone's name: the one chosen in the app's
-Settings, or else the phone's own device name. The app keeps in its own storage on the phone
-its settings, the computers it connected to (each one's name, and its device ID or address)
+Settings, or else the phone's own device name, and the phone's own certificate, made on the
+phone, by which the computer knows it again (a dropped session's code keeps working for it a
+few minutes). The app keeps in its own storage on the phone its settings, that certificate
+and its key, the computers it connected to (each one's name, and its device ID or address)
 and the fingerprint of the certificate of each computer it reached by address (from
-v0.1.0-alpha.17, by device ID too), never an access code. It keeps no logs,
+v0.1.0-alpha.17, by device ID too). It never saves an access code: from v0.1.0-alpha.18,
+Reconnect is offered for up to 4 minutes 30 seconds from the first end of a session, with the
+code last typed, which the app holds in memory only, not in its storage, until Reconnect is no
+longer offered, another code is used, or the app is closed. It keeps no logs,
 sends no problem reports, and has no analytics or advertising. Settings, "Forget all
 computers" removes the list of computers; uninstalling the app removes everything it kept.
 
