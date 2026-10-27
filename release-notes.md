@@ -1,6 +1,6 @@
 TideDesk @VERSION@: remote desktop for Windows x64, free for personal, non-commercial use.
 
-License: TideDesk Personal Use Source License 1.0 (see LICENSE in the ZIP). Business use requires separate written permission: a TideDesk Solo subscription from https://tidedesk.app/pricing/ is that permission (the TideDesk Commercial License 1.0 at https://tidedesk.app/terms/). Previously published AGPL releases retain their original permissions.
+License: TideDesk Personal Use Source License 1.1 (see LICENSE in the ZIP). Business use requires separate written permission: a TideDesk Solo subscription from https://tidedesk.app/pricing/ is that permission (the TideDesk Commercial License 1.0 at https://tidedesk.app/terms/). Releases supplied under 1.0 stay under 1.0, and previously published AGPL releases retain their original permissions.
 
 Download @ZIP@ and extract it. Run tidedesk.exe on both computers.
 
@@ -10,10 +10,21 @@ Download @ZIP@ and extract it. Run tidedesk.exe on both computers.
 
 ## New in this release
 
-### The same protocol as alpha.16 and alpha.17
+### Coming next
 
-- **Still protocol v6.** This release speaks protocol v6, like v0.1.0-alpha.16 and v0.1.0-alpha.17, so it should connect to both. Two computers on different releases have not been tried together yet, so update both together, as before. Releases from v0.1.0-alpha.15 back use an older protocol and are still told which computer to update. (#459)
-- **Ready for the next protocol.** Host and viewer can now speak a range of protocol versions and agree on the older of the two sides' newest. This release's range holds v6 only, so nothing changes yet. A later release that still supports v6 can then reach this one at v6. (#459)
+- **Company computers, from the next release.** From the next release, on a computer managed by an organisation (joined to an Active Directory domain or to Microsoft Entra ID, or enrolled in device management such as Intune), TideDesk works without a licence for a 14-day trial, then for 8 hours of sessions a month, counted once for the computer. Personal computers, including ones that only added a work account, are not affected. TideDesk reads this from Windows on the computer itself and sends nothing anywhere. For work without limits: TideDesk Solo, tidedesk.app/pricing.
+- This release counts nothing and limits nothing on its own computer. (#92)
+
+### Protocol v7, and still connects to alpha.16 and alpha.17
+
+- **This release speaks protocol v7 and still connects to v6.** Host and viewer now speak a range of protocol versions and agree on the older of the two sides' newest. This release's range is v6 to v7, so it reaches v0.1.0-alpha.16 and v0.1.0-alpha.17 at v6; there, a folder goes one file at a time, as before (see **Files**). Two computers on different releases have not been tried together yet, so update both together, as before. Releases from v0.1.0-alpha.15 back use an older protocol and are still told which computer to update. (#459, #362)
+
+### Licence
+
+- **LICENSE 1.1.** This release comes with the TideDesk Personal Use Source License 1.1. Releases supplied with 1.0 stay under 1.0. The terms of use have a new date, so TideDesk asks once to accept them again. (#92)
+- **The activation code.** **Settings**, **Licence** has a field for the licence's activation code, below the licence ID; you can also paste both into the licence field, licence first. When the code is missing or wrong, TideDesk says so and where to find it: your licences page at https://tidedesk.app/licence/.
+- **Switch to yearly on your licences page.** A monthly licence's page in **Settings**, **Licence** now links to https://tidedesk.app/licence/, where the switch is made.
+- **A clock set back is noticed.** A saved licence is not used while the computer's clock reads earlier than the day the licence was issued, or more than a day before the latest day TideDesk saw with it. A licence made for another computer is not used here either. **Settings**, **Licence** says why, and TideDesk checks with the licence service again within a day. (#221)
 
 ### Protected settings
 
@@ -35,6 +46,8 @@ Download @ZIP@ and extract it. Run tidedesk.exe on both computers.
 - **The same plain words in TideDesk's window.** When a session ends, TideDesk's window now gives the same plain reason as the session's own window, not the technical one. The technical reason stays in the log. (#421)
 - **One session per computer, however it is typed.** Typing a computer's address another way, with or without the default port or with a dot at the end of its name, brings its open session to the front instead of opening a second one. A question before connecting shows one way to say no instead of two. (#381)
 - **A stuck session gives way.** A viewer that knocks while the session in place has been silent for 30 seconds now gets in, even when that session cannot end by itself. The old session is stopped: none of its input, clipboard, chat or files reach the new one, and keys it held down are released. History says the viewer stopped answering. (#363)
+- **A viewer that is gone is let go.** The host now ends a session by itself when nothing at all has come from the viewer for 30 seconds, and History says the viewer stopped answering, so the host's window no longer shows a gone viewer as connected. A quiet viewer that is still there is never ended. (#359)
+- **A session that ignores Disconnect can be ended.** When a session's window has not closed 5 seconds after **Disconnect** in TideDesk's window, its line says **Not responding** and has **End session**, which ends only that session. (#380)
 
 ### Files
 
@@ -45,6 +58,10 @@ Download @ZIP@ and extract it. Run tidedesk.exe on both computers.
 - **A file never replaces another of the same name**, also on drives without hard links, such as FAT and exFAT. The later one is saved as "name (2)". (part of #214)
 - **Folders whose names clash stay apart.** Received folders whose names come out the same once saved, such as `a?b` and `a*b`, or `Docs` and `docs`, used to share one folder. The second is now numbered, as a folder sent on its own is. (#296)
 - **After a session ends**, a file dropped on its window is refused with "Could not send ‹name›: the session ended". A file cut off by the end no longer adds a notice on top of "Session ended", and a `send` from a script says the session ended instead of reporting success. (#366)
+- **Folders of small files go faster.** Up to eight small files of a folder are on their way at once; a file over 8 MiB still goes alone. The picture, input and sound stay ahead. With v0.1.0-alpha.16 or v0.1.0-alpha.17 on the other side, a folder goes one file at a time, as before. (#362)
+- **Folders never follow links.** A folder sent or received is walked without following links or junctions, so one swapped in while the folder is on its way cannot send a file from outside the folder or write outside the folder being received: it is refused with "a link or junction is not followed". A redirected Downloads folder still receives, and OneDrive and other cloud files still go. (#295)
+- **Limits for a whole session.** A session receives at most 1 TiB. A file in a folder that grew after the folder was listed is skipped, with "the file changed after the folder was listed", and the files after it arrive whole. A file that has not moved for two minutes stops at both ends with a reason; waiting its turn does not count. (#297)
+- **The received-files folder is named as Windows names it.** In each language, the host's page and the Files window name the Downloads folder as Explorer does, such as Descargas or Téléchargements. (#271)
 
 ### Clipboard
 
@@ -60,11 +77,12 @@ Download @ZIP@ and extract it. Run tidedesk.exe on both computers.
 ### Security
 
 - **Two libraries updated.** TideDesk now uses tokio 1.53.3, which fixes RUSTSEC-2026-0386, and clipboard-win 5.4.3, which replaces a withdrawn version and checks the bounds of copied web content. (#476)
-- **Damaged signatures are refused.** A licence file or a pasted key whose signature holds characters that are not hex digits is now refused with "the signature is not readable", instead of stopping TideDesk. A saved computer's code that is not hex is ignored, as if none was saved. Sealed files and the session history take hex digits only too. (#452, #472, #475)
+- **Damaged signatures are refused.** A licence file or a pasted key whose signature holds characters that are not hex digits is now refused with "the signature is not readable", instead of stopping TideDesk. A saved computer's code that is not hex is ignored, as if none was saved. Sealed files and the session history take hex digits only too, and so do device IDs: one with a sign in it, such as `TD-+F2B-…`, is refused. (#452, #472, #475, #486)
 
 ### Problem reports
 
 - **Errors that may carry the other computer's words are left out too.** A send or save error, or the reason the other computer gave for ending a session, shows in a report as "[error, may hold the other side's text]". The other computer can no longer fake where its text starts or ends in the log. (#315)
+- **Logs stay in English.** Whatever language TideDesk shows, its log files are written in English, also the reasons a connection was refused or a session ended. The screen still follows the chosen language. (#428)
 
 ### Picture and sound
 
@@ -77,6 +95,7 @@ Download @ZIP@ and extract it. Run tidedesk.exe on both computers.
 - **Notifications needed for the pause.** The app asks once for notifications, at the first session, on Android 13 and later. With notifications off, leaving ends the session as before: a pause nobody can see is not allowed. (#319)
 - **Reconnect.** For up to 4 minutes 30 seconds after the first session with that code ends, the connect screen offers "Reconnect to ‹computer›" with the same code. The host still takes that code from this phone for 5 minutes after a dropped session. The code is held in memory only, never saved. If the host refuses it, type its current code. (#319)
 - **The phone shows hosts a certificate of its own**, made on first use and kept in the app, so a host knows it again after a dropped session. (#319)
+- **Sound on and off during a session.** When the computer sends sound, the session toolbar (under ☰) has a **Sound** button; off is quiet on the phone at once. Old sound no longer plays when sound comes back. (#524)
 - **The Keyboard button closes the keyboard too.** Ctrl, Alt, Win and Shift held from the keys row are let go whenever the keyboard closes. (#320)
 - **Forgotten computers go at once.** After **Forget all computers** in Settings, the connect screen no longer shows them. (#462)
 - **Steadier when a session ends.** An update arriving just after the end no longer touches the closed session screen. (#344)
@@ -85,6 +104,8 @@ Download @ZIP@ and extract it. Run tidedesk.exe on both computers.
 
 - **This computer keeps one identity.** When TideDesk sets aside identity files that do not match, it keeps every earlier copy, and never writes a new identity over files it could not move. A certificate or key that cannot be read stops the start instead of giving this computer a new identity. Two TideDesks starting at once end with one identity, and a plain copy of the host's key left beside the sealed one is removed. (#349, #350, #351)
 - **Trusted viewers kept when two TideDesks save at once.** When the key that signs the list of trusted viewers could not be read, two TideDesk processes saving together could leave a list that trusted nobody. They now take turns and use the same new key. (#333)
+- **Changes to trusted viewers are all kept.** The host's window and `--trust-viewer` or `--untrust-viewer` no longer drop each other's changes, and saves from several TideDesk programs take turns. A list that cannot be read is left as it is instead of being replaced by an empty one, and when a trust cannot be saved, that viewer is not trusted for the moment either. (#540, #544)
+- **Two hosts on one settings folder leave each other's router port alone.** A host starting up no longer takes the router port another running host holds for a leftover from a crash. (#487)
 - **The host's window opens on a first start.** With a new settings folder, it could stop at once with a font error. (#464)
 - **Router ports cleaned up in more cases.** A port left open on the router after a crash is closed at the next start, even when port mapping is now off. A mapping whose answer was lost stays written down so it can be closed later. With no settings folder, TideDesk asks the router for nothing. A mapping with no lifetime, which a router reads as "remove", is never asked for. (#330, #336, #329)
 - **No temporary files left behind** when saving a sealed file or the router record fails. (#334)
@@ -133,7 +154,7 @@ Download @ZIP@ and extract it. Run tidedesk.exe on both computers.
 
 ### Update both computers
 
-- **This build speaks protocol v6.** A new message lets the host tell the viewer about its own window (see **Input**), so both computers need this release. An older one is told which computer to update. (#395)
+- **v0.1.0-alpha.16 moved to protocol v6.** A new message lets the host tell the viewer about its own window (see **Input**), so both computers need this release. An older one is told which computer to update. (#395)
 
 ### Sessions
 
@@ -204,7 +225,7 @@ Download @ZIP@ and extract it. Run tidedesk.exe on both computers.
 
 ### TideDesk Solo: a licence for work, activated in Settings
 
-- **Settings, Licence.** TideDesk Solo (€99 a year or €11.90 a month, bought at https://tidedesk.app/pricing/) comes as a licence key that starts with `AL-`. Paste it under **Settings**, **Licence** and press **Activate**: this computer asks TideDesk's licence service (licence.tidedesk.app), which signs its answer, and the licence is saved on this computer. About then shows **SOLO**, business use is licensed, the session history shows every session with search and a CSV export, and a company-managed computer is licensed for work.
+- **Settings, Licence.** TideDesk Solo (€99 a year or €11.90 a month, bought at https://tidedesk.app/pricing/) comes as a licence key that starts with `AL-`. Paste it under **Settings**, **Licence** and press **Activate**: this computer asks TideDesk's licence service, which signs its answer, and the licence is saved on this computer. About then shows **SOLO**, business use is licensed, the session history shows every session with search and a CSV export, and a company-managed computer is licensed for work.
 - **Up to 5 of your computers.** The page shows how many are in use. **Deactivate this computer** frees its place; so does **Free this place** on your licences page at https://tidedesk.app/licence/, which lists the computers and signs you in by an emailed link. Setting up the first 5 places is free; after that, activating on another computer is a move, allowed once every 7 days, and a computer that has not checked in for 45 days frees its place by itself.
 - **Checked weekly, works offline.** The saved licence holds for 30 days, and TideDesk checks it again about once a week while sharing runs. A cancelled or refunded licence lapses at the next check; a computer that stays offline keeps working until its saved licence runs out.
 - **Switch to yearly** from a monthly licence: **Settings**, **Licence**, **Switch to yearly…**, then **Confirm the switch**. Nothing is charged at the switch; the yearly price is charged at the end of the current month. Within 45 days of buying monthly, the switch gives the months already paid plus 14 more for the price of 12.
@@ -229,11 +250,11 @@ Download @ZIP@ and extract it. Run tidedesk.exe on both computers.
 
 A device ID also works on the same local network, even without the internet: the viewer asks its own network too, and the host answers directly. Two computers behind one router also find each other through the host's local addresses, which it gives the connection service sealed with its access code. The host encodes video on the graphics card where it has an H.264 encoder (AMD, Intel or NVIDIA) and falls back to Windows' software encoder by itself.
 
-**Keep host and viewer on the same release.** This build uses protocol v6, and both computers need that same version. This release then says which computer to update; an earlier one says "protocol mismatch". Update both computers together. (#370)
+**Keep host and viewer on the same release.** This build uses protocol v7 and still connects to releases on v6 (v0.1.0-alpha.16 and v0.1.0-alpha.17). Releases before those say which computer to update, or "protocol mismatch". Update both computers together. (#370, #459)
 
-Experimental direct internet connections, computer to computer, with no relay. The host shows its internet address, learned from public STUN servers (can be turned off in Host Settings, Internet). In the viewer, tick "Over the internet", connect to that address, and give the viewer's address to the person at the host, who types it under "Viewer on another network" and presses Open. Both computers then open a path through their routers and the session runs directly between them. Behind a symmetric NAT (common on mobile data) on one side, TideDesk guesses the next ports and usually gets through; with one on both sides, let the host's router open its port (Settings, Network) or use a VPN such as Tailscale. Hosts whose router opened the port, or with a forwarded port, connect without the manual step.
+Experimental direct internet connections, computer to computer, with no relay. The host shows its internet address, learned from public STUN servers (can be turned off in Host Settings, Internet). In the viewer, tick "Over the internet", connect to that address, and give the viewer's address to the person at the host, who types it under "Viewer on another network" and presses Open. Both computers then open a path through their routers and the session runs directly between them. Behind a symmetric NAT (common on mobile data) on one side, TideDesk guesses the next ports and usually gets through; with one on both sides, let the host's router open its port (Settings, Network) or use a VPN. Hosts whose router opened the port, or with a forwarded port, connect without the manual step.
 
-Also experimental: connect by device ID. A viewer types the host's device ID instead of anyone typing internet addresses, and headless hosts can be reached too. Hosts register with TideDesk's connection service (rendezvous.tidedesk.app) unless that is turned off in Host Settings; it only introduces the two computers and never carries the session. What it sees is in the privacy notes of the code signing policy.
+Also experimental: connect by device ID. A viewer types the host's device ID instead of anyone typing internet addresses, and headless hosts can be reached too. Hosts register with TideDesk's connection service unless that is turned off in Host Settings; it only introduces the two computers and never carries the session. What it sees is in the privacy notes of the code signing policy.
 
 [Internet access](https://github.com/cristiangirlea/tidedesk/blob/v@VERSION@/docs/internet-access.md) and [design notes](https://github.com/cristiangirlea/tidedesk/blob/v@VERSION@/docs/design/nat-traversal.md)
 
