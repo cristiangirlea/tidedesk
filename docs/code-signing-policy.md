@@ -120,10 +120,11 @@ port and which ID it asked for; it then sends a few small packets with no conten
 address the service gave, and the session runs directly between the phone and the computer.
 Connecting by address, it contacts that address only. It sends no STUN request and no query
 on the local network. The computer sees the phone's name: the one chosen in the app's
-Settings, or else the phone's own device name, and the phone's own certificate, made on the
-phone, by which the computer knows it again (a dropped session's code keeps working for it a
-few minutes). The app keeps in its own storage on the phone its settings, that certificate
-and its key, the computers it connected to (each one's name, and its device ID or address)
+Settings, or else the phone's own device name, and, from v0.1.0-alpha.18, the phone's own
+certificate, made on the phone, by which the computer knows it again (a dropped session's code
+keeps working for it a few minutes). The app keeps in its own storage on the phone its
+settings, that certificate and its key (from v0.1.0-alpha.18), the computers it connected to
+(each one's name, and its device ID or address)
 and the fingerprint of the certificate of each computer it reached by address (from
 v0.1.0-alpha.17, by device ID too). It never saves an access code: from v0.1.0-alpha.18,
 Reconnect is offered for up to 4 minutes 30 seconds from the first end of a session, with the

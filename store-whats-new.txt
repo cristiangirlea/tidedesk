@@ -1,7 +1,5 @@
 Coming in the next update: on computers managed by an organisation, a 14-day trial, then 8 hours a month without a licence. Personal use stays free. For work: TideDesk Solo, tidedesk.app/pricing
 
-Settings that let someone in, such as trusting a viewer or the saved password, are now confirmed at Windows' administrator prompt when TideDesk is installed.
-
 Files: Windows warns before a received program runs, folders of small files go faster, and new size limits keep a disk from filling up.
 
 The clipboard is shared with a computer only after you agree, and a password manager's copy is never sent.

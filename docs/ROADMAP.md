@@ -88,7 +88,8 @@ the two computers; TideDesk never relays it. A host takes one viewer at a time.
 **Android viewer** (experimental, since v0.1.0-alpha.12)
 
 - Connect by device ID or address with the access code; touch or touchpad control, zoom,
-  saved computers and settings. Not yet: passwords, trusted viewers, files, chat and sound.
+  saved computers and settings, and the host's sound (since v0.1.0-alpha.17). Not yet:
+  passwords, trusted viewers, files and chat.
 - The latest Android download came with v0.1.0-alpha.15 and connects to computers on
   that release. v0.1.0-alpha.16 has no Android download, and an earlier Android build
   cannot connect to it.

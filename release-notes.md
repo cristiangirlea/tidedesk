@@ -21,7 +21,7 @@ Download @ZIP@ and extract it. Run tidedesk.exe on both computers.
 
 ### Licence
 
-- **LICENSE 1.1.** This release comes with the TideDesk Personal Use Source License 1.1. Releases supplied with 1.0 stay under 1.0. The terms of use have a new date, so TideDesk asks once to accept them again. (#92)
+- **LICENSE 1.1.** This release comes with the TideDesk Personal Use Source License 1.1. Releases supplied with 1.0 stay under 1.0. The terms of use have a new date: a TideDesk used before keeps working and shows a notice about them once, with **OK**. (#92)
 - **The activation code.** **Settings**, **Licence** has a field for the licence's activation code, below the licence ID; you can also paste both into the licence field, licence first. When the code is missing or wrong, TideDesk says so and where to find it: your licences page at https://tidedesk.app/licence/.
 - **Switch to yearly on your licences page.** A monthly licence's page in **Settings**, **Licence** now links to https://tidedesk.app/licence/, where the switch is made.
 - **A clock set back is noticed.** A saved licence is not used while the computer's clock reads earlier than the day the licence was issued, or more than a day before the latest day TideDesk saw with it. A licence made for another computer is not used here either. **Settings**, **Licence** says why, and TideDesk checks with the licence service again within a day. (#221)
