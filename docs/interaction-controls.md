@@ -1,10 +1,9 @@
 # Clipboard, mouse, keyboard and microphone controls
 
-TideDesk uses protocol v6, since v0.1.0-alpha.16. From v0.1.0-alpha.17 on, a release that
-brings a new protocol version still connects to a release of the version before it, at the
-older of the two; update both computers together until that has been tried on two computers.
-Today the other computer still needs v6: a build with another version (earlier ones use v1 to
-v5) cannot connect, and a v6 build says which computer to update.
+From v0.1.0-alpha.18, TideDesk speaks protocol v7 and still connects to v6 releases
+(v0.1.0-alpha.16 and v0.1.0-alpha.17), at v6. Update both computers together until that has
+been tried on two computers. Builds with v1 to v5 cannot connect; v0.1.0-alpha.16 and later
+say which computer to update.
 
 ## Viewer settings
 
@@ -74,6 +73,15 @@ when enabling it. Text is limited to 48 KiB of UTF-8. Images, files and rich for
 are not transferred. Clipboard contents are never written to logs or settings.
 After copying text, allow a brief synchronization delay before pasting on the other
 computer. Disabling sharing leaves the last copied text in each OS clipboard.
+
+From v0.1.0-alpha.18, the viewer asks once for each computer, by its fingerprint, before
+sharing with it: "Share your clipboard with LAPTOP?". Until the answer is yes, the title says the
+clipboard is off for that computer, and the clipboard shortcut asks again. Viewer
+Settings can forget every answer. By default the viewer reads what you copy only
+while the session window is in front: a copy made in another window goes when you
+return, the last one only. Text a password manager marks as private is never
+shared, at either end: on Windows, the marks Windows' own clipboard history obeys;
+on Linux, the password-manager hint that KDE's clipboard history obeys.
 
 Turning mouse control off stops movement, clicks and scrolling. Keyboard control
 is independent: off, the host drops every key the viewer sends. Held remote mouse

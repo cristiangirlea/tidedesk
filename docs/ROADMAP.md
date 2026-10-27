@@ -17,7 +17,8 @@ the two computers; TideDesk never relays it. A host takes one viewer at a time.
   computer, Connect, History, Settings and About. `tidedesk host` and `tidedesk view`
   still run either side alone, and `tidedesk host --headless` suits servers.
 - Several sessions at once from one TideDesk, each in its own window, listed with its
-  status and a Disconnect for each. (Since v0.1.0-alpha.16.)
+  status and a Disconnect for each. (Since v0.1.0-alpha.16.) Connecting again to a
+  computer whose session is open brings that window forward.
 - Connect by device ID or by address. TideDesk's connection service only introduces the
   two computers and never carries the session; it can be turned off. On the same local
   network a device ID works without the internet. (Experimental.)
@@ -87,7 +88,8 @@ the two computers; TideDesk never relays it. A host takes one viewer at a time.
 **Android viewer** (experimental, since v0.1.0-alpha.12)
 
 - Connect by device ID or address with the access code; touch or touchpad control, zoom,
-  saved computers and settings. Not yet: passwords, trusted viewers, files, chat and sound.
+  saved computers and settings, and the host's sound (since v0.1.0-alpha.17). Not yet:
+  passwords, trusted viewers, files and chat.
 - The latest Android download came with v0.1.0-alpha.15 and connects to computers on
   that release. v0.1.0-alpha.16 has no Android download, and an earlier Android build
   cannot connect to it.
@@ -104,6 +106,15 @@ Not in any release yet, and there is no download for it.
 
 - **Linux:** the viewer, and the host on an X11 or a Wayland desktop, with screen, sound,
   keyboard and mouse. On Wayland the desktop asks the person at the computer first.
+  Connecting again to an open session does not bring its window forward on Wayland; on
+  X11 the window manager decides.
+- **Company computers, from the next release:** on a computer managed by an organisation
+  (joined to an Active Directory domain or to Microsoft Entra ID, or enrolled in device
+  management such as Intune), TideDesk works without a licence for a 14-day trial, then for
+  8 hours of sessions a month, counted once for the computer (LICENSE 1.1, section 3a).
+  Personal computers, including ones that only added a work account, are not affected.
+  TideDesk reads this from Windows on the computer itself and sends nothing anywhere. For
+  work without limits: TideDesk Solo, [tidedesk.app/pricing](https://tidedesk.app/pricing/).
 
 ## Planned
 

@@ -183,7 +183,21 @@ service run in the service's own CI against it.
   so the service only introduces addresses that proved they are real. The service
   answers the viewer with the host's address and a session, and tells the host the
   viewer's address with the same session. Both punch as above; the host punches for
-  30 seconds, at most 10 introductions a minute.
+  30 seconds, at most 10 introductions a minute. From 0.1.0-alpha.18, that budget is
+  per viewer's network (an IPv4 address or an IPv6 /64), within 60 a minute in all
+  (10 for introductions that are not sealed, below).
+- **Sealed replies** (from 0.1.0-alpha.18). The host's registration also carries the
+  public half of an X25519 key, under its signature. The service answers with its own
+  half, and both derive a key (HKDF-SHA256 over the shared secret, the ID, the
+  challenge and both halves). Every later message to that host (the refresh answers,
+  the introductions, the errors) is sealed with an HMAC under that key and numbered,
+  and the host acts on nothing else, a replay included: a plain "unknown challenge"
+  or "not registered" only brings forward the retry or refresh that silence would
+  bring anyway. So someone who only forges the service's address cannot make the host
+  punch towards another computer or drop its registration. A host punches the ports
+  above a viewer's only for a sealed introduction. A service from before ignores the
+  new registration, and the host registers the earlier way, taking plain replies, a
+  round later; with a service that sealed before, a few rounds later.
 - **Identity.** The viewer refuses a host whose certificate does not hash to the ID
   it asked for, so neither the service nor anyone else can impersonate a host. There
   is no fingerprint question: the ID is the fingerprint's start. 64 bits keep forging
@@ -204,6 +218,7 @@ service run in the service's own CI against it.
   memory. A Hello is padded to at least the size of its answer; registrations and
   lookups must return a challenge sent to the sender's own address, and refreshes a
   secret token, so a forged source address gains nothing. Each address is rate-limited.
+  A forged reply to a host gains nothing either once its replies are sealed.
 - **Compatibility.** Messages are encoded by their position in an enum, so new ones
   are appended and none is changed: hosts and viewers from before the sealed
   addresses keep registering and looking up, and get answers without them. The
