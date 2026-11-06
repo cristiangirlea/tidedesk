@@ -14,6 +14,9 @@ Business use needs a TideDesk licence: see [tidedesk.app](https://tidedesk.app).
 - **Windows:** the [Microsoft Store](https://apps.microsoft.com/detail/9PLH1HWXHB3Q), or the ZIP on the
   [releases page](https://github.com/cristiangirlea/tidedesk/releases): unzip and run
   `tidedesk.exe` on both computers.
+- **Linux (x86-64):** the `.deb` (Debian 12, Ubuntu 22.04 or later) or the `.tar.gz` on the
+  [releases page](https://github.com/cristiangirlea/tidedesk/releases); the tar.gz has an
+  `install.sh` for one user and a README.txt with what it needs.
 - **Android (experimental):** the APK on the [releases page](https://github.com/cristiangirlea/tidedesk/releases).
 
 Each release lists SHA-256 checksums for its files.
