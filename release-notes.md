@@ -1,8 +1,10 @@
-TideDesk @VERSION@: remote desktop for Windows x64, free for personal, non-commercial use.
+TideDesk @VERSION@: remote desktop for Windows x64 and Linux x86-64, free for personal, non-commercial use.
 
 License: TideDesk Personal Use Source License 1.1 (see LICENSE in the ZIP). Business use requires separate written permission: a TideDesk Solo subscription from https://tidedesk.app/pricing/ is that permission (the TideDesk Commercial License 1.0 at https://tidedesk.app/terms/). Releases supplied under 1.0 stay under 1.0, and previously published AGPL releases retain their original permissions.
 
 Download @ZIP@ and extract it. Run tidedesk.exe on both computers.
+
+Linux: tidedesk_@VERSION@_amd64.deb for Debian 12 and Ubuntu 22.04 or later (`sudo apt install ./tidedesk_@VERSION@_amd64.deb`), or tidedesk-@VERSION@-linux-x86_64.tar.gz for any 64-bit PC with glibc 2.35 or newer: extract it and run `./install.sh` to install for one user, no administrator needed (`./install.sh --remove` takes it away again). Its README.txt says what the Linux build needs and does. The Linux files and their SHA-256 are added by the release run after the Windows ones, so they can arrive a few minutes later.
 
 @SIGNING@
 

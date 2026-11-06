@@ -6,7 +6,7 @@ and may change or be dropped. See [licensing](licensing.md) for the terms of eac
 
 Last brought up to date for v0.1.0-alpha.16.
 
-## Available now (Windows alpha)
+## Available now (Windows and Linux alpha)
 
 TideDesk is an experimental alpha for Windows x64. Every session runs directly between
 the two computers; TideDesk never relays it. A host takes one viewer at a time.
@@ -85,6 +85,18 @@ the two computers; TideDesk never relays it. A host takes one viewer at a time.
   under Settings, Licence (since v0.1.0-alpha.14). See
   [tidedesk.app/pricing](https://tidedesk.app/pricing/).
 
+**Linux** (x86-64, since v0.1.0-alpha.18)
+
+- The viewer, and the host on an X11 (Xorg) desktop or on a Wayland one through the
+  desktop's own screen sharing, which asks the person at the computer first. Screen, sound
+  (PulseAudio or PipeWire), keyboard and mouse. A .deb for Debian 12 and Ubuntu 22.04 or
+  later, and a tar.gz with an installer for one user, on the releases page; both were
+  installed, started and removed on Debian 12, Ubuntu 22.04 and 24.04 before publishing.
+- On a Wayland desktop TideDesk's own window is locked while the viewer has control, and
+  the host's own mouse movements do not take the pointer back. Connecting again to an open
+  session does not bring its window forward on Wayland; on X11 the window manager decides.
+- Still to confirm: a two-computer check with a Linux desktop on this release.
+
 **Android viewer** (experimental, since v0.1.0-alpha.12)
 
 - Connect by device ID or address with the access code; touch or touchpad control, zoom,
@@ -104,10 +116,6 @@ the two computers; TideDesk never relays it. A host takes one viewer at a time.
 
 Not in any release yet, and there is no download for it.
 
-- **Linux:** the viewer, and the host on an X11 or a Wayland desktop, with screen, sound,
-  keyboard and mouse. On Wayland the desktop asks the person at the computer first.
-  Connecting again to an open session does not bring its window forward on Wayland; on
-  X11 the window manager decides.
 - **Company computers, from the next release:** on a computer managed by an organisation
   (joined to an Active Directory domain or to Microsoft Entra ID, or enrolled in device
   management such as Intune), TideDesk works without a licence for a 14-day trial, then for
@@ -122,7 +130,6 @@ Where an item has an issue, follow it (Subscribe, on its page) to hear when it s
 
 - **Internet connections over IPv6**, alongside IPv4, still direct between the two
   computers. ([#3](https://github.com/cristiangirlea/tidedesk/issues/3))
-- **A Linux download** beside the Windows one.
 - **The Android viewer on Google Play**, beside the download on the releases page.
 
 ## Ideas, not scheduled
