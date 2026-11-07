@@ -1,11 +1,11 @@
 # TideDesk terms of use
 
-Last updated: 2026-10-22
+Last updated: 2026-11-07
 
-The TideDesk software is covered by its license, the TideDesk Personal Use Source
-License 1.1, in the LICENSE file that comes with it. These terms add the rules for
-using TideDesk with other people and for TideDesk's connection service. They do not
-change the license.
+The TideDesk software is covered by its license, the TideDesk Freeware License 1.1,
+in the LICENSE file that comes with it. These terms add the rules for using TideDesk
+with other people and for TideDesk's connection service. They do not change the
+license.
 
 ## 1. The connection service
 
@@ -21,7 +21,7 @@ https://github.com/cristiangirlea/tidedesk/blob/main/docs/code-signing-policy.md
 
 You may use the service with TideDesk for what the license allows: personal,
 non-commercial use, and on a computer managed by an organisation the trial and
-monthly hours of section 3a of the license. Other business use, including
+monthly hours of section 3 of the license. Other business use, including
 internal IT support, needs separate written permission, such as a TideDesk
 licence, as it does for the software.
 
@@ -51,7 +51,7 @@ Connecting directly, through a VPN or with another service remains possible.
 ## 5. No guarantee
 
 To the extent the law allows, the service is provided as is, without any promise that
-it is available, fast or free of faults. Section 6 of the license (no warranty and
+it is available, fast or free of faults. Section 8 of the license (no warranty and
 limitation of liability) applies to the service as it does to the software. Nothing
 here limits rights you have by law that cannot be excluded.
 

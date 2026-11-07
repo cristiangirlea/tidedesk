@@ -33,7 +33,8 @@ if ($Filled) {
 
 Require ($text -match '(?m)^## New in this release\r?$') 'The changes must start with "## New in this release".'
 Require ($text -match '(?m)^## Known issues\r?$') 'The notes must keep a "## Known issues" section.'
-Require ($text -match 'Business use requires separate written permission' -and $text -notmatch 'free, open-source') `
+Require ($text -match 'Business use requires separate written permission' -and $text -match 'TideDesk Freeware License 1\.1' -and
+    $text -notmatch 'free, open-source') `
     'The licence lines are stale.'
 Require ($text -match 'terms-of-use\.md') 'The notes must link the terms of use.'
 Require ($text -match '(?is)Game Boost.*experimental|experimental.*Game Boost' -and $text -match 'Ctrl\+Alt\+G') `
