@@ -55,6 +55,7 @@ try {
     Assert-Fails $template.Replace('graphics card', 'GPU') @{} 'graphics card'
     Assert-Fails ($template + ' Audio remains host system output; no microphone forwarding.') @{} 'deny the microphone'
     Assert-Fails $template.Replace('Business use requires separate written permission', 'x') @{} 'licence lines'
+    Assert-Fails $template.Replace('TideDesk Freeware License 1.1', 'TideDesk Freeware License 1.0') @{} 'licence lines'
     Write-Output 'Release notes check tests passed.'
 } finally {
     Remove-Item -LiteralPath $tmp -Recurse -Force

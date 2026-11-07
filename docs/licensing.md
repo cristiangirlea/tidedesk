@@ -1,6 +1,6 @@
 # Licensing
 
-TideDesk is offered under the TideDesk Freeware License 1.0 in the root LICENSE file:
+TideDesk is offered under the TideDesk Freeware License 1.1 in the root LICENSE file:
 free for personal, non-commercial use, in executable form. It is not an open-source
 license, and TideDesk's source code is not public.
 
@@ -8,7 +8,10 @@ license, and TideDesk's source code is not public.
 
 - Individuals may install and run TideDesk for personal, non-commercial purposes,
   including unpaid help to family and friends.
-- Business use, including internal organizational IT support and services to
+- From v0.1.0-alpha.19, on a computer managed by an organization (joined to a domain or
+  enrolled in device management), TideDesk may also be used for business for 14 days, then for up to 8
+  hours of sessions a month, as the app counts them for that computer.
+- Other business use, including internal organizational IT support and services to
   customers, needs a TideDesk licence (Solo) or another written license, such as an
   Enterprise agreement. Licences are sold at [tidedesk.app](https://tidedesk.app) and activated in
   the app under Settings, Licence.
@@ -27,7 +30,8 @@ license. A new installation asks for both to be accepted before it shares anythi
 
 Versions v0.1.0-alpha, v0.1.0-alpha.1 and v0.1.0-alpha.2 and their corresponding source
 were published under GNU AGPL-3.0-only, and later releases up to the change of license
-under the TideDesk Personal Use Source License 1.0. Those grants remain in place for the
+under the TideDesk Personal Use Source License 1.0 or 1.1, and releases supplied with
+version 1.0 of the Freeware License stay under 1.0. Those grants remain in place for the
 copies and source already offered under them. Check the license included with the
 particular release you download.
 

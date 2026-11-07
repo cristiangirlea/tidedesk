@@ -1,6 +1,6 @@
 TideDesk @VERSION@: remote desktop for Windows x64 and Linux x86-64, free for personal, non-commercial use.
 
-License: TideDesk Personal Use Source License 1.1 (see LICENSE in the ZIP). Business use requires separate written permission: a TideDesk Solo subscription from https://tidedesk.app/pricing/ is that permission (the TideDesk Commercial License 1.0 at https://tidedesk.app/terms/). Releases supplied under 1.0 stay under 1.0, and previously published AGPL releases retain their original permissions.
+License: TideDesk Freeware License 1.1 (see LICENSE in the ZIP). Business use requires separate written permission, except on a computer managed by an organization, where the license allows it for 14 days, then 8 hours of sessions a month: a TideDesk Solo subscription from https://tidedesk.app/pricing/ is that permission (the TideDesk Commercial License 1.0 at https://tidedesk.app/terms/), or an Enterprise agreement. Releases supplied under earlier licenses stay under them, and previously published AGPL releases retain their original permissions.
 
 Download @ZIP@ and extract it. Run tidedesk.exe on both computers.
 
@@ -23,7 +23,7 @@ Linux: tidedesk_@VERSION@_amd64.deb for Debian 12 and Ubuntu 22.04 or later (`su
 
 ### Licence
 
-- **LICENSE 1.1.** This release comes with the TideDesk Personal Use Source License 1.1. Releases supplied with 1.0 stay under 1.0. The terms of use have a new date: a TideDesk used before keeps working and shows a notice about them once, with **OK**. (#92)
+- **Freeware License 1.1.** This release comes with the TideDesk Freeware License 1.1. On a computer managed by an organization it allows business use for 14 days, then 8 hours of sessions a month. Releases supplied under earlier licenses stay under them. The terms of use have a new date: a TideDesk used before keeps working and shows a notice about them once, with **OK**. (#92)
 - **The activation code.** **Settings**, **Licence** has a field for the licence's activation code, below the licence ID; you can also paste both into the licence field, licence first. When the code is missing or wrong, TideDesk says so and where to find it: your licences page at https://tidedesk.app/licence/.
 - **Switch to yearly on your licences page.** A monthly licence's page in **Settings**, **Licence** now links to https://tidedesk.app/licence/, where the switch is made.
 - **A clock set back is noticed.** A saved licence is not used while the computer's clock reads earlier than the day the licence was issued, or more than a day before the latest day TideDesk saw with it. A licence made for another computer is not used here either. **Settings**, **Licence** says why, and TideDesk checks with the licence service again within a day. (#221)

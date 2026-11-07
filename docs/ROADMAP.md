@@ -119,7 +119,7 @@ Not in any release yet, and there is no download for it.
 - **Company computers, from the next release:** on a computer managed by an organisation
   (joined to an Active Directory domain or to Microsoft Entra ID, or enrolled in device
   management such as Intune), TideDesk works without a licence for a 14-day trial, then for
-  8 hours of sessions a month, counted once for the computer (LICENSE 1.1, section 3a).
+  8 hours of sessions a month, counted once for the computer (Freeware License 1.1, section 3).
   Personal computers, including ones that only added a work account, are not affected.
   TideDesk reads this from Windows on the computer itself and sends nothing anywhere. For
   work without limits: TideDesk Solo, [tidedesk.app/pricing](https://tidedesk.app/pricing/).
